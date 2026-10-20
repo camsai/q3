@@ -1,0 +1,30 @@
+# Schema Manifest — controls which JSON schemas get C++ code generated.
+#
+# Each entry maps a JSON schema file to a C++ struct name and output path.
+# The generator reads this file and produces headers under src/generated/.
+
+# ESSE schemas — use pre-resolved from dist/js/schema/ (refs already dereferenced)
+esse:
+  base_path: schemas/esse/dist/js/schema
+
+  schemas:
+    - schema: properties_directory/scalar/total_energy.json
+      cpp_name: TotalEnergy
+      output: esse/properties/scalar/total_energy.hpp
+
+# Q3-specific schemas — resolve $refs, then generate
+q3:
+  base_path: schemas/q3
+  resolve_refs: true
+
+  schemas:
+    - schema: input.json
+      cpp_name: Input
+      output: q3/input.hpp
+      # Also emit the schema's own per-object key allow-lists, which
+      # src/io/input/parser/yaml.hpp validates manifests against instead of
+      # keeping its own hand-written copies of them.
+      key_registry: true
+    - schema: interpolation_results.json
+      cpp_name: InterpolationResults
+      output: q3/interpolation_results.hpp

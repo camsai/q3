@@ -1,0 +1,844 @@
+{
+    "$id": "input",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Input",
+    "description": "Q3 YAML input manifest \u2014 the user-facing input file format read by YAMLInputParser (src/io/input/parser/yaml.hpp). Every object here that Q3 owns end to end is closed (additionalProperties: false); those key sets are code-generated into src/generated/q3/input.hpp and are what the parser rejects unknown keys against, so this file is the single source of truth for which keys a manifest may contain.",
+    "type": "object",
+    "definitions": {
+        "self_consistent_field": {
+            "title": "Input method scf",
+            "type": "object",
+            "description": "SCF settings. Spelled either 'scf' or 'self_consistent_field'; both are the same block. The abbreviation 'nspin' is deliberately absent \u2014 the parser rejects it and points at number_of_spin_components.",
+            "properties": {
+                "convergence_threshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "default": 1e-6,
+                    "description": "SCF convergence threshold in Rydberg"
+                },
+                "max_iterations": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 100,
+                    "description": "Maximum number of SCF iterations"
+                },
+                "diagonalization": {
+                    "type": "string",
+                    "enum": ["davidson", "direct"],
+                    "default": "davidson",
+                    "description": "Eigensolver: 'davidson' (iterative) or 'direct' (dense LAPACK; incompatible with DFT+U)"
+                },
+                "davidson": {
+                    "type": "object",
+                    "properties": {
+                        "basis_expansion_factor": {
+                            "type": "integer",
+                            "minimum": 2,
+                            "default": 2,
+                            "description": "Davidson working basis size as a multiple of the band count. The solver holds two arrays of this many vectors, so it is the dominant term in its memory. Defaults to 2; 4 restarts less often at twice the footprint, and was the default before 2026-09-13. A non-self-consistent run uses 4 unless this is set: a single pass at 2 can return a spectrum with an eigenvalue missing, so setting it lower there is a memory choice the run warns about."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "description": "Davidson eigensolver settings"
+                },
+                "number_of_bands": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Number of Kohn-Sham states to compute. 0 = auto-determined from electrons + empty states"
+                },
+                "total_charge": {
+                    "type": "number",
+                    "default": 0.0,
+                    "description": "Net cell charge in electrons removed (QE tot_charge convention): positive = cationic (electrons removed), negative = anionic (electrons added)"
+                },
+                "number_of_spin_components": {
+                    "type": "integer",
+                    "enum": [1, 2],
+                    "default": 1,
+                    "description": "Number of spin components: 1 = unpolarized, 2 = collinear spin-polarized (LSDA)"
+                },
+                "starting_magnetization": {
+                    "type": "object",
+                    "description": "Initial magnetization per species, keyed by the species symbol as written in the material basis (so Fe1/Fe2 AFM sublattices are separable). QE convention: values in [-1, 1], negative = opposite sublattice",
+                    "additionalProperties": {
+                        "type": "number",
+                        "minimum": -1,
+                        "maximum": 1
+                    }
+                },
+                "atomic_starting_magnetization": {
+                    "type": "array",
+                    "description": "Initial magnetization per atom, one value per atom of the material basis in order (QE convention, [-1, 1]). Lets atoms of one species start antiparallel (same-species antiferromagnet). Exclusive with starting_magnetization",
+                    "items": {
+                        "type": "number",
+                        "minimum": -1,
+                        "maximum": 1
+                    }
+                },
+                "smearing": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": [
+                                "none",
+                                "fixed",
+                                "gaussian",
+                                "gauss",
+                                "methfessel-paxton",
+                                "m-p",
+                                "mp",
+                                "marzari-vanderbilt",
+                                "cold",
+                                "m-v",
+                                "mv",
+                                "fermi-dirac",
+                                "f-d",
+                                "fd"
+                            ],
+                            "default": "none",
+                            "description": "Occupation smearing scheme, with QE's aliases: none/fixed (step function), gaussian, methfessel-paxton, marzari-vanderbilt (cold), fermi-dirac"
+                        },
+                        "degauss": {
+                            "type": "number",
+                            "minimum": 0,
+                            "default": 0.0,
+                            "description": "Smearing broadening (QE degauss) in Rydberg"
+                        },
+                        "order": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "default": 1,
+                            "description": "Hermite expansion order N of Methfessel-Paxton smearing (Phys. Rev. B 40, 3616); valid only with a Methfessel-Paxton type"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "mixing": {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": ["broyden", "linear", "anderson"],
+                            "default": "broyden",
+                            "description": "Density mixing algorithm: 'broyden' (G-space quasi-Newton), 'linear' (plain G-space), or 'anderson' (real-space Pulay/DIIS)"
+                        },
+                        "beta": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "default": 0.7,
+                            "description": "Mixing parameter (0 = no mixing, 1 = full replacement)"
+                        },
+                        "ndim": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "default": 8,
+                            "description": "Number of previous iterations kept for Broyden/Anderson mixing"
+                        },
+                        "preconditioning": {
+                            "type": "string",
+                            "enum": ["default", "kerker", "none"],
+                            "default": "default",
+                            "description": "Density mixing preconditioning. 'default' resolves to 'kerker' when smearing is enabled and 'none' otherwise"
+                        },
+                        "q0": {
+                            "type": "number",
+                            "minimum": 0,
+                            "default": 1.0,
+                            "description": "Thomas-Fermi screening wavevector for Kerker preconditioning, in inverse bohr"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "hubbard": {
+                    "type": "array",
+                    "description": "DFT+U (Dudarev) corrections per species/orbital shell. Empty = no Hubbard correction",
+                    "items": {
+                        "title": "Input method scf hubbard item",
+                        "type": "object",
+                        "properties": {
+                            "species": {
+                                "type": "string",
+                                "description": "Element symbol matching a species label in the material basis"
+                            },
+                            "orbital_label": {
+                                "type": "string",
+                                "description": "Orbital shell label (e.g. '3d', 'D', '4f') matching a UPF PP_CHI label, or a bare orbital letter selecting on angular momentum"
+                            },
+                            "u_ev": {
+                                "type": "number",
+                                "minimum": 0,
+                                "description": "Hubbard U parameter in electron volts (converted to Rydberg internally)"
+                            }
+                        },
+                        "required": ["species", "orbital_label", "u_ev"],
+                        "additionalProperties": false
+                    }
+                },
+                "hubbard_projectors": {
+                    "type": "string",
+                    "enum": ["atomic", "ortho-atomic"],
+                    "default": "atomic",
+                    "description": "Projector convention: 'atomic' (raw pseudo-atomic UPF orbitals, QE HUBBARD {atomic}) or 'ortho-atomic' (Lowdin-orthogonalized, QE HUBBARD {ortho-atomic})"
+                },
+                "hubbard_starting_eigenvalues": {
+                    "type": "array",
+                    "description": "First-iteration occupation-eigenvalue overrides (QE starting_ns_eigenvalue analog). Empty = no seeding",
+                    "items": {
+                        "title": "Input method scf hubbard starting eigenvalue",
+                        "type": "object",
+                        "properties": {
+                            "species": {
+                                "type": "string",
+                                "description": "Species symbol, matched as written in the structure"
+                            },
+                            "eigenvalue": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "description": "1-based eigenvalue index (ascending order, 1 = lowest occupation)"
+                            },
+                            "spin": {
+                                "type": "integer",
+                                "enum": [1, 2],
+                                "description": "Spin channel: 1 or 2"
+                            },
+                            "value": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1,
+                                "description": "Target occupation in [0, 1] (per-spin convention)"
+                            }
+                        },
+                        "required": ["species", "eigenvalue", "spin", "value"],
+                        "additionalProperties": false
+                    }
+                },
+                "hubbard_fixed_occupation_iterations": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "SCF iterations for which the seeded occupation matrix is re-imposed (QE mixing_fixed_ns). 0 = seed the first iteration only"
+                },
+                "kgrid": {
+                    "type": "object",
+                    "properties": {
+                        "dimensions": {
+                            "type": "array",
+                            "items": {
+                                "type": "integer",
+                                "minimum": 1
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "default": [1, 1, 1],
+                            "description": "Monkhorst-Pack grid dimensions [n1, n2, n3]"
+                        },
+                        "shifts": {
+                            "type": "array",
+                            "items": {
+                                "type": "integer",
+                                "enum": [0, 1]
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "default": [0, 0, 0],
+                            "description": "K-point grid shifts [s1, s2, s3], each 0 or 1"
+                        },
+                        "ibz_reduction": {
+                            "type": "string",
+                            "enum": ["internal", "spglib"],
+                            "default": "internal",
+                            "description": "Irreducible-Brillouin-zone reduction: 'internal' (Q3 native) or 'spglib' (external library)"
+                        }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false
+        }
+    },
+    "properties": {
+        "material": {
+            "description": "Crystal structure: either a path to an external ESSE material JSON (resolved relative to the manifest's directory) or an inline map of the same shape. Deliberately not a closed object \u2014 an ESSE material legitimately carries fields Q3 does not consume",
+            "oneOf": [
+                {
+                    "type": "string",
+                    "description": "Path to an external ESSE material JSON file"
+                },
+                {
+                    "title": "Input material",
+                    "type": "object",
+                    "description": "Inline material definition",
+                    "properties": {
+                        "lattice": {
+                            "title": "Input material lattice",
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "description": "Lattice type, upper-cased on parse. 'FCC', 'BCC', 'SC' and 'CUB' take the Bravais-index construction; any other value (e.g. 'HEX', 'TRI', 'ORT') is built from the a/b/c/alpha/beta/gamma cell parameters, with gamma defaulting to 120 degrees for 'HEX'"
+                                },
+                                "a": {
+                                    "type": "number",
+                                    "description": "Lattice parameter a, in lattice units"
+                                },
+                                "b": {
+                                    "type": "number",
+                                    "description": "Lattice parameter b, in lattice units (defaults to a)"
+                                },
+                                "c": {
+                                    "type": "number",
+                                    "description": "Lattice parameter c, in lattice units (defaults to a)"
+                                },
+                                "alpha": {
+                                    "type": "number",
+                                    "default": 90.0,
+                                    "description": "Angle alpha in degrees"
+                                },
+                                "beta": {
+                                    "type": "number",
+                                    "default": 90.0,
+                                    "description": "Angle beta in degrees"
+                                },
+                                "gamma": {
+                                    "type": "number",
+                                    "default": 90.0,
+                                    "description": "Angle gamma in degrees (120 for lattice type 'HEX')"
+                                },
+                                "units": {
+                                    "description": "Units for the scalar lattice fields; either a bare length unit or a {length, angle} map. Default 'bohr'",
+                                    "oneOf": [
+                                        {
+                                            "type": "string",
+                                            "enum": ["bohr", "angstrom"]
+                                        },
+                                        {
+                                            "type": "object",
+                                            "properties": {
+                                                "length": {
+                                                    "type": "string",
+                                                    "enum": ["bohr", "angstrom"]
+                                                },
+                                                "angle": {
+                                                    "type": "string",
+                                                    "enum": ["degree", "radian"]
+                                                }
+                                            }
+                                        }
+                                    ]
+                                },
+                                "vectors": {
+                                    "title": "Input material lattice vectors",
+                                    "type": "object",
+                                    "description": "Explicit lattice vectors. Takes precedence over type + a",
+                                    "properties": {
+                                        "a": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "number"
+                                            },
+                                            "minItems": 3,
+                                            "maxItems": 3,
+                                            "description": "First lattice vector row"
+                                        },
+                                        "b": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "number"
+                                            },
+                                            "minItems": 3,
+                                            "maxItems": 3,
+                                            "description": "Second lattice vector row"
+                                        },
+                                        "c": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "number"
+                                            },
+                                            "minItems": 3,
+                                            "maxItems": 3,
+                                            "description": "Third lattice vector row"
+                                        },
+                                        "alat": {
+                                            "type": "number",
+                                            "default": 1.0,
+                                            "description": "Scalar multiplier applied to the vector rows"
+                                        },
+                                        "units": {
+                                            "description": "Unit for the vector rows specifically; overrides lattice.units",
+                                            "oneOf": [
+                                                {
+                                                    "type": "string",
+                                                    "enum": ["bohr", "angstrom"]
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "length": {
+                                                            "type": "string",
+                                                            "enum": ["bohr", "angstrom"]
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "required": ["a", "b", "c"]
+                                }
+                            }
+                        },
+                        "basis": {
+                            "title": "Input material basis",
+                            "type": "object",
+                            "properties": {
+                                "elements": {
+                                    "type": "array",
+                                    "description": "Element symbol per site",
+                                    "items": {
+                                        "title": "Input material basis element",
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {
+                                                "type": "integer",
+                                                "description": "Site index"
+                                            },
+                                            "value": {
+                                                "type": "string",
+                                                "description": "Element symbol (e.g. Si, Cu, Fe1)"
+                                            }
+                                        },
+                                        "required": ["id", "value"]
+                                    }
+                                },
+                                "coordinates": {
+                                    "type": "array",
+                                    "description": "Position per site, parallel to elements",
+                                    "items": {
+                                        "title": "Input material basis coordinate",
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {
+                                                "type": "integer",
+                                                "description": "Site index"
+                                            },
+                                            "value": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "number"
+                                                },
+                                                "minItems": 3,
+                                                "maxItems": 3,
+                                                "description": "Position in crystal coordinates [x, y, z]"
+                                            }
+                                        },
+                                        "required": ["id", "value"]
+                                    }
+                                },
+                                "units": {
+                                    "type": "string",
+                                    "description": "Accepted but not applied \u2014 inline basis coordinates are read as crystal coordinates"
+                                }
+                            },
+                            "required": ["elements", "coordinates"]
+                        }
+                    },
+                    "required": ["lattice", "basis"]
+                }
+            ]
+        },
+        "model": {
+            "title": "Input model",
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "description": "Model type (e.g. 'dft'). Accepted but not consumed \u2014 Kohn-Sham DFT is the only supported model"
+                },
+                "subtype": {
+                    "type": "string",
+                    "description": "Model subtype (e.g. 'gga'). Accepted but not consumed"
+                },
+                "functional": {
+                    "type": "string",
+                    "description": "Exchange-correlation functional, matched case-insensitively and recorded lower-cased: 'PZ' (alias 'LDA'), 'PBE', 'PBEsol', 'BLYP', 'revPBE', 'RPBE'; 'libxc:<X>:<C>' where each half is a LibXC id or a LibXC name (e.g. 'libxc:117:130' or 'libxc:gga_x_rpbe:gga_c_pbe'); or QE's 'XC-iii-jjj-kkk-lll' form. Unrecognized values throw. Omitted, the run uses the functional the pseudopotentials state, as pw.x does without input_dft; datasets that disagree, or state one Q3 does not map, are refused"
+                },
+                "dispersion": {
+                    "type": "string",
+                    "enum": ["none", "d3bj"],
+                    "default": "none",
+                    "description": "Semi-empirical dispersion correction, lower-cased on parse: 'd3bj' = DFT-D3 with Becke-Johnson damping"
+                }
+            },
+            "additionalProperties": false
+        },
+        "method": {
+            "title": "Input method",
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "description": "Method type (e.g. 'pseudopotential'). Accepted but not consumed \u2014 planewave-pseudopotential is the only supported method"
+                },
+                "subtype": {
+                    "type": "string",
+                    "description": "Free-form dataset label (e.g. 'norm-conserving', 'ultrasoft', 'paw'). Accepted but not consumed \u2014 the actual dataset kind is read from the pseudopotential files"
+                },
+                "pseudopotentials": {
+                    "type": "object",
+                    "description": "Element symbol to pseudopotential file path, resolved relative to the manifest's directory",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "cutoffs": {
+                    "title": "Input method cutoffs",
+                    "type": "object",
+                    "properties": {
+                        "wavefunction": {
+                            "type": "number",
+                            "minimum": 0,
+                            "default": 30.0,
+                            "description": "Plane-wave kinetic energy cutoff for wavefunctions in Rydberg"
+                        },
+                        "density": {
+                            "type": "number",
+                            "minimum": 0,
+                            "default": 0.0,
+                            "description": "Plane-wave kinetic energy cutoff for the charge density in Rydberg. 0 = auto-derived from the wavefunction cutoff"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "scf": {
+                    "$ref": "#/definitions/self_consistent_field"
+                },
+                "self_consistent_field": {
+                    "$ref": "#/definitions/self_consistent_field"
+                },
+                "band_structure": {
+                    "title": "Input method band structure",
+                    "type": "object",
+                    "properties": {
+                        "number_of_bands": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Number of bands for a band-structure run; overrides method.scf.number_of_bands"
+                        }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false
+        },
+        "control": {
+            "title": "Input control",
+            "type": "object",
+            "properties": {
+                "calculation": {
+                    "type": "string",
+                    "enum": [
+                        "scf",
+                        "self_consistent_field",
+                        "nscf",
+                        "non_self_consistent_field",
+                        "bands",
+                        "band_structure",
+                        "relax",
+                        "relaxation",
+                        "dos",
+                        "density_of_states",
+                        "interpolation"
+                    ],
+                    "default": "self_consistent_field",
+                    "description": "Type of calculation to perform. The short spellings map to the canonical long ones on parse. 'interpolation' names an input that q3_utility interpolate evaluates from a saved model (see control.interpolation); the engine itself refuses it, as it does the Python-orchestrated band_structure/relaxation/density_of_states"
+                },
+                "outdir": {
+                    "type": "string",
+                    "default": "./",
+                    "description": "Output directory"
+                },
+                "prefix": {
+                    "type": "string",
+                    "default": "q3",
+                    "description": "Prefix for output files"
+                },
+                "verbosity": {
+                    "type": "string",
+                    "enum": ["default", "high"],
+                    "default": "default",
+                    "description": "How much the run prints: 'default' reports the physics and the SCF trajectory, 'high' adds the per-iteration and per-phase diagnostics (Davidson micro-iterations, timing breakdowns, mixer internals). Quantum ESPRESSO's verbosity maps onto this: 'high'/'debug' select 'high', 'low'/'medium'/'minimal'/'default' select 'default'. An explicit --log-level overrides it"
+                },
+                "disable_symmetry": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "If true, use no symmetry at all: the k-point mesh is not reduced, and the density, forces and stress are not symmetrized (Quantum ESPRESSO nosym + noinv)"
+                },
+                "nonlocal_stress_derivative_method": {
+                    "type": "string",
+                    "enum": ["analytical", "numerical"],
+                    "default": "analytical",
+                    "description": "Method for nonlocal stress derivatives: 'analytical' (Lagrange polynomial differentiation, matches QE) or 'numerical' (finite-difference)"
+                },
+                "number_of_kpoint_pools": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Number of k-point pool groups for MPI parallelization. 0 = choose automatically from the irreducible k-point count. An explicit --pools flag overrides this"
+                },
+                "use_deterministic_fft_planning": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "If true, use FFTW_ESTIMATE for bit-reproducible runs at a performance cost. If false (default), use FFTW_MEASURE"
+                },
+                "use_exact_wavefunction_grid": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "If true, size the wavefunction FFT grid exactly, for 4 x ecutwfc as pw.x does, at 1.4-2.3x the solver time on the silicon and copper examples. If false (default), use the 2 x ecutwfc grid: faster, but V(r)psi(r) and the band density alias, which costs up to mRy against pw.x on hard pseudopotentials at low cutoffs. QE-format input always uses the exact grid"
+                },
+                "isolated_system_correction": {
+                    "type": "string",
+                    "enum": ["none", "makov-payne", "martyna-tuckerman"],
+                    "default": "none",
+                    "description": "Isolated (charged) system correction: 'makov-payne' (QE assume_isolated='makov-payne', cubic lattices only) or 'martyna-tuckerman' (post-SCF evaluation, any lattice)"
+                },
+                "mean_field_export": {
+                    "type": "string",
+                    "enum": ["none", "berkeleygw"],
+                    "default": "none",
+                    "description": "Mean-field export for many-body perturbation theory: 'berkeleygw' writes WFN/RHO/vxc.dat"
+                },
+                "band_path": {
+                    "type": "array",
+                    "description": "High-symmetry path for band-structure calculations. Each entry is either a bare label or a {label, coordinates} map",
+                    "items": {
+                        "oneOf": [
+                            {
+                                "type": "string",
+                                "description": "High-symmetry point label looked up internally (e.g. 'Gamma', 'X', 'L')"
+                            },
+                            {
+                                "title": "Input control band path point",
+                                "type": "object",
+                                "properties": {
+                                    "label": {
+                                        "type": "string",
+                                        "description": "High-symmetry point label"
+                                    },
+                                    "coordinates": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "number"
+                                        },
+                                        "minItems": 3,
+                                        "maxItems": 3,
+                                        "default": [0.0, 0.0, 0.0],
+                                        "description": "Explicit crystal coordinates [kx, ky, kz], overriding the internal label lookup"
+                                    }
+                                },
+                                "additionalProperties": false
+                            }
+                        ]
+                    }
+                },
+                "band_path_points_per_segment": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 20,
+                    "description": "Number of k-points sampled per band-path segment"
+                },
+                "kpoints_list": {
+                    "type": "array",
+                    "description": "Explicit k-point list for NSCF calculations. Takes precedence over method.scf.kgrid when non-empty",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number"
+                        },
+                        "minItems": 4,
+                        "maxItems": 4,
+                        "description": "[kx, ky, kz, weight] \u2014 crystal coordinates plus an unnormalized weight"
+                    }
+                },
+                "dos_broadening": {
+                    "type": "number",
+                    "minimum": 0,
+                    "default": 0.02,
+                    "description": "Gaussian broadening for the density of states in Rydberg"
+                },
+                "dos_energy_min": {
+                    "type": "number",
+                    "default": -100.0,
+                    "description": "DOS energy range lower bound in Rydberg. Set to 0 to auto-determine from band energies"
+                },
+                "dos_energy_max": {
+                    "type": "number",
+                    "default": 100.0,
+                    "description": "DOS energy range upper bound in Rydberg. Set to 0 to auto-determine from band energies"
+                },
+                "dos_energy_steps": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 2000,
+                    "description": "Number of energy grid points for the DOS"
+                },
+                "compute_projections": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Compute atomic-orbital (ortho-atomic/Lowdin) projections during an NSCF run. Opt-in: adds a Lowdin pass per k-point"
+                },
+                "interpolation": {
+                    "title": "Input control interpolation",
+                    "type": "object",
+                    "description": "Band-structure interpolation from a small model built out of a finished calculation. On an NSCF run (calculation: nscf) the block asks the engine to build the model and save it as <prefix>.save/interpolation.q3ip; on calculation: interpolation it names the saved model that q3_utility interpolate evaluates along control.band_path / control.kpoints_list and on dos_mesh. Each key belongs to exactly one of those two steps and is REFUSED on the other rather than ignored: grid, bands, projection_centers, projection_decay_bohr and export_formats are read when the record is captured, because they decide what goes into it; dos_mesh, disentanglement, localization, projectability_minimum, projectability_maximum and frozen_window_above_fermi_ev are read when the model is evaluated, because the record deliberately stores the untouched window so one capture serves several answers. method is given on both",
+                    "properties": {
+                        "method": {
+                            "type": "string",
+                            "enum": ["wannier"],
+                            "description": "How the model is built. 'wannier': Wannier functions in the one-shot projection gauge from the interface matrices of a full-grid NSCF run"
+                        },
+                        "grid": {
+                            "type": "array",
+                            "items": {
+                                "type": "integer",
+                                "minimum": 1
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "[n1, n2, n3], the full, unreduced k-point grid control.kpoints_list enumerates. Required on the NSCF build step, and stated explicitly because an explicit k-point list carries no grid shape of its own"
+                        },
+                        "bands": {
+                            "type": "array",
+                            "items": { "type": "integer", "minimum": 1 },
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "description": "[first, last], the 1-based inclusive band range the model is built from. Absent means the lowest bands, which is what an isolated valence manifold needs. Give a range when the manifold does not start at band 1 -- a pseudopotential carrying semicore states puts them below it. The range must hold exactly as many bands as there are trial orbitals, and the run must compute at least 'last' bands"
+                        },
+                        "disentanglement": {
+                            "type": "string",
+                            "enum": ["none", "projectability"],
+                            "default": "none",
+                            "description": "How the N states the gauge is built from are chosen out of the band window. 'none' requires the window to be exactly those N states, which is what an isolated manifold gives. 'projectability' classifies every band by its projectability and energy and then chooses the smoothest subspace across the zone, which is what an entangled manifold -- a transition metal's d and s bands -- needs"
+                        },
+                        "localization": {
+                            "type": "string",
+                            "enum": ["auto", "none", "maximal"],
+                            "default": "auto",
+                            "description": "How the gauge inside the chosen subspace is fixed. Minimising the Marzari-Vanderbilt spread makes the Wannier functions as localised as the mesh allows, so H(R) decays quickly enough to interpolate BETWEEN the mesh points; the one-shot projection gauge is exact AT them whatever it does. 'auto' minimises when the record carries the neighbour overlaps M_mn(k,b) the spread is defined through, and keeps the projection gauge when it does not -- a record imported from another code's projections and eigenvalues alone carries none. 'maximal' demands it and makes such a record an error. 'none' always keeps the projection gauge, which is useful to isolate what localisation contributes"
+                        },
+                        "projectability_minimum": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "default": 0.01,
+                            "description": "Disentanglement: a band whose projectability falls below this is discarded from the window entirely, unless the frozen energy window kept it"
+                        },
+                        "projectability_maximum": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "default": 0.95,
+                            "description": "Disentanglement: a band whose projectability reaches this is frozen, kept exactly and never rotated by the optimisation"
+                        },
+                        "frozen_window_above_fermi_ev": {
+                            "oneOf": [{ "type": "number" }, { "type": "string", "enum": ["auto"] }],
+                            "default": "auto",
+                            "description": "Disentanglement: energy above the Fermi level, in electronvolts, below which a band is frozen whatever its projectability -- short of the singular-gauge rule: a band in the window whose projectability is below projectability_minimum is one the trial orbitals cannot represent, and it is excluded from the freeze and reported rather than frozen, because freezing it makes the gauge singular. Not redundant with projectability_maximum: a metal's Fermi-surface states are the least projectable ones, and discarding them leaves a hole the mesh-point round trip cannot see. 'auto', the default, applies the published 2 eV for atomic projectors to metal and insulator alike: it is the window the band distance that judges the model is measured on, and the two must coincide -- silicon at 12x12x12 gives 220 meV with the occupied manifold alone frozen and 14 meV at E_F + 2 eV, the whole difference being the lowest conduction band. For an insulator the Fermi level the engine reports sits in the gap, so the window reaches the conduction states the distance weighs and no further. Whether the system is a metal (a band crossing the Fermi level) is decided and reported either way. Any real number overrides the rule, and a value below the whole manifold freezes nothing by energy"
+                        },
+                        "localization_maximum_iterations": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "default": 3000,
+                            "description": "Evaluation step: the spread minimiser's iteration budget. Far more than a well-posed case needs (copper converges in about sixty); the retry ladder doubles it after a stall, which is the one reason it is a key"
+                        },
+                        "disentanglement_maximum_iterations": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "default": 4000,
+                            "description": "Evaluation step: the subspace iteration's budget. A disentanglement that exhausts it is an error, never a subspace returned as if it had converged; the error prints the last five gauge-invariant spreads"
+                        },
+                        "disentanglement_convergence_tolerance": {
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "default": 1e-10,
+                            "description": "Evaluation step: the relative change in the gauge-invariant spread the subspace iteration must stay below, over five iterations, to count as converged. The automatic workflow's retry ladder loosens it for a disentanglement that exhausted its budget, to a margin above the change among the spreads that failure printed"
+                        },
+                        "trial_shells": {
+                            "type": "object",
+                            "description": "Build step: per species, the 0-based indices of the pseudo-atomic shells to use as trial orbitals, in the order the pseudopotential file lists its atomic wavefunctions. A species not named keeps every shell its pseudopotential does not mark unusable (a negative occupation, or a zero-norm radial function). Refused together with projection_centers. The automatic workflow always writes it, naming the shells its rule keeps: every occupied shell, and the empty ones that are not a second channel of an l the atom has in valence",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                },
+                                "minItems": 1,
+                                "uniqueItems": true
+                            }
+                        },
+                        "projection_centers": {
+                            "type": "array",
+                            "description": "Wannier: centres of the s-type trial orbitals, in crystal (fractional) coordinates. The count fixes the number of Wannier functions, so it must not exceed the band count. Empty falls back to the pseudopotentials' atom-centred atomic orbitals",
+                            "items": {
+                                "type": "array",
+                                "items": {
+                                    "type": "number"
+                                },
+                                "minItems": 3,
+                                "maxItems": 3,
+                                "description": "[x, y, z] \u2014 crystal (fractional) coordinates of one trial-orbital centre"
+                            }
+                        },
+                        "projection_decay_bohr": {
+                            "type": "number",
+                            "minimum": 0,
+                            "default": 1.0,
+                            "description": "Wannier: decay length of those trial orbitals in bohr (Wannier90's zona is its reciprocal)"
+                        },
+                        "export_formats": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": ["wannier90"]
+                            },
+                            "description": "Interoperability formats written beside the native record on the NSCF build step. 'wannier90': <prefix>.mmn/.amn/.eig/.nnkp for wannier90.x and the tools built on it"
+                        },
+                        "dos_mesh": {
+                            "type": "array",
+                            "items": {
+                                "type": "integer",
+                                "minimum": 1
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "Evaluation step: the dense uniform k-mesh the interpolated density of states is sampled on, binned with control.dos_broadening. Omit for no DOS"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "relax_max_steps": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 100,
+                    "description": "Maximum ionic relaxation steps"
+                },
+                "relax_force_threshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "default": 0.001,
+                    "description": "Force convergence threshold for relaxation in Ry/bohr (max |force|)"
+                },
+                "relax_energy_threshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "default": 0.0001,
+                    "description": "Energy convergence threshold for relaxation in Rydberg (energy change between steps)"
+                }
+            },
+            "additionalProperties": false
+        }
+    },
+    "required": ["material"],
+    "additionalProperties": false
+}

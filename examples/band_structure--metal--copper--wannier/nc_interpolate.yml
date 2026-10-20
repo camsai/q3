@@ -1,0 +1,68 @@
+material: ../data/materials/copper.json
+method:
+  cutoffs:
+    density: 480.0
+    wavefunction: 120.0
+  pseudopotentials:
+    Cu: ../data/pseudopotentials/nc/Cu.upf
+  scf:
+    convergence_threshold: 1.0e-08
+    max_iterations: 200
+    mixing:
+      beta: 0.3
+      mode: broyden
+      ndim: 8
+    number_of_bands: 14
+    smearing:
+      degauss: 0.02
+      type: gaussian
+  subtype: norm-conserving
+  type: pseudopotential
+model:
+  functional: pbe
+  subtype: gga
+  type: dft
+control:
+  calculation: interpolation
+  outdir: ./output
+  prefix: cu
+  dos_broadening: 0.01
+  band_path:
+    - label: G
+      coordinates:
+        - 0.0
+        - 0.0
+        - 0.0
+    - label: X
+      coordinates:
+        - 0.0
+        - 0.5
+        - 0.5
+    - label: W
+      coordinates:
+        - 0.25
+        - 0.5
+        - 0.75
+    - label: K
+      coordinates:
+        - 0.375
+        - 0.375
+        - 0.75
+    - label: G
+      coordinates:
+        - 0.0
+        - 0.0
+        - 0.0
+    - label: L
+      coordinates:
+        - 0.5
+        - 0.5
+        - 0.5
+  band_path_points_per_segment: 30
+  interpolation:
+    method: wannier
+    dos_mesh:
+      - 16
+      - 16
+      - 16
+    disentanglement: projectability

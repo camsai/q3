@@ -1,0 +1,36 @@
+material: ../data/materials/graphite.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+  dispersion: d3bj
+method:
+  type: pseudopotential
+  subtype: norm-conserving
+  cutoffs:
+    wavefunction: 100.0
+    density: 400.0
+  pseudopotentials:
+    C: ../data/pseudopotentials/nc/C.upf
+  scf:
+    convergence_threshold: 1.0e-10
+    max_iterations: 200
+    mixing:
+      mode: broyden
+      beta: 0.3
+    smearing:
+      type: gaussian
+      degauss: 0.01
+    kgrid:
+      dimensions:
+        - 12
+        - 12
+        - 6
+      shifts:
+        - 0
+        - 0
+        - 0
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: graphite_nc_d3

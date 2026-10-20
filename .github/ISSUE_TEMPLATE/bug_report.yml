@@ -1,0 +1,64 @@
+name: Bug report
+description: A crash, a wrong number, or a build failure.
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release tag (YYYY.M.D-N), container tag, or commit hash.
+      placeholder: "2026.8.16-0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How Q3 was obtained
+      options:
+        - Container (Apptainer / podman-hpc / Shifter)
+        - Built from source
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Execution backend
+      options:
+        - Serial (q3)
+        - MPI (q3_mpi)
+        - GPU — CUDA
+        - GPU — Metal / Accelerate
+        - GPU — HIP
+        - GPU — SYCL
+        - Python workflows / bindings
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS and compiler (or container runtime) versions.
+      placeholder: "Ubuntu 24.04, GCC 13.2"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+      description: For a wrong-physics report, include the expected value and where it comes from.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: The smallest input manifest (or deck) and the exact command. Name the pseudopotential files rather than attaching them if their license forbids sharing.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: Relevant stdout, `*_results.json` fragments, or a stack trace.
+      render: shell

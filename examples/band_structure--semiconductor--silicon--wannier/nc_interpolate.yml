@@ -1,0 +1,49 @@
+material: ../data/materials/silicon.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: norm-conserving
+  cutoffs:
+    wavefunction: 48.0
+    density: 192.0
+  pseudopotentials:
+    Si: ../data/pseudopotentials/nc/Si.upf
+  scf:
+    convergence_threshold: 1.0e-10
+    number_of_bands: 4
+control:
+  calculation: interpolation
+  outdir: ./output
+  prefix: si
+  interpolation:
+    method: wannier
+    dos_mesh:
+      - 24
+      - 24
+      - 24
+  dos_broadening: 0.01
+  band_path:
+    - label: G
+      coordinates:
+        - 0.0
+        - 0.0
+        - 0.0
+    - label: X
+      coordinates:
+        - 0.0
+        - 0.5
+        - 0.5
+    - label: L
+      coordinates:
+        - 0.5
+        - 0.5
+        - 0.5
+    - label: G
+      coordinates:
+        - 0.0
+        - 0.0
+        - 0.0
+  band_path_points_per_segment: 20

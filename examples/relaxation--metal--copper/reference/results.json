@@ -1,0 +1,40 @@
+{
+    "system": "Cu (FCC, single-atom primitive cell)",
+    "calculation": "DFT-PBE BFGS geometry relaxation",
+    "reference_code": "Quantum ESPRESSO 7.5 with LibXC 7.0.0 (build_libxc/bin/pw.x)",
+    "kgrid": "4x4x4 shifted (1,1,1)",
+    "lattice_parameter_angstrom": 3.621261,
+    "smearing": {
+        "type": "Gaussian",
+        "degauss_ry": 0.02
+    },
+    "note": "A one-atom cell has no ionic degrees of freedom: forces vanish by symmetry and BFGS converges at step 0. What this case exercises is the SCF-and-forces path driven through the relaxation workflow, and the energy reported at the equilibrium geometry -- so the reference below is a single-point energy at that geometry, not a relaxed one.",
+
+    "nc": {
+        "pseudopotential": "Cu.upf (ONCV, NC)",
+        "cutoffs": {
+            "wavefunction_ry": 120.0,
+            "density_ry": 480.0
+        },
+        "equilibrium_total_energy_ry": -386.583379,
+        "equilibrium_total_energy_source": "Quantum ESPRESSO at these settings, quoted to six decimals in PERFORMANCE.md, 'Group 1 -- Primitive Cell SCF'. Its deck is examples/total_energy--metal--copper/reference/nc/scf_qe.in, which differs from relax.in beside this file only in `calculation` and `conv_thr`; running relax.in on the pinned build and then tests/validation/refresh_qe_references.py writes a nc/reference.json carrying QE's own number for this deck.",
+        "q3_total_energy_ry": -386.583378437,
+        "q3_total_energy_source": "Q3 at 0467b8e, running ../nc.yml with control.calculation switched to self_consistent_field -- the SCF the relaxation driver performs at step 0.",
+        "relaxation_steps": 0,
+        "relaxation_final_forces_ry_per_bohr": [[0.0, 0.0, 0.0]]
+    },
+
+    "us": {
+        "pseudopotential": "cu_pbe_v1.2.uspp.F.UPF (US)",
+        "cutoffs": {
+            "wavefunction_ry": 40.0,
+            "density_ry": 200.0
+        },
+        "equilibrium_total_energy_ry": -403.779215,
+        "equilibrium_total_energy_source": "Quantum ESPRESSO at these settings, quoted to six decimals in PERFORMANCE.md, 'Group 1 -- Primitive Cell SCF'. Its deck is examples/total_energy--metal--copper/reference/us/scf_qe.in, which differs from relax.in beside this file only in `calculation` and `conv_thr`; running relax.in on the pinned build and then tests/validation/refresh_qe_references.py writes a us/reference.json carrying QE's own number for this deck.",
+        "q3_total_energy_ry": -403.779227774,
+        "q3_total_energy_source": "Q3 at 0467b8e, running ../us.yml with control.calculation switched to self_consistent_field -- the SCF the relaxation driver performs at step 0.",
+        "relaxation_steps": 0,
+        "relaxation_final_forces_ry_per_bohr": [[0.0, 0.0, 0.0]]
+    }
+}

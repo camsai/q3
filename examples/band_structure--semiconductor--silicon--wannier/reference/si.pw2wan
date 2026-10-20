@@ -1,0 +1,8 @@
+&inputpp
+   outdir     = './qe_output'
+   prefix     = 'si_wannier'
+   seedname   = 'si'
+   write_mmn  = .true.
+   write_amn  = .true.
+   write_unk  = .false.
+/

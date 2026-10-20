@@ -1,0 +1,62 @@
+build/
+build_mpi/
+build_gpu/
+build_serial/
+*.o
+*.a
+.DS_Store
+cmake-build-*/
+*.save/
+*.xml
+*.out
+CRASH
+cmake_test_discovery_*.json
+tmp/
+*.log
+__pycache__/
+.pytest_cache/
+
+/output/
+
+# Virtual environments and agent files
+venv/
+.venv/
+agents/
+# Local Claude Code state (settings.local.json, caches) stays untracked, but
+# .claude/skills/ is shared tooling and is committed. The pattern must ignore
+# the directory's *contents* rather than the directory itself: git does not
+# descend into an ignored directory, so `.claude/` would make the negation
+# below unreachable.
+.claude/*
+!.claude/skills/
+
+# Clangd artifacts (local index cache and build-artifact symlink)
+.cache/
+compile_commands.json
+
+
+# Agentic
+.
+
+# Linters
+.ruff_cache
+
+# Other
+node_modules*
+examples/*/output/
+examples/*/output_before/
+examples/*/output_dos/
+*.egg-info/
+tmp_nc/
+
+# Documentation (fetched/generated at build time)
+docs/doxygen-awesome-css/
+docs_build/
+build_cov/
+
+# ASE workflow run artifacts (relaxation steps, phonon caches, trajectories)
+q3_ase_workdir/
+*.traj
+
+# Optional install path
+install

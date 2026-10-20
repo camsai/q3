@@ -1,0 +1,41 @@
+material: ../data/materials/chromium.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: norm-conserving
+  cutoffs:
+    wavefunction: 90.0
+    density: 360.0
+  pseudopotentials:
+    Cr1: ../data/pseudopotentials/nc/Cr.upf
+    Cr2: ../data/pseudopotentials/nc/Cr.upf
+  scf:
+    convergence_threshold: 1.0e-08
+    max_iterations: 200
+    number_of_spin_components: 2
+    starting_magnetization:
+      Cr1: 0.5
+      Cr2: -0.5
+    mixing:
+      mode: broyden
+      beta: 0.1
+      ndim: 8
+    smearing:
+      type: gaussian
+      degauss: 0.02
+    kgrid:
+      dimensions:
+        - 12
+        - 12
+        - 12
+      shifts:
+        - 1
+        - 1
+        - 1
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: cr_afm_nc

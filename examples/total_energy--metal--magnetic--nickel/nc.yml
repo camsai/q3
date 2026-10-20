@@ -1,0 +1,39 @@
+material: ../data/materials/nickel.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: norm-conserving
+  cutoffs:
+    wavefunction: 60.0
+    density: 240.0
+  pseudopotentials:
+    Ni: ../data/pseudopotentials/nc/Ni.upf
+  scf:
+    convergence_threshold: 1.0e-08
+    max_iterations: 200
+    number_of_spin_components: 2
+    starting_magnetization:
+      Ni: 0.3
+    mixing:
+      mode: broyden
+      beta: 0.1
+      ndim: 8
+    smearing:
+      type: gaussian
+      degauss: 0.02
+    kgrid:
+      dimensions:
+        - 12
+        - 12
+        - 12
+      shifts:
+        - 1
+        - 1
+        - 1
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: ni_nc

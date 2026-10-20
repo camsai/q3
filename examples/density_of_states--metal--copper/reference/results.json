@@ -1,0 +1,24 @@
+{
+    "system": "Cu (FCC, single-atom primitive cell)",
+    "calculation": "DFT-PBE DOS, norm-conserving pseudopotential",
+    "reference_code": "Quantum ESPRESSO 7+ with LibXC (build_libxc/bin/pw.x)",
+    "pseudopotential": "Cu.upf (ONCV, NC)",
+    "cutoffs": {
+        "wavefunction_ry": 120.0,
+        "density_ry": 480.0
+    },
+    "kgrid": "8x8x8 shifted (1,1,1)",
+    "smearing": {
+        "type": "Gaussian",
+        "degauss_ry": 0.02
+    },
+    "lattice_parameter_angstrom": 2.560619,
+
+    "expected_features": {
+        "metallic": true,
+        "dos_at_fermi_nonzero": true,
+        "d_band_center_ev_below_fermi": 2.0,
+        "d_band_width_ev": 4.5,
+        "note": "Cu d-bands form a large peak ~2-4 eV below E_F; DOS at E_F is finite (metallic)"
+    }
+}

@@ -1,0 +1,34 @@
+&CONTROL
+  calculation = 'scf'
+  pseudo_dir = '../../../data/pseudopotentials/us/'
+  outdir = './tmp_stress'
+  prefix = 'qe_us_hubbard_stress'
+  tstress = .true.
+  verbosity = 'high'
+/
+&SYSTEM
+  ibrav = 2
+  celldm(1) = 6.843194
+  nat = 1
+  ntyp = 1
+  ecutwfc = 40.0
+  ecutrho = 200.0
+  occupations = 'smearing'
+  smearing = 'gaussian'
+  degauss = 0.02
+  input_dft = 'XC-000I-000I-101L-130L'
+/
+&ELECTRONS
+  conv_thr = 1.0e-10
+  mixing_beta = 0.2
+  mixing_mode = 'plain'
+  electron_maxstep = 500
+/
+ATOMIC_SPECIES
+  Cu 63.546 cu_pbe_v1.2.uspp.F.UPF
+ATOMIC_POSITIONS crystal
+  Cu 0.000000 0.000000 0.000000
+K_POINTS automatic
+  4 4 4 1 1 1
+HUBBARD (atomic)
+U Cu-3d 4.0

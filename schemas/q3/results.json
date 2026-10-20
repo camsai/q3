@@ -1,0 +1,266 @@
+{
+    "$id": "results",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Results",
+    "description": "Q3 results.json — the single machine-readable record of a finished run, written by FlavorResult::results_json() (src/layer_4_computation/flavors/result.hpp) as <prefix>_results.json and returned verbatim by the Python bindings. The root is closed (additionalProperties: false), so this file is the complete list of keys a reader may encounter: a consumer no longer has to guess which of them exist, and a key added to the writer without being added here fails the regression suite. Units are declared by the file itself under \"units\" and are also carried in the key names; ESSE's own unit enums and array shapes are referenced by $ref wherever the two agree.",
+    "type": "object",
+    "definitions": {
+        "vector_3d": {
+            "$ref": "../esse/dist/js/schema/core/abstract/vector_3d.json"
+        },
+        "matrix_3x3": {
+            "$ref": "../esse/dist/js/schema/core/abstract/matrix_3x3.json"
+        },
+        "energy_units": {
+            "$ref": "../esse/dist/js/schema/definitions/units.json#/energy"
+        },
+        "pressure_units": {
+            "$ref": "../esse/dist/js/schema/definitions/units.json#/pressure"
+        },
+        "magnetic_units": {
+            "$ref": "../esse/dist/js/schema/definitions/units.json#/magnetic"
+        },
+        "per_atom_vectors": {
+            "type": "array",
+            "description": "One Cartesian vector per atom, in the order the input lists them.",
+            "items": { "$ref": "#/definitions/vector_3d" }
+        },
+        "per_kpoint_per_spin_per_band": {
+            "type": "array",
+            "description": "Indexed [k-point state][spin component][band].",
+            "items": {
+                "type": "array",
+                "items": { "type": "array", "items": { "type": "number" } }
+            }
+        }
+    },
+    "properties": {
+        "flavor": {
+            "type": "string",
+            "description": "Which calculation produced this record: 'self_consistent_field', 'non_self_consistent_field' or 'verification'."
+        },
+        "converged": {
+            "type": "boolean",
+            "description": "Whether the run met its convergence criterion. A non-self-consistent pass reports true, having no criterion to miss."
+        },
+        "self_consistent_field_iterations": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Iterations actually performed: the one it converged on, or the whole budget when it did not. Absent for a flavor that does not iterate."
+        },
+        "timings_ms": {
+            "type": "object",
+            "description": "Where the run spent its time, in milliseconds, plus the call counts those times divide. Absent when nothing ran.",
+            "additionalProperties": { "type": "number" }
+        },
+        "units": {
+            "type": "object",
+            "description": "The units every value in this file is in, by category. Declared rather than implied so a reader never has to infer them from key names.",
+            "required": ["energy", "forces", "stress", "pressure", "magnetization", "eigenvalues"],
+            "additionalProperties": false,
+            "properties": {
+                "energy": { "$ref": "#/definitions/energy_units" },
+                "forces": {
+                    "enum": ["Ry/bohr"],
+                    "description": "Not $ref'd to ESSE's force enum: that enum spells this same unit 'Ry/a.u.', and Q3 has emitted 'Ry/bohr' since the units block was introduced. Changing the spelling would move a value every existing consumer already reads."
+                },
+                "stress": { "$ref": "#/definitions/pressure_units" },
+                "pressure": { "$ref": "#/definitions/pressure_units" },
+                "magnetization": { "$ref": "#/definitions/magnetic_units" },
+                "eigenvalues": { "$ref": "#/definitions/energy_units" }
+            }
+        },
+        "execution": {
+            "type": "object",
+            "description": "The parallel topology the run ended up with, and its measured footprint.",
+            "required": [
+                "number_of_processes",
+                "number_of_kpoint_pools",
+                "band_group_size",
+                "reciprocal_space_vectors_are_distributed",
+                "peak_resident_memory_bytes"
+            ],
+            "additionalProperties": false,
+            "properties": {
+                "number_of_processes": { "type": "integer", "minimum": 1 },
+                "number_of_kpoint_pools": { "type": "integer", "minimum": 1 },
+                "band_group_size": { "type": "integer", "minimum": 1 },
+                "reciprocal_space_vectors_are_distributed": { "type": "boolean" },
+                "peak_resident_memory_bytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "The largest peak resident set over the ranks, not their sum: what a node has to fit is the biggest rank. Zero when no platform source could be read."
+                }
+            }
+        },
+        "provenance": {
+            "type": "object",
+            "description": "How this result was produced: engine build, the model/method/precision asked for, and the pseudopotential identities. Deliberately left open — it is metadata about the run rather than part of the physics record."
+        },
+        "material": {
+            "description": "The structure the run used, in the engine's own Cartesian frame: ESSE lattice (vectors in angstrom) and basis (crystal coordinates; basis.constraints true where a Cartesian component may move, as mat3ra-made writes them). q3.workflows starts a relaxation from it.",
+            "$ref": "../esse/dist/js/schema/material.json"
+        },
+        "total_energy_ry": { "type": "number" },
+        "band_energy_ry": { "type": "number" },
+        "hartree_energy_ry": { "type": "number" },
+        "exchange_correlation_energy_ry": { "type": "number" },
+        "ewald_energy_ry": { "type": "number" },
+        "double_counting_correction_ry": { "type": "number" },
+        "smearing_entropy_contribution_ry": { "type": "number" },
+        "hubbard_energy_ry": {
+            "type": "number",
+            "description": "DFT+U (Dudarev) energy. Absent when no Hubbard correction is active."
+        },
+        "dispersion_energy_ry": {
+            "type": "number",
+            "description": "Semi-empirical dispersion correction, already inside total_energy_ry. Absent when the run asked for no dispersion scheme."
+        },
+        "one_center_energy_ry": {
+            "type": "number",
+            "description": "PAW one-center contribution. Absent for norm-conserving and ultrasoft datasets."
+        },
+        "isolated_system_correction": {
+            "type": "object",
+            "description": "The charged/isolated-cell correction, when one was applied. Each scheme's own labelled terms appear beside the fixed keys as '<label>_ry', all signed so that corrected = total + sum(terms).",
+            "required": ["method", "total_ry", "corrected_total_energy_ry"],
+            "properties": {
+                "method": { "type": "string" },
+                "total_ry": { "type": "number" },
+                "corrected_total_energy_ry": { "type": "number" }
+            },
+            "additionalProperties": { "type": "number" }
+        },
+        "fermi_energy_ry": { "type": "number" },
+        "total_magnetization_bohr_magneton": {
+            "type": "number",
+            "description": "∫(ρ↑−ρ↓) over the cell. Present only for a spin-polarized run that converged."
+        },
+        "absolute_magnetization_bohr_magneton": {
+            "type": "number",
+            "description": "∫|ρ↑−ρ↓| over the cell. Reported beside the total because the total alone is zero both for a converged antiferromagnet and for one that collapsed to non-magnetic."
+        },
+        "hubbard_occupations": {
+            "type": "array",
+            "description": "Tr[n] per Hubbard manifold, per spin channel — the electron count the manifold's projectors see. Absent when no Hubbard correction is active.",
+            "items": {
+                "type": "object",
+                "required": ["atom_index", "occupation_trace"],
+                "additionalProperties": false,
+                "properties": {
+                    "atom_index": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "0-based, matching orbital_labels below. The log prints it 1-based."
+                    },
+                    "occupation_trace": {
+                        "type": "array",
+                        "items": { "type": "number" },
+                        "description": "One entry per spin component."
+                    }
+                }
+            }
+        },
+        "scf_energies_ry": {
+            "type": "array",
+            "items": { "type": "number" },
+            "description": "Total energy after each completed iteration, oldest first. Populated by the verification flavor; absent elsewhere, so 'reported no trajectory' is distinguishable from 'reported a flat one'."
+        },
+        "forces_ry_per_bohr": { "$ref": "#/definitions/per_atom_vectors" },
+        "force_contributions_ry_per_bohr": {
+            "type": "object",
+            "description": "The per-atom force broken down by physical mechanism ('local', 'ewald', 'nonlocal', 'core_correction', 'augmentation', 'dispersion', 'hubbard'). A total that disagrees with a reference says only that something is wrong; the term that disagrees says what.",
+            "additionalProperties": { "$ref": "#/definitions/per_atom_vectors" }
+        },
+        "forces_are_incomplete": {
+            "type": "boolean",
+            "description": "Present only when a force term Q3 cannot yet compute was left out. The Python relaxation workflows refuse to run on a result that carries it."
+        },
+        "forces_incomplete_reason": { "type": "string" },
+        "stress_is_incomplete": {
+            "type": "boolean",
+            "description": "Present only when a stress term was left out, or the topology skipped the stress entirely — in which case stress_kbar is a zero tensor rather than a physical result."
+        },
+        "stress_incomplete_reason": { "type": "string" },
+        "stress_kbar": { "$ref": "#/definitions/matrix_3x3" },
+        "pressure_kbar": {
+            "type": "number",
+            "description": "Hydrostatic pressure Tr(σ)/3, as the stress calculator computed it. Zero wherever stress_kbar is."
+        },
+        "stress_contributions_kbar": {
+            "type": "object",
+            "description": "The stress tensor broken down by physical mechanism, same names as the force breakdown plus 'kinetic', 'hartree' and 'exchange_correlation'.",
+            "additionalProperties": { "$ref": "#/definitions/matrix_3x3" }
+        },
+        "eigenvalues_ry": { "$ref": "#/definitions/per_kpoint_per_spin_per_band" },
+        "occupations": { "$ref": "#/definitions/per_kpoint_per_spin_per_band" },
+        "valence_band_maximum_ry": {
+            "type": "number",
+            "description": "The highest eigenvalue at or below fermi_energy_ry. Absent when no band lies there."
+        },
+        "conduction_band_minimum_ry": {
+            "type": "number",
+            "description": "The lowest eigenvalue above fermi_energy_ry. Absent when every computed band is occupied — a run asked for exactly its occupied manifold has no conduction edge."
+        },
+        "band_gap_ry": {
+            "type": "number",
+            "minimum": 0,
+            "description": "conduction_band_minimum_ry − valence_band_maximum_ry, present only when both edges are. The Fermi energy is the divider, so in a metal this is the local level spacing at E_F rather than a gap."
+        },
+        "kpoint_weights": {
+            "type": "array",
+            "items": { "type": "number" },
+            "description": "Integration weight per k-point state, normalized so the sum is the spin degeneracy."
+        },
+        "orbital_projections": {
+            "type": "array",
+            "description": "|<phi'_i|psi_nk>|^2, indexed [k-point state][band][orbital]. Present only when a non-self-consistent run was asked for projections.",
+            "items": {
+                "type": "array",
+                "items": { "type": "array", "items": { "type": "number" } }
+            }
+        },
+        "orbital_labels": {
+            "type": "array",
+            "description": "What each orbital index of orbital_projections is, in the same order.",
+            "items": {
+                "type": "object",
+                "required": [
+                    "atom_index",
+                    "species_type_index",
+                    "shell_label",
+                    "angular_momentum",
+                    "magnetic_quantum_number"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "atom_index": { "type": "integer", "minimum": 0 },
+                    "species_type_index": { "type": "integer", "minimum": 0 },
+                    "shell_label": { "type": "string" },
+                    "angular_momentum": { "type": "integer", "minimum": 0 },
+                    "magnetic_quantum_number": { "type": "integer" }
+                }
+            }
+        }
+    },
+    "required": [
+        "flavor",
+        "converged",
+        "units",
+        "execution",
+        "total_energy_ry",
+        "band_energy_ry",
+        "hartree_energy_ry",
+        "exchange_correlation_energy_ry",
+        "ewald_energy_ry",
+        "double_counting_correction_ry",
+        "smearing_entropy_contribution_ry",
+        "fermi_energy_ry",
+        "forces_ry_per_bohr",
+        "stress_kbar",
+        "pressure_kbar",
+        "eigenvalues_ry",
+        "kpoint_weights"
+    ],
+    "additionalProperties": false
+}

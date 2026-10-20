@@ -1,0 +1,36 @@
+material: ../data/materials/copper.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: paw
+  cutoffs:
+    wavefunction: 40.0
+    density: 320.0
+  pseudopotentials:
+    Cu: ../data/pseudopotentials/paw/Cu.upf
+  scf:
+    convergence_threshold: 1.0e-12
+    max_iterations: 200
+    mixing:
+      mode: broyden
+      beta: 0.1
+    smearing:
+      type: gaussian
+      degauss: 0.02
+    kgrid:
+      dimensions:
+        - 4
+        - 4
+        - 4
+      shifts:
+        - 1
+        - 1
+        - 1
+    number_of_bands: 20
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: cu_paw

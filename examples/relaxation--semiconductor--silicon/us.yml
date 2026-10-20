@@ -1,0 +1,36 @@
+material: ./silicon_displaced.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: ultrasoft
+  cutoffs:
+    wavefunction: 40.0
+    density: 200.0
+  pseudopotentials:
+    Si: ../data/pseudopotentials/us/Si_PBE_USPP.UPF
+  scf:
+    convergence_threshold: 1.0e-6
+    number_of_bands: 8
+    mixing:
+      mode: broyden
+      beta: 0.3
+      ndim: 8
+    kgrid:
+      dimensions:
+        - 2
+        - 2
+        - 2
+      shifts:
+        - 0
+        - 0
+        - 0
+control:
+  calculation: relaxation
+  outdir: ./output
+  prefix: si_relax_us
+  relax_max_steps: 50
+  relax_force_threshold: 5.0e-3
+  relax_energy_threshold: 1.0e-5

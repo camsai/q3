@@ -1,0 +1,57 @@
+# Benchmark decks, tracked over time by scripts/benchmark/run_benchmarks.py.
+#
+# Every deck here costs runner minutes on each pull request, so the set is
+# deliberately small: three cheap decks that between them exercise the code
+# paths a performance change is most likely to touch -- norm-conserving and
+# ultrasoft pseudopotentials, a semiconductor and a metal with smearing, one
+# k-point set small enough to run in seconds -- plus one heavy deck that is
+# not run in CI at all.
+#
+# Deck paths are relative to THIS file, per AGENTS.md section Testing, so the
+# matrix works from a git worktree and carries no machine-specific path.
+#
+# tags decide where a deck runs:
+#   ci   - cheap enough for every pull request (seconds each, single threaded)
+#   full - run on demand or on a schedule; minutes to tens of minutes
+#
+# A deck's own control block is overridden by the runner: outdir and prefix
+# point at the run directory, and deterministic FFT planning is forced on.
+repetitions: 3
+
+decks:
+  - identifier: silicon_norm_conserving
+    input: ../../examples/total_energy--semiconductor--silicon/nc.yml
+    description: >-
+      Si FCC primitive cell, norm-conserving, 48 Ry, 2x2x2 shifted k-grid.
+      The cheapest deck that still runs a full SCF with forces and stress.
+    tags:
+      - ci
+
+  - identifier: silicon_ultrasoft
+    input: ../../examples/total_energy--semiconductor--silicon/us.yml
+    description: >-
+      The same cell with an ultrasoft dataset: augmentation charges, the
+      S metric and the D-matrix path that the norm-conserving deck never
+      reaches.
+    tags:
+      - ci
+
+  - identifier: copper_norm_conserving
+    input: ../../examples/total_energy--metal--copper/nc.yml
+    description: >-
+      Cu FCC primitive cell, norm-conserving, 120 Ry, 4x4x4 shifted k-grid,
+      Gaussian smearing. A metal, a dense basis and several k-points, so the
+      solver dominates the run rather than the setup.
+    tags:
+      - ci
+
+  - identifier: copper_gamma_supercell
+    input: ../../examples/total_energy--metal--copper/nc_3x3x3_bench.yml
+    description: >-
+      Cu 3x3x3 supercell, 27 atoms, 280 bands, one k-point, capped at three
+      SCF iterations by the deck itself. This is the deck the Davidson work
+      is measured on -- it is minutes of solver time rather than seconds, so
+      its timings say something a short deck cannot, and it is far too
+      expensive to run on every pull request.
+    tags:
+      - full

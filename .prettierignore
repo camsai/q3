@@ -1,0 +1,12 @@
+# Prettier ignore — only format what we own
+STATISTICS.md
+# Vendored upstream schemas. A submodule here, so prettier never sees inside
+# it; the packer vendors its files into the clean repo as ordinary tracked
+# files, where prettier would otherwise reformat upstream's JSON and docs.
+schemas/esse/
+build/
+.venv/
+reference/
+agents/
+examples/data/
+**/*.upf

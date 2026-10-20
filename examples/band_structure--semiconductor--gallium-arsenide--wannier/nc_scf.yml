@@ -1,0 +1,35 @@
+material: ../data/materials/gallium_arsenide.json
+method:
+  cutoffs:
+    density: 360.0
+    wavefunction: 90.0
+  pseudopotentials:
+    As: ../data/pseudopotentials/nc/As.upf
+    Ga: ../data/pseudopotentials/nc/Ga.upf
+  scf:
+    convergence_threshold: 1.0e-08
+    max_iterations: 200
+    mixing:
+      beta: 0.3
+      mode: broyden
+      ndim: 8
+    number_of_bands: 22
+    kgrid:
+      dimensions:
+        - 4
+        - 4
+        - 4
+      shifts:
+        - 0
+        - 0
+        - 0
+  subtype: norm-conserving
+  type: pseudopotential
+model:
+  functional: pbe
+  subtype: gga
+  type: dft
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: gaas

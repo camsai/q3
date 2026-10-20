@@ -1,0 +1,23 @@
+{
+    "name": "Triclinic silicon stress discriminator",
+    "lattice": {
+        "vectors": {
+            "a": [5.1, 0.1, 0.2],
+            "b": [0.7, 4.8, 0.3],
+            "c": [0.4, 0.9, 5.3],
+            "units": "angstrom"
+        }
+    },
+    "basis": {
+        "units": "crystal",
+        "elements": [
+            { "id": 0, "value": "Si" },
+            { "id": 1, "value": "Si" }
+        ],
+        "coordinates": [
+            { "id": 0, "value": [0.11, 0.18, 0.27] },
+            { "id": 1, "value": [0.47, 0.56, 0.68] }
+        ]
+    },
+    "isNonPeriodic": false
+}

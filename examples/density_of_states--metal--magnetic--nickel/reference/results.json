@@ -1,0 +1,54 @@
+{
+    "system": "Ni (FCC, single-atom primitive cell, ferromagnetic)",
+    "calculation": "DFT-PBE DOS, collinear spin polarization, norm-conserving pseudopotential",
+    "reference_code": "Quantum ESPRESSO 7.5 with LibXC 7.0.0 (build_libxc/bin/pw.x)",
+    "pseudopotential": "Ni.upf (ONCV, NC)",
+    "cutoffs": {
+        "wavefunction_ry": 60.0,
+        "density_ry": 240.0
+    },
+    "kgrid": "12x12x12 shifted (1,1,1)",
+    "smearing": {
+        "type": "Gaussian",
+        "degauss_ry": 0.02
+    },
+    "spin": {
+        "number_of_spin_components": 2,
+        "starting_magnetization": 0.3
+    },
+    "cubic_lattice_parameter_angstrom": 3.505907,
+    "cubic_lattice_parameter_note": "The cubic cell edge, celldm(1) = 6.625 bohr in the decks; the material file states the rhombohedral primitive edge, 2.478974 angstrom.",
+    "dos": {
+        "broadening_ry": 0.02,
+        "energy_steps": 3000
+    },
+
+    "scf_ground_state": {
+        "total_energy_ry": {
+            "qe": -337.65791378,
+            "q3": -337.65790023
+        },
+        "total_magnetization_bohr_magneton": {
+            "qe": 0.62,
+            "q3": 0.6155
+        },
+        "absolute_magnetization_bohr_magneton": {
+            "qe": 0.7,
+            "q3": 0.7032
+        },
+        "fermi_energy_ry": {
+            "q3": 1.36978450
+        },
+        "qe_source": "examples/total_energy--metal--magnetic--nickel/reference/nc/reference.json -- the same cell, pseudopotential, cutoffs, k-grid, smearing and starting magnetization this example's SCF block uses.",
+        "q3_source": "Q3 built at 0467b8e, running ../nc.yml with control.calculation switched to self_consistent_field. The SCF block here is identical to the one in band_structure--metal--magnetic--nickel/nc.yml, so both examples share this ground state."
+    },
+
+    "expected_features": {
+        "metallic": true,
+        "dos_at_fermi_nonzero": "in both spin channels",
+        "spin_resolved": "majority and minority DOS differ -- the integral of their difference to E_F is the ~0.62 Bohr magneton moment above",
+        "majority_d_band": "peak below E_F, essentially full",
+        "minority_d_band": "peak straddling E_F, leaving the d holes that carry the moment",
+        "note": "Ni is the magnetic counterpart of the Cu DOS example: the same FCC cell and d-band complex, exchange-split into two channels instead of one."
+    }
+}

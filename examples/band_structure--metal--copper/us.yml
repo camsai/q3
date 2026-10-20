@@ -1,0 +1,45 @@
+material: ../data/materials/copper.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: ultrasoft
+  cutoffs:
+    wavefunction: 40.0
+    density: 200.0
+  pseudopotentials:
+    Cu: ../data/pseudopotentials/us/cu_pbe_v1.2.uspp.F.UPF
+  scf:
+    convergence_threshold: 1.0e-08
+    max_iterations: 200
+    number_of_bands: 20
+    mixing:
+      mode: broyden
+      beta: 0.3
+      ndim: 8
+    smearing:
+      type: gaussian
+      degauss: 0.02
+    kgrid:
+      dimensions:
+        - 8
+        - 8
+        - 8
+      shifts:
+        - 1
+        - 1
+        - 1
+control:
+  calculation: band_structure
+  outdir: ./output
+  prefix: cu_bands_us
+  band_path:
+    - "G"
+    - "X"
+    - "W"
+    - "K"
+    - "G"
+    - "L"
+  band_path_points_per_segment: 30

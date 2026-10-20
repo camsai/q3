@@ -1,0 +1,53 @@
+{
+    "system": "Si (diamond, FCC primitive cell, 2 atoms)",
+    "calculation": "DFT-PBE, norm-conserving pseudopotential",
+    "reference_code": "Quantum ESPRESSO 7+ with LibXC (build_libxc/bin/pw.x)",
+    "pseudopotential": "Si.upf (ONCV, NC)",
+    "cutoffs": {
+        "wavefunction_ry": 48.0,
+        "density_ry": 192.0
+    },
+    "kgrid": "4x4x4 Gamma-centered",
+    "lattice_parameter_angstrom": 3.866976,
+
+    "total_energy": {
+        "q3_ry": -16.91341791,
+        "tolerance_ry": 0.001,
+        "note": "NC pseudopotential at equilibrium geometry"
+    },
+
+    "band_structure": {
+        "path": ["G", "X", "W", "K", "G", "L"],
+        "band_gap_ev": {
+            "q3_pbe": 0.65,
+            "tolerance_ev": 0.1,
+            "note": "PBE underestimates Si gap (experimental ~1.12 eV). Q3 PBE gives ~0.62-0.73 eV."
+        },
+        "fermi_energy_ry": {
+            "note": "Si is a semiconductor; Fermi level set at VBM for SCF purposes."
+        },
+        "valence_band_maximum": {
+            "location": "Gamma",
+            "band_index": 3
+        },
+        "conduction_band_minimum": {
+            "location": "near X (0.85 along G-X)",
+            "band_index": 4
+        }
+    },
+
+    "density_of_states": {
+        "broadening_ry": 0.01,
+        "energy_steps": 3000,
+        "expected_features": {
+            "gap_below_fermi": "Si has no DOS states in gap below E_F",
+            "valence_band_width_ev": 12.0,
+            "note": "DOS should show clear gap at E_F consistent with semiconductor"
+        }
+    },
+
+    "forces_at_equilibrium": {
+        "max_force_ry_per_bohr": 1.0e-5,
+        "note": "Forces should be < 1e-5 Ry/bohr at equilibrium geometry by symmetry"
+    }
+}

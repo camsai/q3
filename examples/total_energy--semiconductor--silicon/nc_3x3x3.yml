@@ -1,0 +1,37 @@
+material: ../data/materials/silicon_3x3x3.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: norm-conserving
+  cutoffs:
+    wavefunction: 48.0
+    density: 192.0
+  pseudopotentials:
+    Si: ../data/pseudopotentials/nc/Si.upf
+  scf:
+    convergence_threshold: 1.0e-08
+    # 130 bands = 108 occupied + 20% empty.
+    # A 3x3x3 supercell at the Gamma point folds zone-edge states back to Gamma, closing the gap.
+    # Davidson diagonalization requires empty bands when states near the Fermi level are degenerate.
+    number_of_bands: 130
+    mixing:
+      mode: broyden
+      beta: 0.3
+      ndim: 8
+      preconditioning: kerker
+    kgrid:
+      dimensions:
+        - 1
+        - 1
+        - 1
+      shifts:
+        - 0
+        - 0
+        - 0
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: si_nc_3x3x3

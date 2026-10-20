@@ -1,0 +1,198 @@
+{
+    "src/io/input/parser/yaml.hpp": {
+        "capability_branch": 1,
+        "string_switch": 2
+    },
+    "src/io/pseudopotential/loader.hpp": {
+        "dynamic_cast": 1
+    },
+    "src/io/pseudopotential/upf_reader.hpp": {
+        "pseudopotential_downcast": 3
+    },
+    "src/io/quantum_system/kohn_sham/planewave/checkpoint/q3.hpp": {
+        "dynamic_cast": 2
+    },
+    "src/layer_0_core/math/linear_algebra/gpu/blas/metal.mm": {
+        "dynamic_cast": 1
+    },
+    "src/layer_0_core/math/linear_algebra/gpu/blas/sycl.cpp": {
+        "dynamic_cast": 1
+    },
+    "src/layer_0_core/math/linear_algebra/gpu/lapack/sycl.cpp": {
+        "dynamic_cast": 1
+    },
+    "src/layer_1_structure/reciprocal_space/kpoint_stencil.hpp": {
+        "capability_branch": 1
+    },
+    "src/layer_3_representation/basis/planewave/pseudopotential/factory.hpp": {
+        "family_flag": 1
+    },
+    "src/layer_3_representation/basis/planewave/pseudopotential/init.hpp": {
+        "family_flag": 1
+    },
+    "src/layer_3_representation/basis/planewave/pseudopotential/internal/beta_function_table/factory.hpp": {
+        "capability_branch": 1,
+        "dynamic_cast": 1
+    },
+    "src/layer_3_representation/basis/planewave/pseudopotential/internal/beta_function_table/paw.hpp": {
+        "capability_branch": 1,
+        "dynamic_cast": 1
+    },
+    "src/layer_3_representation/basis/planewave/pseudopotential/ultrasoft/init.hpp": {
+        "capability_branch": 1,
+        "family_accessor": 2,
+        "family_flag": 3
+    },
+    "src/layer_3_representation/charge_density/planewave/pseudopotential/init.hpp": {
+        "family_flag": 1
+    },
+    "src/layer_3_representation/effective_potential/planewave/pseudopotential/ultrasoft/init.hpp": {
+        "family_flag": 2
+    },
+    "src/layer_3_representation/pseudopotential/planewave/init.hpp": {
+        "family_flag": 1
+    },
+    "src/layer_3_representation/pseudopotential/planewave/internal/charge_atomic.hpp": {
+        "capability_branch": 1,
+        "dynamic_cast": 1
+    },
+    "src/layer_3_representation/pseudopotential/planewave/internal/charge_core.hpp": {
+        "capability_branch": 1,
+        "dynamic_cast": 1
+    },
+    "src/layer_3_representation/pseudopotential/planewave/internal/potential_local.hpp": {
+        "dynamic_cast": 2
+    },
+    "src/layer_3_representation/pseudopotential/planewave/ultrasoft/init.hpp": {
+        "pseudopotential_downcast": 1
+    },
+    "src/layer_3_representation/pseudopotential/planewave/ultrasoft/internal/charge_density_augmentation.hpp": {
+        "family_accessor": 2,
+        "family_flag": 2
+    },
+    "src/layer_3_representation/pseudopotential/set.hpp": {
+        "dynamic_cast": 2,
+        "family_flag": 1
+    },
+    "src/layer_3_representation/quantum_system/kohn_sham/planewave/norm_conserving/factory.hpp": {
+        "family_flag": 1
+    },
+    "src/layer_3_representation/wavefunction/planewave/norm_conserving/initializer.hpp": {
+        "family_flag": 2,
+        "pseudopotential_downcast": 1
+    },
+    "src/layer_4_computation/diagonalizer/planewave/davidson.hpp": {
+        "capability_branch": 4,
+        "dynamic_cast": 1
+    },
+    "src/layer_4_computation/diagonalizer/planewave/internal/overlap/pseudopotential/factory.hpp": {
+        "family_flag": 1
+    },
+    "src/layer_4_computation/diagonalizer/planewave/internal/overlap/pseudopotential/ultrasoft/init.hpp": {
+        "pseudopotential_downcast": 2
+    },
+    "src/layer_4_computation/diagonalizer/planewave/subspace/factory.hpp": {
+        "dynamic_cast": 1
+    },
+    "src/layer_4_computation/effective_potential/internal/hubbard/hubbard.hpp": {
+        "family_flag": 1
+    },
+    "src/layer_4_computation/flavors/non_self_consistent_field.hpp": {
+        "dynamic_cast": 1,
+        "family_flag": 3
+    },
+    "src/layer_4_computation/flavors/self_consistent_field.hpp": {
+        "dynamic_cast": 1
+    },
+    "src/layer_4_computation/flavors/verification.hpp": {
+        "dynamic_cast": 1
+    },
+    "src/layer_4_computation/interpolator/capture.hpp": {
+        "capability_branch": 1,
+        "dynamic_cast": 1,
+        "family_flag": 1
+    },
+    "src/layer_4_computation/interpolator/input_data/specification.hpp": {
+        "capability_branch": 2
+    },
+    "src/layer_4_computation/interpolator/method/wannier/construction_inputs.hpp": {
+        "capability_branch": 1
+    },
+    "src/layer_4_computation/interpolator/method/wannier/gauge/factory.hpp": {
+        "capability_branch": 1
+    },
+    "src/layer_4_computation/interpolator/method/wannier/gauge/maximally_localized_gauge_choice.hpp": {
+        "capability_branch": 1
+    },
+    "src/layer_4_computation/interpolator/method/wannier/internal/spread_functional.hpp": {
+        "capability_branch": 1
+    },
+    "src/layer_4_computation/interpolator/method/wannier/internal/spread_minimizer.hpp": {
+        "capability_branch": 1
+    },
+    "src/layer_4_computation/interpolator/method/wannier/internal/subspace_disentangler.hpp": {
+        "capability_branch": 1
+    },
+    "src/layer_4_computation/interpolator/method/wannier/subspace/projectability_disentanglement_selection.hpp": {
+        "capability_branch": 2
+    },
+    "src/layer_4_computation/iterator/kohn_sham/factory.hpp": {
+        "family_flag": 1
+    },
+    "src/layer_4_computation/iterator/kohn_sham/planewave/init.hpp": {
+        "dynamic_cast": 1
+    },
+    "src/layer_4_computation/iterator/kohn_sham/planewave/pseudopotential/factory.hpp": {
+        "capability_branch": 1,
+        "family_flag": 1
+    },
+    "src/layer_4_computation/iterator/kohn_sham/planewave/pseudopotential/init.hpp": {
+        "family_flag": 2,
+        "string_switch": 3
+    },
+    "src/layer_4_computation/iterator/kohn_sham/planewave/pseudopotential/ultrasoft/init.hpp": {
+        "pseudopotential_downcast": 3
+    },
+    "src/layer_4_computation/paw/one_center/scf_terms.hpp": {
+        "dynamic_cast": 1
+    },
+    "src/layer_5_properties/forces/planewave/init.hpp": {
+        "family_flag": 2
+    },
+    "src/layer_5_properties/forces/planewave/pseudopotential/init.hpp": {
+        "family_flag": 2
+    },
+    "src/layer_5_properties/forces/planewave/pseudopotential/internal/core_correction.hpp": {
+        "family_flag": 1
+    },
+    "src/layer_5_properties/forces/planewave/pseudopotential/internal/hubbard.hpp": {
+        "family_flag": 2,
+        "pseudopotential_downcast": 2,
+        "string_switch": 1
+    },
+    "src/layer_5_properties/forces/planewave/pseudopotential/internal/nonlocal.hpp": {
+        "family_flag": 2,
+        "pseudopotential_downcast": 1
+    },
+    "src/layer_5_properties/forces/planewave/pseudopotential/ultrasoft/internal/augmentation.hpp": {
+        "capability_branch": 1,
+        "family_flag": 1,
+        "pseudopotential_downcast": 1
+    },
+    "src/layer_5_properties/stress_tensor/planewave/init.hpp": {
+        "family_flag": 1
+    },
+    "src/layer_5_properties/stress_tensor/planewave/pseudopotential/internal/hubbard.hpp": {
+        "family_flag": 2,
+        "pseudopotential_downcast": 2,
+        "string_switch": 3
+    },
+    "src/layer_5_properties/stress_tensor/planewave/pseudopotential/internal/nonlocal.hpp": {
+        "family_flag": 2,
+        "pseudopotential_downcast": 1
+    },
+    "src/layer_5_properties/stress_tensor/planewave/pseudopotential/ultrasoft/internal/augmentation.hpp": {
+        "family_flag": 2,
+        "pseudopotential_downcast": 1
+    }
+}

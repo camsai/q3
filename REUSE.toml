@@ -1,0 +1,47 @@
+version = 1
+SPDX-PackageName = "Q3"
+SPDX-PackageSupplier = "CAMSAI.org"
+SPDX-PackageDownloadLocation = "https://github.com/camsai/q3"
+
+# Q3 declares copyright and licensing here rather than in per-file headers, so
+# that adding a source file never means remembering a boilerplate line. The
+# blocks are evaluated in order, and a later block wins: everything is
+# first-party Apache-2.0 unless one of the third-party blocks below claims it.
+
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 CAMSAI.org and contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+# --- Third-party data -------------------------------------------------------
+# Vendored pseudopotential tables are other projects' data files,
+# redistributed unmodified for the validation suite and examples, under the
+# licenses their upstreams state:
+#   - PseudoDojo (pseudo-dojo.org): "All pseudopotentials and their
+#     associated input files are released under a CC BY 4.0 license."
+#   - GBRV (physics.rutgers.edu/gbrv): "released under the gnu public
+#     license", linking the GPL-3.0 text.
+#   - The legacy Si.pz-vbc.UPF comes from the Quantum ESPRESSO
+#     pseudopotential distribution (packaged downstream as GPLv2).
+# Per-file provenance (source, version, generator, archive) is recorded in
+# examples/data/pseudopotentials/metadata.yml. Vendor pseudopotential
+# datasets that are licensed per-user are never committed here.
+
+[[annotations]]
+path = ["examples/data/pseudopotentials/nc/**", "examples/data/pseudopotentials/paw/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "The PseudoDojo project contributors"
+SPDX-License-Identifier = "CC-BY-4.0"
+
+[[annotations]]
+path = "examples/data/pseudopotentials/nc/Si.pz-vbc.UPF"
+precedence = "override"
+SPDX-FileCopyrightText = "The Quantum ESPRESSO pseudopotential library contributors"
+SPDX-License-Identifier = "GPL-2.0-only"
+
+[[annotations]]
+path = "examples/data/pseudopotentials/us/**"
+precedence = "override"
+SPDX-FileCopyrightText = "The GBRV pseudopotential library contributors (Rutgers University)"
+SPDX-License-Identifier = "GPL-3.0-only"

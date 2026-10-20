@@ -1,0 +1,35 @@
+&control
+    calculation = 'scf',
+    outdir = './qe_output',
+    prefix = 'cu_scf',
+    pseudo_dir = '.',
+    tprnfor = .true.,
+    tstress = .true.,
+/
+&system
+    ibrav = 2,
+    celldm(1) = 6.8413,
+    nat = 1,
+    ntyp = 1,
+    ecutwfc = 120.0,
+    ecutrho = 480.0,
+    nbnd = 20,
+    occupations = 'smearing',
+    smearing = 'gaussian',
+    degauss = 0.02,
+    input_dft = 'XC-000I-000I-101L-130L',
+/
+&electrons
+    conv_thr = 1.0e-8,
+    mixing_mode = 'plain',
+    mixing_beta = 0.3,
+    electron_maxstep = 200,
+/
+ATOMIC_SPECIES
+  Cu  63.546  Cu.upf
+
+ATOMIC_POSITIONS crystal
+  Cu  0.000  0.000  0.000
+
+K_POINTS automatic
+  8 8 8  1 1 1

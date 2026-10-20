@@ -1,0 +1,131 @@
+# Q3 — CUDA image, for NVIDIA GPUs.
+#
+# Unlike the serial and MPI images this one is amd64 only, and deliberately so:
+# the GPUs this targets sit in x86_64 nodes, and there is no arm64 GPU runner
+# to build or test an aarch64 copy on. Publishing an untested one under a
+# multi-architecture tag would be worse than not publishing it.
+#
+# Pinned to the OLDEST toolkit the image needs to serve, not the newest
+# available, because the compatibility only runs one way. The container ships
+# the CUDA runtime but not the driver, which comes from the host, so the host
+# driver decides what the image can do:
+#
+#   CUDA 12.x needs driver >= 525          CUDA 13.x needs driver >= 580
+#
+# An application built against an older toolkit keeps working on newer drivers
+# -- that is binary backward compatibility, and it is guaranteed. The reverse is
+# not: a 13.x build on a pre-580 driver fails at the first CUDA call unless the
+# host installs a forward-compatibility package, which is an extra step and is
+# restricted by platform and GPU.
+#
+# So 12.8 runs everywhere 13.1 would AND on the 12.x hosts 13.1 would refuse,
+# while costing nothing in return: it supports every architecture named below,
+# and Q3's GPU backend uses only long-standing cudart, cuBLAS, cuSOLVER and
+# cuFFT entry points. Raise this only when something needs a 13.x feature, and
+# check the driver floor on the machines that will run it first.
+#
+# .github/workflows/cuda.yml installs this same version on the self-hosted GPU
+# runner, so the CPU/GPU parity check that gates the backend exercises the
+# toolkit this image ships rather than a build nobody runs. The two are a pair:
+# change them together, or the gate stops covering the artefact.
+ARG CUDA_VERSION=12.8.1
+
+# Which GPUs the compiled kernels will run on. 80 is the A100, 90 the H100;
+# CMakeLists.txt defaults to 80 alone, and this widens it because a published
+# image cannot know which of the two it will land on. An explicit value here
+# also stops the build from silently taking that default if it ever changes.
+ARG CUDA_ARCHITECTURES="80;90"
+
+# ---------- Stage 1: build ----------
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS builder
+
+ARG CUDA_ARCHITECTURES
+ENV DEBIAN_FRONTEND=noninteractive
+
+# OpenBLAS for the same reason the serial Dockerfile gives: the reference
+# netlib BLAS that the unqualified -dev names resolve to is untuned and
+# single-threaded, and it cost the published images a factor of ten serial and
+# forty threaded (camsai/q3#12).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        git \
+        libfftw3-dev \
+        libopenblas-dev \
+        libxc-dev \
+        libomp-dev \
+        python3 \
+        python3-venv \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/q3-src
+COPY . /opt/q3-src
+
+RUN python3 -m venv /opt/q3-src/.venv \
+    && /opt/q3-src/.venv/bin/pip install --no-cache-dir pyyaml jinja2 jsonref
+
+# Both binaries ship. q3_gpu_cuda is the point of the image, but the serial q3
+# is what the CPU/GPU energy parity check compares against, and having the two
+# in one image is what lets that comparison be run on the machine that
+# disagrees rather than reproduced elsewhere first.
+# The commit this image was built from, stamped into q3 --version and every
+# results.json. .dockerignore drops .git/ from the build context (see there),
+# so the SHA has to be handed in; an empty value is the honest default and
+# reports "commit unknown", which is what every published image said before
+# the workflow started passing it (camsai/q3#6).
+ARG Q3_GIT_COMMIT=""
+RUN cmake -S . -B build \
+        -DQ3_BUILD_TESTS=OFF \
+        -DQ3_WITH_CUDA=ON \
+        -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/q3 \
+        -DQ3_GIT_COMMIT="${Q3_GIT_COMMIT}" \
+    && cmake --build build -j"$(nproc)" \
+    && cmake --install build
+
+# ---------- Stage 2: runtime ----------
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu24.04
+
+LABEL org.opencontainers.image.title="Q3 (CUDA)" \
+      org.opencontainers.image.description="Q3 DFT engine with the NVIDIA CUDA GPU backend" \
+      org.opencontainers.image.vendor="Mat3ra" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# OpenBLAS matters here for the CPU-side stages and for `q3`, the serial
+# binary this image also ships; the GPU path already goes through cuBLAS.
+#
+# The CUDA runtime image already carries cudart, cuBLAS, cuSOLVER and cuFFT,
+# which is the whole reason for basing on it rather than adding them here.
+# What it does not carry is the driver: libcuda.so.1 comes from the host, put
+# in place by the container runtime's GPU support (`podman-hpc --gpu`,
+# `docker run --gpus`). Nothing links it directly -- CUDA::cudart loads it on
+# the first CUDA call -- so the check below stays clean in a machine with no
+# GPU, and a missing driver surfaces at run time as a CUDA error rather than
+# as a link failure.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libfftw3-double3 \
+        libopenblas0-openmp \
+        libxc9 \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Whatever cmake installed, under whatever names. Enumerating the binaries
+# here couples this file to names that change -- q3-convert is folding into a
+# `q3_utility convert` subcommand -- and installing to a private prefix rather
+# than /usr/local means only Q3's own binaries are in the directory to copy,
+# whatever base image the builder used.
+COPY --from=builder /opt/q3/bin/ /usr/local/bin/
+
+ENV PATH=/usr/local/bin:$PATH \
+    OMP_NUM_THREADS=1
+
+RUN if ldd /usr/local/bin/* | grep 'not found'; then exit 1; fi \
+    && q3 --version > /dev/null
+
+# The serial binary, as in the other images. The GPU one is reached by name:
+# `podman-hpc run --gpu <image> q3_gpu_cuda input.yml`.
+CMD ["q3"]

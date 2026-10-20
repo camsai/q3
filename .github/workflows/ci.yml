@@ -1,0 +1,613 @@
+name: Build, Test, and Validate
+
+on:
+  push:
+    branches: ["main"]
+    paths: &monitor_paths
+      - ".github/workflows/ci.yml"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "schemas/**"
+      - "scripts/**"
+      - "src/**"
+      - "tests/**"
+      # The container build is part of what a release ships, so a change to it
+      # has to reach the publish job below. Without these, a container-only
+      # merge matched nothing here, no release was cut, and container.yml --
+      # which triggers on `release: published` -- never ran. #178 merged the
+      # whole OCI pipeline and published nothing at all for exactly that
+      # reason. Watching them on pull requests too is deliberate: it is what
+      # puts a container change through the lint job's public-export gate,
+      # which #178 never ran and had to be checked by hand.
+      - "Dockerfile"
+      - "Dockerfile.*"
+      - ".dockerignore"
+      - "q3.def"
+      - ".github/workflows/container.yml"
+      - ".github/actions/**"
+  pull_request:
+    branches: ["**"]
+    paths: *monitor_paths
+  workflow_dispatch:
+
+concurrency:
+  # A run on main cuts the release and the container build that follows it, so
+  # it must never be cancelled by the next push. Superseded pull-request runs
+  # are fair game.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Every job pins its runner image rather than following ubuntu-latest, because
+# the image brings the compiler with it. When ubuntu-latest moved to Ubuntu 26.04
+# and GCC 15, the fetched yaml-cpp 0.8.0 stopped compiling and every pull request
+# went red with no change on our side. Move the pin on purpose, in a change of its
+# own that shows the build passing on the new image.
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          # The export dry run vendors schemas/esse, so the gate validates the
+          # exact tree a real sync would publish.
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # No C++ build or LFS pull: every hook run below is source-text-only,
+      # which keeps this job at ~1 minute so style feedback lands well before
+      # the build-and-test job finishes.
+      - name: Run pre-commit hooks
+        # SKIP now lists exactly one hook, and it is not a backlog:
+        #   clang-tidy   - can never run here, in any state of its backlog:
+        #                 it needs a compile database (-p build), i.e. a full
+        #                 C++ build, which this build-free job deliberately
+        #                 doesn't do. Runs for real in the build-and-test
+        #                 job's "Run clang-tidy" step instead (added
+        #                 2026-07-29: zero findings, see TODOs.md § 3.3) --
+        #                 this entry stays in SKIP permanently.
+        # Every other hook now gates for real: ruff-format, clang-format and
+        # prettier each came off this list once their backlog was cleared.
+        run: |
+          pip install pre-commit
+          SKIP=clang-tidy \
+            pre-commit run --all-files --show-diff-on-failure
+
+      # The public tree must be exportable at every commit, not just when
+      # someone remembers to run the packer. Catching a quote of proprietary engine source, a
+      # link into plan/, or an unbalanced vault marker here costs one review
+      # comment; catching it at export time costs an archaeology session
+      # across every commit since the last export. Dry run only: no mirror is
+      # touched, and the submodule gap warns rather than failing (it blocks
+      # --mirror instead). See AGENTS.md § "Public Mirror".
+      # (The packer's own tests run in build-and-test alongside the rest of
+      # tests/python/, which has LFS pulled.)
+      #
+      # Stripped from the export: the packer is not exported, so this step
+      # would fail with "No such file or directory" on the clean repo.
+      - name: Report the pull request's reviewable size
+        if: github.event_name == 'pull_request'
+        # Advisory, not a gate. A ceiling that blocks gets argued with or
+        # routed around; one that prints a number in every run gets designed
+        # for. Generated and vendored paths are excluded inside the script,
+        # so what it prints is what a reviewer actually has to read.
+        run: |
+          git fetch --no-tags origin "${{ github.event.pull_request.base.ref }}"
+          python3 scripts/repo/check_pull_request_size.py \
+            --base "origin/${{ github.event.pull_request.base.ref }}" \
+            --head "${{ github.event.pull_request.head.sha }}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  build-and-test:
+    # Every event builds and runs the same thing. There used to be an
+    # IS_FULL_RUN flag here (true only on main and workflow_dispatch) that
+    # configured Q3_BUILD_TESTS=OFF and skipped ctest on pull requests, so a
+    # PR's green tick certified a build that had never compiled a single
+    # test. That is how SphericalHarmonicsBatch.IsOrthonormalOverTheSphere
+    # reached main in August 2026: the pull request that added it went green
+    # with its C++ test step marked "skipped" (run 32465606590), the test
+    # failed on the very next run of main (run 32476344804), and it failed
+    # again on the clean mirror as soon as main was exported there. A tick
+    # that means "nothing was tested" is worse than no tick, so the flag is
+    # gone rather than annotated. Cost of removing it, measured 2026-08-21
+    # across the runs cited above:
+    #
+    #   ctest itself           +46 s   (1035 tests, serial, run 32476344804)
+    #   Build, tests ON        +~60 s  (warm cache: 1m25-2m03 on green main
+    #                                   runs 32396462423/32430259188/32463891371
+    #                                   vs 44-62 s for a tests-OFF PR build)
+    #   Run clang-tidy         +3-6 m  (the compile database grows from ~23
+    #                                   src files to ~151 once the 128
+    #                                   q3_tests translation units are in it;
+    #                                   23-32 s on PRs before, 3m34-6m48 on
+    #                                   main -- so PRs now lint the test
+    #                                   sources main already linted)
+    #
+    # against a job whose wall clock is 24 min and is dominated by the 15-21
+    # min "Run Python Validation Tests (Tier 1)" step. main gets *faster* in
+    # exchange: PR runs used to publish tests-OFF ccache/build-directory
+    # caches that main then restored and missed on for all 128 test objects
+    # (13.6% ccache hit rate, a 6-8 min build in runs 32472949471/32474976441/
+    # 32475870608/32476344804). Both now cache the same shape.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install System Dependencies
+        timeout-minutes: 10
+        run: |
+          # Some runner VMs land on a dead azure.archive apt mirror, and apt
+          # then retries "Ign:" lines until the job bound kills it (run
+          # 32273719247 spent its whole 90 minutes in this step). Point this
+          # VM at the canonical mirrors and bound the waiting, so a mirror
+          # outage fails in minutes and says why. The file that matters on
+          # GitHub's images is the mirror+file list /etc/apt/apt-mirrors.txt
+          # (azure sits at priority 1 inside it; the .sources file only
+          # points here) -- the sources globs cover other images.
+          for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            if [ -f "$f" ]; then sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g; s/azure\.ports\.ubuntu\.com/ports.ubuntu.com/g' "$f"; fi
+          done
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99q3-ci >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y libfftw3-dev libomp-dev liblapack-dev libblas-dev libxc-dev ccache clang-tidy
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,build]"
+
+      - name: Locate the ccache directory
+        id: ccache
+        run: |
+          # ccache 4.x keeps objects under XDG ($HOME/.cache/ccache); the
+          # ~/.ccache this cached is the 3.x location and never existed, so
+          # every run logged "Path Validation Error ... hence no cache is
+          # being saved" and every compile was cold -- 0 hits out of 132 in
+          # run 32246965071, and the same in every other job below. Ask
+          # ccache where it actually stores them rather than hardcoding
+          # either path, so a future default cannot silently break this
+          # again.
+          #
+          # Also bound the size here: the default is 5 GiB per cache and six
+          # jobs cache one each, which would evict everything else from the
+          # repository's Actions cache budget.
+          echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
+          echo "dir=$(ccache --get-config cache_dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.ccache.outputs.dir }}
+          # actions/cache writes only when the key is new, so a key that moves
+          # only with CMakeLists.txt saves once and then never takes in
+          # newly compiled objects. Make it run-unique and fall back by
+          # prefix, the way the build-directory cache already does.
+          key: ccache-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-
+            ccache-${{ runner.os }}-
+
+      - name: Cache Build Directory
+        uses: actions/cache@v5
+        with:
+          path: build
+          key: build-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-${{ github.sha }}
+          restore-keys: |
+            build-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-
+            build-${{ runner.os }}-
+
+      - name: Configure CMake
+        run: |
+          # Q3_REQUIRE_SCHEMA_CODEGEN turns a missing generator into a
+          # configuration failure. Locally it degrades to using the committed
+          # headers; CI must never do that silently, or a schema change could
+          # merge without its generated headers.
+          cmake -S . -B build -DQ3_BUILD_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQ3_REQUIRE_SCHEMA_CODEGEN=ON \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: |
+          ccache -z
+          cmake --build build -j$(nproc)
+          ccache -s
+
+      - name: Run clang-tidy
+        # Needs build/compile_commands.json from the Build step above, which
+        # is why this lives here and not in the lint job (see that job's
+        # comment). Runs the same `clang-tidy` pre-commit hook a developer
+        # runs locally (scripts/repo/run_clang_tidy.py: checks exactly the files
+        # this configuration actually compiled, so GPU/MPI backend files
+        # gated behind flags that default OFF here -- cuda.cpp/hip.cpp/
+        # sycl.cpp, main_gpu*.cpp, main_mpi.cpp -- are correctly not checked
+        # rather than failing on missing headers unrelated to code quality).
+        # Measured 2026-07-29 (TODOs.md § 3.3): zero findings across all 104 compiled
+        # files in a full run (main + tests), clang-tidy 18.1.3. Gates hard,
+        # no continue-on-error -- flip to report-only if a future finding
+        # can't be fixed immediately, per the same measurement-first policy
+        # as the rest of this backlog.
+        run: |
+          pip install pre-commit
+          pre-commit run clang-tidy --all-files --show-diff-on-failure
+
+      - name: Run C++ Unit and Integration Tests
+        # --no-tests=error is the guard that outlives this particular fix: a
+        # build that discovers no tests at all -- gtest_discover_tests
+        # silently producing an empty list, a target renamed out from under
+        # the CMakeLists -- would otherwise print "No tests were found!!!"
+        # and exit 0, which is exactly the "green means nothing ran" failure
+        # this step was just rescued from.
+        run: |
+          ctest --output-on-failure --no-tests=error --test-dir build
+
+      - name: Run Python Unit Tests (no binary required)
+        run: |
+          pytest tests/python/ -v
+
+      - name: Run Python Validation Tests (Tier 1)
+        run: |
+          pytest tests/validation/ -v --q3-bin ./build/q3
+
+      - name: Run Python Regression Tests (Tier 1)
+        run: |
+          pytest tests/regression/ -v --q3-bin ./build/q3
+
+      # Tier 2 tests are disabled on merge to keep the merge loop fast.
+      # They run on a bi-monthly schedule in scheduled_tests.yml.
+      # The `if:` this block used to carry is deliberately not restored with
+      # it: `env.IS_FULL_RUN` no longer exists, so it would evaluate to the
+      # empty string, never equal 'true', and leave whoever uncommented the
+      # block with a step that quietly never runs.
+      # - name: Run Tier 2 Tests (DOS, supercell single-step, full SCF)
+      #   run: |
+      #     pytest tests/ -v --tier2 --q3-bin ./build/q3
+
+  wannier-tier2:
+    # The Wannier interpolation chains are tier 2 -- an SCF, a full-grid NSCF,
+    # an evaluation and a direct comparison per example -- so they are excluded
+    # from the tier-1 sweep above for the reason stated there: the merge loop
+    # stays fast. But excluding them left the feature's only end-to-end
+    # coverage running twice a month on main, where a regression introduced in
+    # a pull request sits undetected for up to a fortnight and is then
+    # attributed to whatever else landed in between.
+    #
+    # This job closes that window without paying for it on every pull request:
+    # it runs only when something that can actually change an interpolation
+    # result has changed. Everything else -- the overwhelming majority of pull
+    # requests -- skips it in seconds.
+    #
+    # The Quantum ESPRESSO comparisons inside test_wannier_interpolation.py
+    # self-skip here, since no runner carries a QE build; what runs is the
+    # native chain, which is what this job exists to protect.
+    runs-on: ubuntu-24.04
+    # The five suites take about 35 minutes locally and runners are slower than
+    # that. 90 leaves room for the gap and for another example or two, and
+    # still bounds a hang at well under the six-hour default.
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          # The change detection below diffs against the base branch, which a
+          # shallow clone does not have.
+          fetch-depth: 0
+
+      - name: Decide whether an interpolation result could have changed
+        id: check_changes
+        # A push is judged by what it changed, like a pull request: diffing
+        # against the tip it replaced. Running unconditionally on every push
+        # cost each merge and each public sync over half an hour of chains
+        # nothing had touched. A push whose previous tip is unknown (a new
+        # branch, or history rewritten past it) runs, and so does every other
+        # event: a manual dispatch asks for the run by name.
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request)
+              BASE="origin/${{ github.base_ref }}"
+              git fetch --no-tags origin "${{ github.base_ref }}" >/dev/null 2>&1 || true
+              CHANGED=$(git diff --name-only "$BASE"...HEAD || echo "")
+              ;;
+            push)
+              BEFORE="${{ github.event.before }}"
+              if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+                || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+                echo "Push with no known previous tip -- running." >> "$GITHUB_STEP_SUMMARY"
+                echo "changes=true" >> $GITHUB_OUTPUT
+                exit 0
+              fi
+              CHANGED=$(git diff --name-only "$BEFORE" HEAD || echo "")
+              ;;
+            *)
+              echo "Event ${{ github.event_name }} -- running." >> "$GITHUB_STEP_SUMMARY"
+              echo "changes=true" >> $GITHUB_OUTPUT
+              exit 0
+              ;;
+          esac
+          # Anything that feeds a Wannier model: the interpolator itself, the
+          # ITERATOR that hands it the quantum system, the k-space geometry it
+          # is built on, the Fermi energy the frozen window is measured against,
+          # the command and workflow that drive it, the input schema that
+          # configures it, the examples it runs, and the tests themselves.
+          #
+          # The iterator is here because the capture reads its quantum-system
+          # snapshot: a downcast against the wrong one of its two systems made
+          # every ultrasoft and PAW capture unreachable, and a change to that
+          # snapshot would have matched nothing in this list.
+          #
+          # The layer-0 dense algebra and the two q3.io model packages are here
+          # because every chain runs through them: the kernels multiply and
+          # diagonalise with the first, and the ladder writes each evaluation's
+          # block and reads each results file through the second.
+          #
+          # The eigensolver and the NSCF flavor are here because they produce the
+          # eigenvectors the capture reads. Halving Davidson's default working
+          # basis made a single NSCF pass miss eigenvalues by tens of meV while
+          # every residual test passed; these chains were the only thing that
+          # noticed, and the change matched nothing in this list.
+          if echo "$CHANGED" | grep -qE '^(src/layer_4_computation/interpolator/|src/layer_4_computation/iterator/|src/layer_4_computation/diagonalizer/|src/layer_4_computation/flavors/non_self_consistent_field\.hpp|src/layer_4_computation/fermi_energy/|src/layer_3_representation/basis/planewave/local_orbital/|src/io/interpolation/|src/layer_1_structure/reciprocal_space/|src/layer_0_core/math/linear_algebra/|src/layer_0_core/math/convergence_window\.hpp|src/commands/interpolate_command\.hpp|src/py/q3/workflows/(interpolation|band_distance|kpath)\.py|src/py/q3/workflows/wannier/|src/py/q3/io/(interpolation_(results|settings)|pseudo_atomic_shells)/|src/py/q3/io/input_(reader|writer)\.py|src/py/q3/structure/lattice\.py|src/py/q3/(binary|errors)\.py|scripts/validation/(run_wannier_campaign\.py|wannier_campaign/)|schemas/q3/|src/generated/q3/|examples/band_structure--.*wannier|examples/data/|tests/validation/test_(wannier_interpolation|automatic_wannier|copper_disentanglement|gallium_arsenide_band_selection|silicon_carbon_alloy|wannier_protocol|wannier_campaign)\.py|tests/helpers_wannier\.py|\.github/workflows/ci\.yml)'; then
+            echo "Interpolation-relevant files changed -- running." >> "$GITHUB_STEP_SUMMARY"
+            echo "changes=true" >> $GITHUB_OUTPUT
+          else
+            # Said out loud, because a skipped step and a passing one look
+            # identical in the workflow list and ci.yml has been bitten by that
+            # before.
+            echo "No interpolation-relevant files changed -- Wannier tier 2 SKIPPED." >> "$GITHUB_STEP_SUMMARY"
+            echo "changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Python
+        if: steps.check_changes.outputs.changes == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install System Dependencies
+        if: steps.check_changes.outputs.changes == 'true'
+        timeout-minutes: 10
+        run: |
+          for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            if [ -f "$f" ]; then sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g; s/azure\.ports\.ubuntu\.com/ports.ubuntu.com/g' "$f"; fi
+          done
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99q3-ci >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y libfftw3-dev libomp-dev liblapack-dev libblas-dev libxc-dev ccache
+
+      - name: Install Python Dependencies
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,build]"
+
+      - name: Locate the ccache directory
+        id: ccache
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
+          echo "dir=$(ccache --get-config cache_dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache ccache
+        if: steps.check_changes.outputs.changes == 'true'
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.ccache.outputs.dir }}
+          key: ccache-wannier-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-wannier-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-
+            ccache-wannier-${{ runner.os }}-
+            ccache-${{ runner.os }}-
+
+      - name: Configure CMake
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          cmake -S . -B build -DQ3_BUILD_TESTS=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build q3 and q3_utility
+        if: steps.check_changes.outputs.changes == 'true'
+        # Name the CMake target, not a file: a target that does not exist builds
+        # nothing, succeeds, and leaves a stale binary -- which is how a wrong
+        # target once produced a green run against an old build.
+        run: cmake --build build --target q3 q3_utility -j$(nproc)
+
+      - name: Run the Wannier interpolation chains (Tier 2)
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          pytest tests/validation/test_wannier_interpolation.py \
+                 tests/validation/test_automatic_wannier.py \
+                 tests/validation/test_copper_disentanglement.py \
+                 tests/validation/test_gallium_arsenide_band_selection.py \
+                 tests/validation/test_silicon_carbon_alloy.py \
+                 tests/validation/test_wannier_protocol.py \
+                 tests/validation/test_wannier_campaign.py \
+                 -v --tier2 --q3-bin ./build/q3
+
+      # test_wannier90_parity.py is deliberately NOT in the list above: it needs
+      # the Wannier90 4.0.1 oracle under reference/, which this runner does not
+      # build, so every case would self-skip and a skipped file reads as a
+      # passing one. It stays a local gate, run before touching the
+      # construction. The path filter used to name it as a trigger, which was
+      # the wrong half of the same coupling: firing this job on a file it never
+      # runs. Removed from the filter with this comment as the record.
+
+  mpi-validation:
+    # Builds the MPI binary and runs the MPI topology-invariance and band-
+    # parallelism validation suites. Without this job the mpirun-gated tests
+    # in tests/validation/test_mpi_*.py silently self-skip everywhere and the
+    # parallelization feature has no automated coverage.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Without ScaLAPACK the subspace eigenproblem is solved on the band-group
+        # root and broadcast. That path had no coverage at all, which is how a
+        # deadlock lived in it: CI always installed ScaLAPACK, so the collective
+        # solver was always chosen and the root-only branch never ran.
+        scalapack: [with, without]
+
+    env:
+      # GitHub runners expose fewer physical cores than the ranks these tests
+      # use; let OpenMPI oversubscribe instead of aborting.
+      # (rmaps var covers OpenMPI 4.x, PRTE var covers 5.x.)
+      OMPI_MCA_rmaps_base_oversubscribe: "true"
+      PRTE_MCA_rmaps_default_mapping_policy: ":oversubscribe"
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install System Dependencies (with MPI + ScaLAPACK)
+        timeout-minutes: 10
+        run: |
+          # Same apt-mirror hardening as build-and-test's install step.
+          for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            if [ -f "$f" ]; then sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g; s/azure\.ports\.ubuntu\.com/ports.ubuntu.com/g' "$f"; fi
+          done
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99q3-ci >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y libfftw3-dev libfftw3-mpi-dev libomp-dev \
+            liblapack-dev libblas-dev libxc-dev ccache \
+            openmpi-bin libopenmpi-dev
+          if [ "${{ matrix.scalapack }}" = "with" ]; then
+            sudo apt-get install -y libscalapack-openmpi-dev
+          fi
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,build]"
+
+      - name: Locate the ccache directory
+        id: ccache
+        run: |
+          # Resolve ccache's real store rather than hardcoding it, and bound
+          # its size -- see ci.yml's build-and-test job for why.
+          echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
+          echo "dir=$(ccache --get-config cache_dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.ccache.outputs.dir }}
+          # actions/cache writes only when the key is new, so a key that moves
+          # only with CMakeLists.txt saves once and then never takes in
+          # newly compiled objects. Make it run-unique and fall back by
+          # prefix, the way the build-directory cache already does.
+          key: ccache-mpi-${{ matrix.scalapack }}-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-mpi-${{ matrix.scalapack }}-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-
+            ccache-mpi-${{ matrix.scalapack }}-${{ runner.os }}-
+
+      - name: Configure CMake (MPI)
+        run: |
+          cmake -S . -B build_mpi -DQ3_WITH_MPI=ON -DQ3_BUILD_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      # The serial q3 is here for test_mpi_checkpoint.py: q3_mpi runs SCF only,
+      # so a serial non-self-consistent run restores what the pooled SCF wrote.
+      - name: Build q3_mpi, q3 and MPI unit tests
+        run: |
+          ccache -z
+          cmake --build build_mpi --target q3_mpi q3 q3_tests_mpi -j$(nproc)
+          ccache -s
+
+      - name: Run MPI Unit Tests (1, 2, and 4 ranks)
+        run: |
+          for ranks in 1 2 4 8; do
+            echo "=== q3_tests_mpi on $ranks rank(s) ==="
+            mpirun -np $ranks --oversubscribe ./build_mpi/q3_tests_mpi
+          done
+
+      - name: Run MPI Validation Tests
+        run: |
+          pytest tests/validation/test_mpi_topology_invariance.py \
+                 tests/validation/test_mpi_band_parallelism.py \
+                 tests/validation/test_mpi_mean_field_export.py \
+                 tests/validation/test_mpi_checkpoint.py \
+                 -v --q3-bin ./build_mpi/q3_mpi
+
+  publish:
+    # Cuts the date-based tag (YYYY.M.D-N) and the GitHub release, then starts
+    # the container and archive builds for it, through the shared git/version
+    # and git/release actions. q3 is not a Python package, so they are wired
+    # up directly rather than going through the py/publish chain the other
+    # repositories use. Gated on the test jobs so a release only ever points
+    # at green code.
+    #
+    # Everything runs on the built-in token, so neither repository needs a
+    # personal one. A release that token creates fires no `release` event --
+    # GitHub starts no workflow for events the built-in token causes, so that
+    # workflows cannot trigger one another in a loop -- so git/release starts
+    # container.yml and release.yml itself through dispatch-workflows, since
+    # workflow_dispatch is the exception. Each repository cuts its own
+    # releases; the org rewrite retargets the actions checkout, and both
+    # actions repositories are public.
+    needs: [lint, build-and-test, mpi-validation]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    if: github.ref_name == 'main'
+    permissions:
+      # The tag and the release.
+      contents: write
+      # Starting the two builds.
+      actions: write
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v5
+        with:
+          # Every tag, for git/version.
+          fetch-depth: 0
+
+      - name: Checkout actions repository
+        uses: actions/checkout@v5
+        with:
+          repository: camsai/actions
+          path: actions
+
+      - name: Determine git tag
+        id: get-tag-name
+        uses: ./actions/git/version
+
+      - name: Publish new git tag and release
+        uses: ./actions/git/release
+        with:
+          github-token: ${{ github.token }}
+          tag-name: ${{ steps.get-tag-name.outputs.tag-name }}
+          # Both run on the new tag: container.yml names its images after it,
+          # and release.yml attaches its archives to the release of that name.
+          dispatch-workflows: |
+            container.yml -f publish=true
+            release.yml -f tag=${{ steps.get-tag-name.outputs.tag-name }}

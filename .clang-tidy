@@ -1,0 +1,37 @@
+---
+# Q3 clang-tidy configuration
+# Run: run-clang-tidy -p build -header-filter="$(pwd)/src/.*" "$(pwd)/src/.*\.cpp$"
+
+Checks: >
+    -*,
+    llvm-namespace-comment,
+    google-readability-todo,
+    bugprone-argument-comment
+
+# Only report diagnostics for Q3 source files, not third-party headers.
+# This prevents noise from spdlog, yaml-cpp, nlohmann_json, etc.
+# NOTE: this previously read ".*/q3-minimal/src/.*" -- a stale checkout-
+# directory name from before the repo was named "q3" (see git blame). It was
+# "fixed" to ".*/q3/src/.*", which is just as checkout-name-dependent and
+# still matched nothing for a checkout named "q-3-minimal" (or anything
+# else): every project-header diagnostic stayed silently suppressed
+# alongside the third-party ones the regex was meant to filter, and only the
+# two enabled checks' findings in the .cpp file passed to clang-tidy itself
+# were ever visible. Confirmed locally by planting a bare "// TODO:" (missing
+# the required username) in a header and running clang-tidy directly: zero
+# findings under either of the previous regexes, one finding once the regex
+# below no longer depends on the checkout directory's name -- structural
+# (repo-relative path components) instead of a literal directory name, so it
+# cannot go stale the same way a third time.
+HeaderFilterRegex: ".*/src/(layer_[0-5]_[a-z_]+|io|bindings|utils|generated)/.*"
+
+# Treat all enabled warnings as errors so pre-commit blocks the commit.
+WarningsAsErrors: "*"
+
+CheckOptions:
+    # Require at least 20 characters of namespace body before mandating the closing comment.
+    # Short anonymous namespaces in tests don't need it.
+    - key: llvm-namespace-comment.ShortNamespaceLines
+      value: "1"
+    - key: llvm-namespace-comment.SpacesBeforeComments
+      value: "1"

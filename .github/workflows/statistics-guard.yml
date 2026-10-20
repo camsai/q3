@@ -1,0 +1,34 @@
+name: Statistics guard
+
+# Fails a pull request that carries STATISTICS.md. The file is generated, and is
+# refreshed automatically on `main` rather than by contributors -- see
+# scripts/repo/check_statistics_untouched.py for why, and for the one case that is
+# allowed through.
+#
+# Its own workflow rather than a step in ci.yml's lint job, for the same reason
+# dco.yml is: ci.yml's pull_request trigger is filtered to source paths, so a
+# pull request touching only STATISTICS.md matches nothing there and would run
+# no check at all -- and that is precisely the shape of change this guards.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  statistics-untouched:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify the pull request does not carry STATISTICS.md
+        run: |
+          git fetch --no-tags origin "${{ github.event.pull_request.base.ref }}"
+          python3 scripts/repo/check_statistics_untouched.py \
+            --range "origin/${{ github.event.pull_request.base.ref }}...${{ github.event.pull_request.head.sha }}"

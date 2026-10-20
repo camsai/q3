@@ -1,0 +1,10 @@
+
+# The Wannier examples' NSCF decks, evaluation decks and reference bands are
+# generated -- the k-point lists come from the workflow's own writers, and the
+# example carries them so it can be run without Python. Marked generated so a
+# review collapses them rather than scrolling a thousand lines of coordinates;
+# they are ordinary files otherwise, and the mark stops at the examples this
+# protocol owns.
+examples/*--wannier/*_nscf.yml linguist-generated=true
+examples/*--wannier/*_interpolate.yml linguist-generated=true
+examples/*--wannier/reference/*.json linguist-generated=true

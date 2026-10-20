@@ -1,0 +1,37 @@
+{
+    "system": "Si (diamond, FCC primitive cell, 2 atoms)",
+    "calculation": "DFT-PBE BFGS geometry relaxation",
+    "reference_code": "Quantum ESPRESSO 7+ with LibXC (build_libxc/bin/pw.x)",
+    "kgrid": "2x2x2 Gamma-centered",
+    "lattice_parameter_angstrom": 3.866976,
+    "nc": {
+        "pseudopotential": "Si.upf (ONCV, NC)",
+        "cutoffs": {
+            "wavefunction_ry": 48.0,
+            "density_ry": 192.0
+        },
+        "equilibrium_total_energy_ry": -16.73952179,
+        "displaced_starting_geometry": [0.883, 0.875, 0.875],
+        "relaxation_steps": 2,
+        "relaxation_final_energy_ry": -16.74017340,
+        "relaxation_final_forces_ry_per_bohr": [
+            [8.503e-05, 7.051e-05, -8.503e-05],
+            [-8.503e-05, -7.051e-05, 8.503e-05]
+        ]
+    },
+    "us": {
+        "pseudopotential": "Si_PBE_USPP.UPF (US)",
+        "cutoffs": {
+            "wavefunction_ry": 40.0,
+            "density_ry": 200.0
+        },
+        "equilibrium_total_energy_ry": -15.54661637,
+        "displaced_starting_geometry": [0.883, 0.875, 0.875],
+        "relaxation_steps": 2,
+        "relaxation_final_energy_ry": -15.54660087,
+        "relaxation_final_forces_ry_per_bohr": [
+            [2.177e-05, 6.243e-05, -2.177e-05],
+            [-2.177e-05, -6.243e-05, 2.177e-05]
+        ]
+    }
+}

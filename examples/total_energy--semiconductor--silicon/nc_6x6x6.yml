@@ -1,0 +1,45 @@
+material: ../data/materials/silicon_6x6x6.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: norm-conserving
+  cutoffs:
+    wavefunction: 48.0
+    density: 192.0
+  pseudopotentials:
+    Si: ../data/pseudopotentials/nc/Si.upf
+  scf:
+    convergence_threshold: 1.0e-08
+    # 1040 bands = 864 occupied + 20% empty, rounded to an even count so the
+    # gamma-only Hamiltonian's band pairs stay whole under band distribution.
+    # A 6x6x6 supercell at the Gamma point folds zone-edge states back to Gamma, closing the gap.
+    # Davidson diagonalization requires empty bands when states near the Fermi level are degenerate.
+    #
+    # Scaling case for --distribute-bands: 432 atoms, ~167k plane waves. Every rank
+    # holds the whole basis, so the footprint does not fall as ranks are added:
+    # about 41 GB per rank at the default basis_expansion_factor of 2, or 53 GB
+    # at 4. It runs on
+    # neither CI nor a laptop, and the run prints its own estimate before the SCF
+    # loop.
+    number_of_bands: 1040
+    mixing:
+      mode: broyden
+      beta: 0.3
+      ndim: 8
+      preconditioning: kerker
+    kgrid:
+      dimensions:
+        - 1
+        - 1
+        - 1
+      shifts:
+        - 0
+        - 0
+        - 0
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: si_nc_6x6x6

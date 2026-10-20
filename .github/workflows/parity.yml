@@ -1,0 +1,237 @@
+name: Parity
+
+# The A/B bit-identity gate (improvement program A2, master plan M1).
+#
+# Builds the pull request's merge base and its head in the same runner, runs
+# tests/regression/parity_matrix.yml with both binaries over the *head*
+# checkout's inputs, and compares every numeric leaf of everything they wrote
+# -- exactly.
+#
+# Why exactly, and why at all. Six src/layer_* refactors merged on the claim
+# "pure move, no numbers change" with nothing checking it. A validation
+# tolerance cannot check it either: a tolerance that admits the physics' own
+# uncertainty admits any drift smaller than it, and drift is cumulative across
+# refactors while tolerances are not. The only falsifiable version of "this
+# changed nothing" is byte identity, and the only cost of asking for it is this
+# workflow.
+#
+# A change that is meant to move numbers says so with the `numerics-change`
+# label and a `numerics-change: <reason>` line in the pull-request body; the
+# comparison then runs at 1e-12 relative and the reason is echoed into the log.
+#
+# A corrected formula moves its rows by far more than that, and their `.save/`
+# checkpoints byte for byte, so the body may also name those rows in a
+# `numerics-change-rows: <row>, <pattern>, ...` line (`*` and `?` match). The
+# named rows are reported rather than failed; every other row is still held to
+# 1e-12, and a pattern that names no row is refused. The declaration lives in
+# that one pull request, unlike a committed allowlist, and is printed in its log.
+#
+# Why a workflow of its own rather than a job in ci.yml. The answer depends on
+# three things a push does not change: the label, the reason line in the body,
+# and the base branch the merge base is taken against. A re-run cannot pick up
+# any of them, because it replays the event it started from, so the gate has to
+# run on `labeled`, `unlabeled` and `edited` as well as on pushes -- and those
+# must not re-run the rest of CI. Its own concurrency group also keeps a
+# superseded parity run and the build-and-test run on the same push from
+# cancelling each other.
+#
+# Pull requests only: there is no "before" to compare a push to main with.
+
+on:
+  pull_request:
+    branches: ["**"]
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+    # What can reach the binary (built with tests off) or the gate itself. A
+    # pull request that touches none of these cannot move a number, so it
+    # skips the two builds.
+    paths:
+      - ".github/workflows/parity.yml"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "schemas/**"
+      - "src/**"
+      - "scripts/repo/generate_cpp_from_schemas.py"
+      - "scripts/repo/templates/**"
+      - "scripts/validation/compare_results_json.py"
+      - "scripts/validation/run_parity_matrix.py"
+      - "tests/regression/parity_matrix.yml"
+
+concurrency:
+  # Only the newest answer for a pull request matters: a label added while a
+  # run is in flight supersedes it.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          # The merge base is computed below, so the whole history is needed.
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install System Dependencies
+        timeout-minutes: 10
+        run: |
+          for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            if [ -f "$f" ]; then sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g; s/azure\.ports\.ubuntu\.com/ports.ubuntu.com/g' "$f"; fi
+          done
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99q3-ci >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y libfftw3-dev libomp-dev liblapack-dev libblas-dev libxc-dev ccache
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,build]"
+
+      - name: Locate the ccache directory
+        id: ccache
+        run: |
+          # Both builds here share one cache: the merge base's objects are
+          # usually already in it from an earlier run of this job, and the
+          # head's differ only by the files the pull request touched.
+          echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
+          echo "dir=$(ccache --get-config cache_dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.ccache.outputs.dir }}
+          key: ccache-parity-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-parity-${{ runner.os }}-
+
+      - name: Resolve the merge base
+        id: merge_base
+        run: |
+          git fetch --no-tags origin "${{ github.event.pull_request.base.ref }}"
+          merge_base="$(git merge-base "origin/${{ github.event.pull_request.base.ref }}" HEAD)"
+          echo "Merge base: $merge_base"
+          echo "sha=$merge_base" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the merge base beside the head
+        run: |
+          # A worktree rather than a second clone: it shares this clone's
+          # object store and its LFS files, so the merge base costs no extra
+          # fetch. Its submodules still need initializing separately, because
+          # a worktree does not inherit the parent's populated ones.
+          git worktree add --detach ../base-checkout "${{ steps.merge_base.outputs.sha }}"
+          git -C ../base-checkout submodule update --init --recursive
+
+      - name: Build the merge base
+        run: |
+          cmake -S ../base-checkout -B ../base-checkout/build -DQ3_BUILD_TESTS=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQ3_REQUIRE_SCHEMA_CODEGEN=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build ../base-checkout/build -j$(nproc) --target q3
+
+      - name: Build the head
+        run: |
+          cmake -S . -B build -DQ3_BUILD_TESTS=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQ3_REQUIRE_SCHEMA_CODEGEN=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build -j$(nproc) --target q3
+
+      - name: Run the matrix with the merge base's binary
+        run: |
+          python scripts/validation/run_parity_matrix.py \
+            --q3-bin ../base-checkout/build/q3 --out "$RUNNER_TEMP/base_run"
+
+      - name: Run the matrix with the head's binary
+        run: |
+          python scripts/validation/run_parity_matrix.py \
+            --q3-bin ./build/q3 --out "$RUNNER_TEMP/head_run"
+
+      - name: Resolve the numerics-change escape
+        id: escape
+        # The pull-request body reaches the script through the environment,
+        # never through ${{ }} interpolation into a shell: it is attacker-
+        # controlled text, and interpolation would run it.
+        env:
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'numerics-change') }}
+          PULL_REQUEST_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          import re
+          import sys
+
+          if os.environ.get("HAS_LABEL") != "true":
+              print("tolerance=0")
+              print("reason=")
+              print("rows=")
+              sys.exit(0)
+
+          body = os.environ.get("PULL_REQUEST_BODY") or ""
+          match = re.search(r"^\s*numerics-change:\s*(.+)$", body, re.IGNORECASE | re.MULTILINE)
+          if not match:
+              print(
+                  "The 'numerics-change' label is set but the body has no "
+                  "'numerics-change: <reason>' line. The escape needs a stated reason.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          # One line, and no newline can reach the step output.
+          reason = " ".join(match.group(1).split())[:300]
+          rows_match = re.search(
+              r"^\s*numerics-change-rows:\s*(.+)$", body, re.IGNORECASE | re.MULTILINE
+          )
+          rows = " ".join(rows_match.group(1).split()) if rows_match else ""
+          # Row names and patterns only: anything else in this line is a mistake.
+          if rows and not re.fullmatch(r"[A-Za-z0-9_*?,. -]+", rows):
+              print(
+                  "The 'numerics-change-rows' line may hold only matrix row names and "
+                  "patterns (letters, digits, '-', '_', '.', '*', '?'), separated by commas.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          print("tolerance=1e-12")
+          print(f"reason={reason}")
+          print(f"rows={rows}")
+          PY
+
+      - name: Compare the two runs
+        env:
+          TOLERANCE: ${{ steps.escape.outputs.tolerance }}
+          REASON: ${{ steps.escape.outputs.reason }}
+          ROWS: ${{ steps.escape.outputs.rows }}
+        run: |
+          if [ "$TOLERANCE" = "0" ]; then
+            python scripts/validation/compare_results_json.py "$RUNNER_TEMP/base_run" "$RUNNER_TEMP/head_run"
+          elif [ -z "$ROWS" ]; then
+            python scripts/validation/compare_results_json.py "$RUNNER_TEMP/base_run" "$RUNNER_TEMP/head_run" \
+              --tolerance "$TOLERANCE" --reason "$REASON"
+          else
+            python scripts/validation/compare_results_json.py "$RUNNER_TEMP/base_run" "$RUNNER_TEMP/head_run" \
+              --tolerance "$TOLERANCE" --reason "$REASON" --moving-rows "$ROWS"
+          fi
+
+      - name: Upload the runs when they disagree
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-runs
+          path: |
+            ${{ runner.temp }}/base_run
+            ${{ runner.temp }}/head_run
+            ${{ runner.temp }}/base_run-logs
+            ${{ runner.temp }}/head_run-logs
+          retention-days: 7

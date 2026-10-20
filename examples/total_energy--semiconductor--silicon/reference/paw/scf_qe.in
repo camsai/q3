@@ -1,0 +1,28 @@
+&CONTROL
+  calculation = 'scf'
+  pseudo_dir = '../../../data/pseudopotentials/paw/'
+  outdir = './tmp'
+  prefix = 'qe_paw'
+  verbosity = 'high'
+/
+&SYSTEM
+  ibrav = 2
+  celldm(1) = 10.334401769190510
+  nat = 2
+  ntyp = 1
+  ecutwfc = 40.0
+  ecutrho = 320.0
+  input_dft = 'XC-000I-000I-101L-130L'
+/
+&ELECTRONS
+  diagonalization = 'cg'
+  conv_thr = 1.0e-8
+  mixing_beta = 0.3
+/
+ATOMIC_SPECIES
+  Si 28.0855 Si.upf
+ATOMIC_POSITIONS crystal
+  Si 0.875000 0.875000 0.875000
+  Si 0.125000 0.125000 0.125000
+K_POINTS automatic
+  2 2 2 1 1 1

@@ -1,0 +1,354 @@
+name: Release Artifacts
+
+# Native release archives, one per tier-1 platform, attached to the GitHub
+# release that ci.yml's publish job cuts on every green push to main.
+#
+#   linux-x86_64   Ubuntu 24.04, amd64
+#   linux-arm64    Ubuntu 24.04, arm64
+#   macos-arm64    macOS 14, Apple Silicon
+#
+# Each archive is built, then smoke-tested in a *separate* job that starts from
+# a clean OS with nothing but the archive and the runtime packages its own
+# INSTALL.txt names. Testing in the build job would test the build tree --
+# every development package is still installed there -- and a missing runtime
+# library would pass. The smoke job is what makes INSTALL.txt a tested claim
+# rather than a list someone typed.
+#
+# What a release then carries, per platform:
+#
+#   q3-<tag>-<platform>.tar.gz           binaries, licenses/, INSTALL.txt, sbom.cdx.json
+#   q3-<tag>-<platform>.sbom.cdx.json    the same SBOM, outside the archive
+#   SHA256SUMS                           one line per asset
+#
+# plus a build-provenance attestation for every archive, on the public
+# repository; see the publish job for why not on the private one.
+#
+# Like container.yml, this runs off the release event rather than on push, so a
+# merge builds once. The same caveat applies: ci.yml's paths filter decides
+# whether a release is cut at all, and a change matching nothing there
+# publishes nothing here either.
+on:
+  release:
+    types: [published]
+  # Changes to this pipeline build and smoke-test every platform on the pull
+  # request; nothing is attached to anything.
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/validation/check_scf_result.py
+      - scripts/repo/package_release.py
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and attach archives to (empty: build and test only)"
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # A release run must not be cancelled by the next merge's: each one attaches
+  # assets to its own tag.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+          - os: macos-14
+            platform: macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v5
+        with:
+          # Schema code generation reads the ESSE submodule during the build.
+          submodules: recursive
+
+      - name: Resolve the version this archive is named for
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
+        run: |
+          short_sha="$(git rev-parse --short=8 HEAD)"
+          if [ -n "$RELEASE_TAG" ]; then
+            version="$RELEASE_TAG"
+          elif [ -n "$DISPATCH_TAG" ]; then
+            version="$DISPATCH_TAG"
+          elif [ -n "$PULL_REQUEST" ]; then
+            version="pr${PULL_REQUEST}-${short_sha}"
+          else
+            version="dev-${short_sha}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version: $version"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the schema code generator's dependencies
+        run: python -m pip install jinja2 jsonref pyyaml
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        run: |
+          # The same mirror workaround as ci.yml: some runner VMs land on a
+          # dead azure.archive mirror and retry until the job limit kills them.
+          for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            if [ -f "$f" ]; then sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g; s/azure\.ports\.ubuntu\.com/ports.ubuntu.com/g' "$f"; fi
+          done
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99q3-ci >/dev/null
+          sudo apt-get update
+          # OpenBLAS, and specifically its OpenMP build, for the reason the
+          # Dockerfile gives: the reference BLAS the unqualified -dev packages
+          # resolve to cost the container images a factor of ten serial
+          # (camsai/q3#12), and the OpenMP build shares one thread knob with
+          # FFTW. INSTALL.txt is derived from what the binary actually loads,
+          # so whatever this line chooses is what the archive will ask for.
+          sudo apt-get install -y cmake ninja-build libfftw3-dev libopenblas-openmp-dev libxc-dev
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        # LibXC is not installed here on purpose: the build fetches the tested
+        # 7.0.0 and compiles it in, which is the other licensing path the
+        # packager has to handle (a FetchContent source tree rather than a
+        # system archive), so the release exercises both.
+        run: brew install ninja fftw libomp
+
+      - name: Configure
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQ3_BUILD_TESTS=OFF \
+            -DQ3_REQUIRE_SCHEMA_CODEGEN=ON \
+            -DQ3_GIT_COMMIT="${{ github.sha }}" \
+            -DPython3_EXECUTABLE="$(command -v python)"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Check the binary names the commit it was built from
+        run: ./build/q3 --version | tee /dev/stderr | grep -F "${{ github.sha }}"
+
+      - name: Package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python scripts/repo/package_release.py \
+            --build-dir build \
+            --version "$VERSION" \
+            --commit "${{ github.sha }}" \
+            --platform "${{ matrix.platform }}" \
+            --out dist
+          rm -rf dist/staging
+
+      - name: Upload the archive for the smoke test
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  smoke-linux:
+    # A clean Ubuntu 24.04 container: no compiler, no development packages,
+    # nothing the runner image happens to carry. The archive and the packages
+    # its INSTALL.txt names are all that is here.
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+    runs-on: ${{ matrix.os }}
+    container: ubuntu:24.04
+    timeout-minutes: 20
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Install what checkout and the result check need
+        # Not the archive's dependencies -- those come from INSTALL.txt below.
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git git-lfs python3
+
+      - name: Checkout this repository
+        uses: actions/checkout@v5
+        with:
+          # The smoke test runs a real example, whose pseudopotentials are LFS
+          # objects.
+          lfs: true
+
+      - name: Download the archive
+        uses: actions/download-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist
+
+      - name: Unpack, outside the checkout
+        run: |
+          mkdir -p /opt/smoke
+          tar -xzf dist/*.tar.gz -C /opt/smoke
+          ls /opt/smoke/*/
+
+      - name: Install exactly what INSTALL.txt says
+        # The line is taken from the file rather than repeated here, so a
+        # wrong INSTALL.txt fails this job instead of being quietly corrected
+        # by a workflow that knows better.
+        run: |
+          install_line="$(grep -E '^\s+sudo apt-get install' /opt/smoke/*/INSTALL.txt | sed 's/^ *sudo //')"
+          echo "From INSTALL.txt: $install_line"
+          test -n "$install_line"
+          eval "$install_line"
+
+      - name: Check every library resolves
+        # ldd prints "not found" and still exits 0, so grep decides.
+        run: |
+          if ldd /opt/smoke/*/bin/* | grep 'not found'; then exit 1; fi
+
+      - name: Check the archive carries its licenses and its SBOM
+        run: |
+          root="$(echo /opt/smoke/*)"
+          test -s "$root/LICENSE.md"
+          test -s "$root/sbom.cdx.json"
+          ls "$root/licenses/"
+          python3 - "$root" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          sbom = json.loads((root / "sbom.cdx.json").read_text())
+          shipped = {
+              c["name"] for c in sbom["components"]
+              if {"name": "q3:distributed", "value": "true"} in c.get("properties", [])
+          }
+          licenses = {p.stem for p in (root / "licenses").glob("*.txt")}
+          missing = shipped - licenses
+          print("compiled in:", sorted(shipped))
+          print("licenses:   ", sorted(licenses))
+          if missing:
+              sys.exit(f"compiled into the binaries but no license shipped: {sorted(missing)}")
+          PY
+
+      - name: Run an SCF with the unpacked binary
+        run: |
+          cd examples/total_energy--semiconductor--silicon
+          /opt/smoke/*/bin/q3 --version | tee /dev/stderr | grep -F "${{ github.sha }}"
+          /opt/smoke/*/bin/q3 nc.yml
+          python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" output/si_nc_results.json
+
+  smoke-macos:
+    # macOS has no clean-container equivalent on a hosted runner. What this
+    # job can still check is that the archive works on a runner that did not
+    # build it, with only the Homebrew runtime libraries its link table names.
+    needs: build
+    runs-on: macos-14
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v5
+        with:
+          lfs: true
+
+      - name: Download the archive
+        uses: actions/download-artifact@v4
+        with:
+          name: release-macos-arm64
+          path: dist
+
+      - name: Unpack, outside the checkout
+        run: |
+          mkdir -p "$RUNNER_TEMP/smoke"
+          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP/smoke"
+
+      - name: Install the runtime libraries
+        run: brew install fftw libomp
+
+      - name: Check every library resolves
+        run: |
+          for binary in "$RUNNER_TEMP"/smoke/*/bin/*; do
+            otool -L "$binary"
+            # Absolute paths must exist on this runner. System libraries live in
+            # the dyld shared cache rather than on disk, and @rpath-relative
+            # entries are resolved by the loader -- the SCF run below is what
+            # proves those resolve, by starting.
+            otool -L "$binary" | tail -n +2 | awk '{print $1}' | while read -r library; do
+              case "$library" in
+                /usr/lib/*|/System/*|@*) ;;
+                *) test -e "$library" || { echo "missing: $library"; exit 1; } ;;
+              esac
+            done
+          done
+
+      - name: Run an SCF with the unpacked binary
+        run: |
+          cd examples/total_energy--semiconductor--silicon
+          "$RUNNER_TEMP"/smoke/*/bin/q3 --version | tee /dev/stderr | grep -F "${{ github.sha }}"
+          "$RUNNER_TEMP"/smoke/*/bin/q3 nc.yml
+          python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" output/si_nc_results.json
+
+  publish:
+    # Only once every platform has passed its smoke test: a release with one
+    # platform missing is a smaller problem than a release with one broken.
+    needs: [smoke-linux, smoke-macos]
+    if: github.event_name == 'release' || github.event.inputs.tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Download every platform's archive
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Write SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum -- *.tar.gz *.sbom.cdx.json | tee SHA256SUMS
+
+      - name: Attest build provenance
+        # Signed provenance tying each archive to this workflow run and commit.
+        # GitHub issues attestations for public repositories on every plan, but
+        # for a private one only on Enterprise Cloud -- so the raw repository
+        # skips this step, and the public mirror, which runs this same
+        # workflow after an export, is where release attestations come from.
+        if: github.event.repository.private == false
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.sbom.cdx.json
+
+      - name: Attach everything to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+        run: |
+          gh release upload "$TAG" dist/*.tar.gz dist/*.sbom.cdx.json dist/SHA256SUMS \
+            --repo "${{ github.repository }}" --clobber

@@ -1,0 +1,120 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "q3"
+version = "0.1.0"
+description = "Q3: a minimal plane-wave DFT code"
+license = "Apache-2.0"
+license-files = ["LICENSE.md"]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+    # The unit conversions (q3.constants, from the stack's generated table in
+    # mat3ra-utils) and the models the workflows carry come from the mat3ra
+    # stack rather than from literals per file; the periodic table is where the
+    # trial-orbital rule reads an atomic number.
+    "pydantic>=2.0",
+    "mat3ra-utils",
+    "mat3ra-code",
+    "mat3ra-periodic-table",
+    # Bravais lattices, reciprocal lattices and the AFLOW high-symmetry points:
+    # q3.structure.lattice and q3.workflows.kpath are adapters onto it. The floor
+    # is the first release that pins numpy only in its `tools` extra (made#299);
+    # below it, an environment that wants numpy 2 makes pip backtrack made to a
+    # 2024 release that predates `mat3ra.made.reciprocal`, rather than fail.
+    "mat3ra-made>=2026.9.12.post0",
+    # The relaxation, phonon, equation-of-state and elastic workflows and the
+    # ASE calculator. A base dependency so those modules import it at the top
+    # (AGENTS-generic.md § Imports); 3.23 is the first with ase.filters'
+    # FrechetCellFilter.
+    "ase>=3.23",
+]
+
+[tool.setuptools.packages.find]
+where = ["src/py"]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9.0",
+    "pyyaml>=6.0",
+    # Two readers: tests/regression/test_results_schema.py validates a real
+    # results.json against schemas/q3/results.json, and the blocks
+    # q3.io.interpolation_settings writes are checked against schemas/q3/input.json.
+    # mat3ra-code already installs it; a test that imports it says so.
+    "jsonschema>=4.0",
+    "jsonschema>=4.0",
+]
+# q3.workflows.phonons' Phonopy path (run_phonopy_workflow). Optional, not a
+# base dependency: only that entry point needs Phonopy. The floor is the
+# series this interface was written and exercised against (4.5 and 4.8);
+# nothing here is verified on earlier ones.
+phonons = [
+    "phonopy>=4.0",
+]
+# Needed to BUILD Q3, not to run it: scripts/repo/generate_cpp_from_schemas.py runs
+# during `cmake --build`, long before anything imports the q3 package.
+build = [
+    "jinja2>=3.1",
+    "jsonref>=1.1",
+    "pyyaml>=6.0",
+]
+dev = [
+    "gcovr>=7.0",
+    "pre-commit>=4.0",
+    "ruff>=0.11",
+]
+
+# ── Pytest ───────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# -rs prints the skip reasons, grouped, at the end of every run. Without it a
+# comparison that stops running -- a missing Quantum ESPRESSO reference build,
+# an absent q3_utility, a serial binary where an MPI one was wanted -- is a
+# bare number in the summary line, and the scheduled tier-2 job is green
+# either way. It went from 12 skipped to 122 in six weeks unremarked.
+addopts = "-v --tb=short -rs"
+markers = [
+    "slow: full-SCF supercell tests (tier 2) — skipped unless --tier2 is passed",
+    "monthly: campaign-scale runs (tier 3) — skipped unless --tier3 is passed",
+]
+
+# ── Pyright (Python type-checking / IDE) ─────────────────────────────
+
+[tool.pyright]
+extraPaths = ["tests", "src/py"]
+
+# ── Ruff (Python formatting + linting) ───────────────────────────────
+
+[tool.ruff]
+line-length = 100
+indent-width = 4
+target-version = "py312"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+    "E",       # pycodestyle errors
+    "W",       # pycodestyle warnings
+    "F",       # pyflakes
+    "I",       # isort
+    "UP",      # pyupgrade
+    "PLC0415", # import-outside-top-level (see AGENTS.md § Python Package Layering)
+]
+ignore = [
+    "E501", # line too long (formatter handles this)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["helpers", "helpers_berkeleygw"]

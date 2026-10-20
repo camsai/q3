@@ -1,0 +1,35 @@
+material: ../data/materials/copper.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: norm-conserving
+  cutoffs:
+    wavefunction: 120.0
+    density: 480.0
+  pseudopotentials:
+    Cu: ../data/pseudopotentials/nc/Cu.upf
+  scf:
+    convergence_threshold: 1.0e-08
+    max_iterations: 200
+    mixing:
+      mode: broyden
+      beta: 0.1
+    smearing:
+      type: methfessel-paxton
+      degauss: 0.02
+    kgrid:
+      dimensions:
+        - 4
+        - 4
+        - 4
+      shifts:
+        - 1
+        - 1
+        - 1
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: cu_nc_mp

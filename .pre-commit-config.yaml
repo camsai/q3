@@ -1,0 +1,202 @@
+# Install both stages by default: the dco-signoff hook below runs at the
+# commit-msg stage so a missing sign-off is caught at commit time, not in CI.
+default_install_hook_types: [pre-commit, commit-msg]
+
+# Vendored upstream content, excluded from every hook. schemas/esse is a
+# submodule in this repository, so the hooks never see inside it -- but the
+# packer vendors its files into the clean repo as ordinary tracked files, and
+# there end-of-file-fixer and check-json would police upstream's formatting on
+# every sync. A no-op here; load-bearing on the mirror, which runs this same
+# config.
+exclude: "^schemas/esse/"
+
+repos:
+  # C++ formatting
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v19.1.7
+    hooks:
+      - id: clang-format
+        types_or: [c, c++]
+        exclude: '\.mm$'
+
+  # C++ static analysis — comment formatting, namespace comments, TODO style
+  - repo: local
+    hooks:
+      - id: clang-tidy
+        name: clang-tidy
+        language: python
+        # clang-tidy itself still resolves from PATH (system install), same as
+        # before -- only the file-selection wrapper is new. On macOS, put
+        # Homebrew's LLVM bin directory on PATH (Apple's clang-tidy is not
+        # shipped with Xcode).
+        entry: python scripts/repo/run_clang_tidy.py
+        # The files actually checked come from build/compile_commands.json,
+        # not from whatever pre-commit matched here: a file this CMake
+        # configuration didn't compile (GPU vendor backends and their entry
+        # points, the MPI entry point/test -- all gated behind flags that
+        # default OFF) has no real compiler flags to check it with, and
+        # clang-tidy's fallback guess reports irrelevant "compiler error"
+        # noise instead of an actual finding. See scripts/repo/run_clang_tidy.py's
+        # docstring for the full rationale.
+        pass_filenames: false
+        # Trigger condition only, matching the hook's previous scope (every
+        # .cpp file except src/bindings/): what's actually checked when it
+        # runs is filtered again, against the compile database, inside the
+        # script itself.
+        files: ^(?!src/bindings/).*\.cpp$
+
+      - id: doc-comment-style
+        name: doc-comment style (AGENTS-generic.md § Comment Style)
+        language: python
+        entry: python scripts/repo/check_doc_comment_style.py --fix
+        # identify tags .cu as 'cuda', not 'c'/'c++', so without this entry the
+        # hook silently skipped every CUDA source file (e.g. gpu_kernels_cuda.cu).
+        types_or: [c, c++, cuda]
+
+      - id: cpp-include-layering
+        name: C++ include layering (AGENTS.md § Layer Separation)
+        language: python
+        entry: python scripts/repo/check_cpp_include_layering.py
+        # A partial file list must not be able to hide an upward include, so
+        # (like python-import-layering below) the script always rescans all
+        # of src/ itself rather than only the files passed in.
+        pass_filenames: false
+        files: ^src/.*\.(hpp|cpp|h|cc|cu|mm)$
+
+      - id: python-import-layering
+        name: q3 Python import layering (AGENTS.md § Python Package Layering)
+        language: python
+        entry: python scripts/repo/check_python_import_layering.py
+        # Cycle detection needs the whole package in view, so the script always
+        # rescans src/py/q3 itself rather than only the files passed in.
+        pass_filenames: false
+        files: ^src/py/q3/.*\.py$
+
+      - id: no-function-level-imports
+        name: no exemption from ruff PLC0415 (AGENTS-generic.md § Imports)
+        # Ruff fails a function-level import; this fails what would silence it:
+        # a noqa naming the rule, a blanket noqa, or a per-file-ignores entry.
+        language: pygrep
+        entry: 'noqa[^\n]*PLC0415|ruff: *noqa|# *noqa *$|^"[^"]*" = \[.*PLC0415'
+        files: (\.py|^pyproject\.toml)$
+
+      - id: test-mirror
+        name: tests/unit mirrors src/, and every test is registered (AGENTS.md § Testing)
+        language: python
+        entry: python scripts/repo/check_test_mirror.py
+        # Registration-completeness needs the whole tree in view (it answers
+        # "is this file listed anywhere?"), so the script always rescans
+        # tests/ and CMakeLists.txt itself rather than only the files passed
+        # in -- same reasoning as cpp-include-layering and
+        # python-import-layering above.
+        pass_filenames: false
+        files: ^(tests/(unit|integration)/.*\.cpp|CMakeLists\.txt)$
+
+      - id: script-paths
+        name: every scripts/ path the wiring and docs name exists (scripts/README.md)
+        language: python
+        entry: python scripts/repo/check_script_paths.py
+        # Reads the wiring and docs itself: a moved script breaks the files that
+        # name it, not the script, so the question is never which paths changed.
+        # always_run because some of what names a script (the mirror, statistics
+        # and container workflows) only runs on main, after merge.
+        pass_filenames: false
+        always_run: true
+
+      - id: cpp-type-queries
+        name: dynamic type queries may only decrease (AGENTS.md § Calculator Design)
+        language: python
+        entry: python scripts/repo/check_cpp_type_queries.py
+        # A per-file ratchet against scripts/repo/check_cpp_type_queries_baseline.json;
+        # rescans all of src/ so the baseline is compared whole, and reruns when
+        # the baseline itself changes.
+        pass_filenames: false
+        files: ^(src/.*\.(hpp|cpp|h|cc|cu|mm)|scripts/repo/check_cpp_type_queries.*)$
+
+      - id: docstring-coverage
+        name: public C++/Python APIs stay documented (AGENTS-generic.md § Comment Style)
+        language: python
+        entry: python scripts/repo/check_docstring_coverage.py
+        # Same ratchet shape as cpp-type-queries, against
+        # scripts/repo/check_docstring_coverage_baseline.json.
+        pass_filenames: false
+        files: ^(src/.*\.(hpp|h|py)|scripts/repo/check_docstring_coverage.*)$
+
+      - id: no-addon-leak
+        name: an add-on's engine text stays under its addons/ paths
+        language: python
+        # Every file, text and binary alike: a path can name an engine too, and
+        # the script itself skips add-on paths and reads no binary contents.
+        # Gating since 2026-10-20: a finding fails the commit, as it fails
+        # .github/workflows/addon-leak-check.yml and the packer's export gate.
+        entry: python scripts/repo/check_no_addon_leak.py
+
+      - id: dco-signoff
+        name: DCO sign-off (CONTRIBUTING.md)
+        language: python
+        entry: python scripts/repo/check_dco_signoff.py --commit-msg-file
+        # Runs at the commit-msg stage (installed by default via
+        # default_install_hook_types above); CI enforces the same rule on
+        # pull requests through .github/workflows/dco.yml.
+        stages: [commit-msg]
+
+      - id: format-yaml-floats
+        name: format YAML k-point floats (9 decimal places)
+        language: python
+        entry: python scripts/repo/format_yaml_floats.py
+        types: [yaml]
+        files: ^examples/
+
+      - id: statistics-untouched
+        name: STATISTICS.md is not carried by this commit (it is refreshed on main)
+        language: python
+        # Reads the index itself instead of taking pre-commit's file list, so
+        # that `pre-commit run --all-files` -- which passes every file in the
+        # tree whether staged or not -- does not read as "the whole tree is
+        # being committed". always_run for the same reason: the question is what
+        # the index holds, not which paths matched a pattern. This replaced a
+        # `--check` hook that asked the opposite, that the file be regenerated
+        # in every commit, which is what made concurrent branches conflict on
+        # it.
+        entry: python scripts/repo/check_statistics_untouched.py --staged
+        pass_filenames: false
+        always_run: true
+
+      - id: schemas-check
+        name: generated schema headers are up-to-date (schemas/README.md)
+        language: python
+        # Needs the generator's own deps (schemas/README.md § Dependencies) --
+        # unlike the other local Python hooks here, which are stdlib-only.
+        additional_dependencies: [jinja2==3.1.6, jsonref==1.1.0, pyyaml==6.0.3]
+        entry: python scripts/repo/generate_cpp_from_schemas.py --check
+        pass_filenames: false
+        always_run: true
+
+  # Python formatting + linting
+  # rev >= v0.12 required: PLC0415 (import-outside-top-level, enabled in
+  # pyproject.toml) was preview-only before ruff 0.12 -- an older pin makes
+  # ruff warn "Selection `PLC0415` has no effect" and silently skip the rule.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.8
+    hooks:
+      - id: ruff-format
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+
+  # JSON / YAML / Markdown formatting
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        types_or: [json, yaml, markdown]
+
+  # General file hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict

@@ -1,0 +1,53 @@
+name: Add-on leak check
+
+# Keeps each build-time add-on's engine-specific text under its addons/ paths
+# (src/addons/<name>/, and the tests/ and examples/ trees that mirror it), which
+# the public export leaves out, so that no exported file names the engine. See
+# scripts/repo/check_no_addon_leak.py.
+#
+# Its own workflow, with no path filter, for the reason dco.yml and
+# statistics-guard.yml give: ci.yml's triggers are filtered to source paths, so a
+# pull request touching only documentation, examples or a root Markdown file
+# runs nothing there -- and prose is where engine names arrive.
+#
+# Gating since 2026-10-20, when the code move and the documentation rewrite left
+# no engine text outside addons/: the second command of the first report step
+# fails on any finding, as the no-addon-leak pre-commit hook does, and the
+# packer's gate fails an export that carries one.
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  addon-leak-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Report add-on text outside addons/ paths
+        # The count table goes to the run summary, every finding to the log.
+        # pipefail, so that a check that cannot run (no denylist) fails the step.
+        run: |
+          set -o pipefail
+          echo "#### Add-on text in the tracked files" >> "$GITHUB_STEP_SUMMARY"
+          python3 scripts/repo/check_no_addon_leak.py --all --report-only --summary \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 scripts/repo/check_no_addon_leak.py --all

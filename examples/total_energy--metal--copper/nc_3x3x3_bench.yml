@@ -1,0 +1,37 @@
+material: ../data/materials/copper_3x3x3.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: norm-conserving
+  cutoffs:
+    wavefunction: 120.0
+    density: 480.0
+  pseudopotentials:
+    Cu: ../data/pseudopotentials/nc/Cu.upf
+  scf:
+    convergence_threshold: 1.0e-08
+    max_iterations: 3
+    number_of_bands: 280
+    mixing:
+      mode: broyden
+      beta: 0.2
+      ndim: 8
+    smearing:
+      type: gaussian
+      degauss: 0.02
+    kgrid:
+      dimensions:
+        - 1
+        - 1
+        - 1
+      shifts:
+        - 0
+        - 0
+        - 0
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: cu_nc_3x3x3_bench

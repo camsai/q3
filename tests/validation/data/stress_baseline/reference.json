@@ -1,0 +1,58 @@
+{
+    "binary": "reference/dft/q-e/build_libxc/bin/pw.x",
+    "inputs": {
+        "scf_qe_reduced.in": {
+            "ewald_energy_rydberg": -11.9419219,
+            "quantum_espresso_version": "7.5",
+            "stress_contributions_kilobar": {
+                "core_correction": [
+                    [-242.03, 0.31, -0.18],
+                    [0.31, -243.17, 0.49],
+                    [-0.18, 0.49, -243.01]
+                ],
+                "ewald": [
+                    [-724.08, -3.56, -2.38],
+                    [-3.56, -668.93, -60.5],
+                    [-2.38, -60.5, -644.71]
+                ],
+                "exchange_correlation": [
+                    [-10.28, -0.32, 0.09],
+                    [-0.32, -9.44, -0.98],
+                    [0.09, -0.98, -8.97]
+                ],
+                "hartree": [
+                    [80.89, -0.21, 2.27],
+                    [-0.21, 120.24, -26.69],
+                    [2.27, -26.69, 126.1]
+                ],
+                "kinetic": [
+                    [524.23, -9.69, -1.22],
+                    [-9.69, 564.45, -2.55],
+                    [-1.22, -2.55, 540.56]
+                ],
+                "local_pseudopotential": [
+                    [-220.38, 15.91, -7.55],
+                    [15.91, -355.8, 109.61],
+                    [-7.55, 109.61, -384.4]
+                ],
+                "nonlocal_pseudopotential": [
+                    [536.79, -2.84, 1.68],
+                    [-2.84, 547.25, -4.72],
+                    [1.68, -4.72, 546.06]
+                ]
+            },
+            "stress_kilobar": [
+                [-54.86, -0.4, -7.29],
+                [-0.4, -45.39, 14.66],
+                [-7.29, 14.66, -68.37]
+            ],
+            "total_energy_rydberg": -16.40517748
+        },
+        "scf_qe_full.in": {
+            "matches": "scf_qe_reduced.in",
+            "quantum_espresso_version": "7.5"
+        }
+    },
+    "libxc_version": "7.0.0",
+    "note": "Quantum ESPRESSO values printed by the two inputs beside this file on 2026-08-11. Reduced and explicit full-zone runs agree at printed precision. Per-term tensors require verbosity='high'."
+}

@@ -1,0 +1,11 @@
+{
+    "binary": "reference/dft/q-e/build_libxc/bin/pw.x",
+    "inputs": {
+        "scf_qe.in": {
+            "quantum_espresso_version": "7.5",
+            "total_energy_rydberg": -486.88267143
+        }
+    },
+    "libxc_version": "7.0.0",
+    "note": "Numbers Quantum ESPRESSO printed for the input files beside this one. The .out files themselves are gitignored, so these are what the test suite compares against; regenerate with tests/validation/refresh_qe_references.py when an input or the reference build changes."
+}

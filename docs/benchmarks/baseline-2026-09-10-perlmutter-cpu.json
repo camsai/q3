@@ -1,0 +1,115 @@
+{
+    "entries": {
+        "medium_copper_gamma/mpi_4_ranks": {
+            "repetitions_kept": 3,
+            "repetitions_total": 4,
+            "solver_ms_max": 35731.112130999994,
+            "solver_ms_median": 35330.493407,
+            "solver_ms_min": 35312.715802000006,
+            "solver_ms_relative_sd": 0.006696660326182651,
+            "wall_ms_median": 48595.76156399271
+        },
+        "medium_copper_gamma/mpi_4_ranks_4_pools": {
+            "repetitions_kept": 3,
+            "repetitions_total": 4,
+            "solver_ms_max": 36171.159741999996,
+            "solver_ms_median": 35847.068492000006,
+            "solver_ms_min": 35196.418145,
+            "solver_ms_relative_sd": 0.013847829756095035,
+            "wall_ms_median": 49282.1172690019
+        },
+        "medium_copper_gamma/mpi_4_ranks_bands": {
+            "repetitions_kept": 3,
+            "repetitions_total": 4,
+            "solver_ms_max": 15558.740101,
+            "solver_ms_median": 15389.962295000001,
+            "solver_ms_min": 15298.004307000001,
+            "solver_ms_relative_sd": 0.008592649186980144,
+            "wall_ms_median": 28212.251634002314
+        },
+        "medium_copper_gamma/serial": {
+            "repetitions_kept": 3,
+            "repetitions_total": 4,
+            "solver_ms_max": 44075.281106,
+            "solver_ms_median": 38040.919792,
+            "solver_ms_min": 37062.24127599999,
+            "solver_ms_relative_sd": 0.09984287475404537,
+            "wall_ms_median": 56453.488333994756
+        },
+        "small_silicon_kpoints/mpi_4_ranks": {
+            "repetitions_kept": 3,
+            "repetitions_total": 4,
+            "solver_ms_max": 3355.0966659999985,
+            "solver_ms_median": 3310.784550999997,
+            "solver_ms_min": 3260.2648289999984,
+            "solver_ms_relative_sd": 0.014331880470829861,
+            "wall_ms_median": 5027.8926600003615
+        },
+        "small_silicon_kpoints/mpi_4_ranks_4_pools": {
+            "repetitions_kept": 3,
+            "repetitions_total": 4,
+            "solver_ms_max": 656.2647190000002,
+            "solver_ms_median": 655.8326039999995,
+            "solver_ms_min": 651.5302399999997,
+            "solver_ms_relative_sd": 0.003991328989784833,
+            "wall_ms_median": 2224.789404994226
+        },
+        "small_silicon_kpoints/mpi_4_ranks_bands": {
+            "repetitions_kept": 3,
+            "repetitions_total": 4,
+            "solver_ms_max": 1964.6608249999995,
+            "solver_ms_median": 1903.457716,
+            "solver_ms_min": 1876.5964910000007,
+            "solver_ms_relative_sd": 0.023711784292493446,
+            "wall_ms_median": 4478.588629004662
+        },
+        "small_silicon_kpoints/serial": {
+            "repetitions_kept": 3,
+            "repetitions_total": 4,
+            "solver_ms_max": 4190.916634,
+            "solver_ms_median": 4157.893122,
+            "solver_ms_min": 3445.7444169999967,
+            "solver_ms_relative_sd": 0.10125710576928147,
+            "wall_ms_median": 7081.3333120022435
+        }
+    },
+    "metadata": {
+        "binaries": {
+            "mpi_4_ranks": {
+                "path": "/pscratch/sd/t/timur/q3/build/cpu-mpi-scalapack/q3_mpi",
+                "sha256": "7ecfd44ffc47054d4e5580a685bb89b46da618a1e5c16632ba70501a48ea2810"
+            },
+            "mpi_4_ranks_4_pools": {
+                "path": "/pscratch/sd/t/timur/q3/build/cpu-mpi-scalapack/q3_mpi",
+                "sha256": "7ecfd44ffc47054d4e5580a685bb89b46da618a1e5c16632ba70501a48ea2810"
+            },
+            "mpi_4_ranks_bands": {
+                "path": "/pscratch/sd/t/timur/q3/build/cpu-mpi-scalapack/q3_mpi",
+                "sha256": "7ecfd44ffc47054d4e5580a685bb89b46da618a1e5c16632ba70501a48ea2810"
+            },
+            "serial": {
+                "path": "/pscratch/sd/t/timur/q3/build/cpu-serial/q3",
+                "sha256": "16b062fe77a9454d3580936f1b6f85552d2faf5bdef030ffb5f358ccf53899c4"
+            }
+        },
+        "cases": [
+            {
+                "component_energy_tolerance_rydberg": 1e-8,
+                "identifier": "small_silicon_kpoints",
+                "manifest": "examples/total_energy--semiconductor--silicon/nc_kpt_8x8x8.yml",
+                "total_energy_tolerance_rydberg": 1e-8
+            },
+            {
+                "component_energy_tolerance_rydberg": 1.0,
+                "identifier": "medium_copper_gamma",
+                "manifest": "examples/total_energy--metal--copper/nc_3x3x3_bench.yml",
+                "total_energy_tolerance_rydberg": 0.01
+            }
+        ],
+        "convergence_threshold_override": null,
+        "git_commit": "ccc2ab556f98f52f3db0843f78803fb701a81414",
+        "git_worktree_dirty": true,
+        "repetitions": 4,
+        "topologies": ["serial", "mpi_4_ranks", "mpi_4_ranks_4_pools", "mpi_4_ranks_bands"]
+    }
+}

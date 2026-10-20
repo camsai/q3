@@ -1,0 +1,40 @@
+material: ../data/materials/copper_3x3x3_displaced.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: norm-conserving
+  cutoffs:
+    wavefunction: 120.0
+    density: 480.0
+  pseudopotentials:
+    Cu: ../data/pseudopotentials/nc/Cu.upf
+  scf:
+    convergence_threshold: 1.0e-6
+    max_iterations: 200
+    number_of_bands: 280
+    mixing:
+      mode: broyden
+      beta: 0.1
+      ndim: 8
+    smearing:
+      type: gaussian
+      degauss: 0.02
+    kgrid:
+      dimensions:
+        - 1
+        - 1
+        - 1
+      shifts:
+        - 0
+        - 0
+        - 0
+control:
+  calculation: relaxation
+  outdir: ./output
+  prefix: cu_nc_3x3x3_relax
+  relax_max_steps: 50
+  relax_force_threshold: 5.0e-3
+  relax_energy_threshold: 1.0e-5

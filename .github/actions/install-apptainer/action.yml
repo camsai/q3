@@ -1,0 +1,27 @@
+name: Install Apptainer
+description: >
+  Install Apptainer from the project PPA, with the apt-mirror hardening the
+  other workflows in this repository use. Factored out because the container
+  workflow installs it in two jobs and two copies of a fifteen-line shell
+  block drift.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Apptainer
+      # The PPA publishes apptainer for both amd64 and arm64 on noble.
+      shell: bash
+      run: |
+        # Same apt-mirror hardening as ci.yml's install steps; the arm
+        # legs also need the ports.ubuntu.com rewrite. Without it the
+        # 2026.8.19-0 release build hung in apt for GitHub's full 6-hour
+        # default before being killed.
+        for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+          if [ -f "$f" ]; then sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g; s/azure\.ports\.ubuntu\.com/ports.ubuntu.com/g' "$f"; fi
+        done
+        printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99q3-ci >/dev/null
+        sudo apt-get update
+        sudo apt-get install -y software-properties-common
+        sudo add-apt-repository -y ppa:apptainer/ppa
+        sudo apt-get update
+        sudo apt-get install -y apptainer

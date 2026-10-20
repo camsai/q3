@@ -1,0 +1,50 @@
+# Apptainer definition for Q3 — a converter, not a second build recipe.
+#
+# The image is built once as OCI (see Dockerfile) because that is the only
+# format every runtime reads: Apptainer, podman-hpc and Shifter all consume
+# OCI, and only Apptainer consumes SIF. Bootstrapping from the published image
+# keeps one build to review and one artifact to trust, and costs nothing —
+# Apptainer converts OCI to SIF natively, carrying the architecture, labels and
+# environment across.
+#
+# Build a SIF from the current release:
+#
+#     apptainer build q3.sif q3.def
+#
+# Pin a release instead of `latest` by editing the tag below, or skip this file
+# altogether and pull the image directly, which does the same conversion:
+#
+#     apptainer pull docker://ghcr.io/camsai/q3:2026.9.10-0
+#
+# Tags cut before the images became OCI hold a SIF pushed as an ORAS artifact,
+# which `docker://` cannot read; those need `apptainer pull oras://…`.
+#
+# To change what is *in* the image, edit the Dockerfile. Nothing is built here.
+
+Bootstrap: docker
+From: ghcr.io/camsai/q3:latest
+
+%labels
+    Author Mat3ra
+    Application Q3 DFT Engine
+    Version latest
+
+%help
+    Q3 — A modern, from-scratch, extensible Density Functional Theory (DFT)
+    engine written in C++17. This container includes the q3 executable with
+    all dependencies pre-built.
+
+    Usage:
+        apptainer run q3.sif input.yml
+        apptainer exec q3.sif q3 input.yml
+        apptainer exec q3.sif q3_utility convert <save-directory> --format berkeleygw
+
+%environment
+    export PATH=/usr/local/bin:$PATH
+    export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+
+%runscript
+    exec q3 "$@"
+
+%test
+    test -x /usr/local/bin/q3

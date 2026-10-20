@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Tutorials
+    url: https://github.com/camsai/q3/blob/main/docs/tutorials/README.md
+    about: Seven runnable lessons from a fresh clone to a converged result you can defend.
+  - name: Troubleshooting guide
+    url: https://github.com/camsai/q3/blob/main/TROUBLESHOOTING.md
+    about: Known build and runtime problems, with fixes, before filing a bug.

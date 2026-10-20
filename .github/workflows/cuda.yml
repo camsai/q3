@@ -1,0 +1,190 @@
+name: CUDA GPU Build and Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      enable_debug:
+        description: "Enable SSH debug session (tmate)"
+        required: false
+        type: boolean
+        default: false
+      debug_timeout:
+        description: "Debug session timeout (minutes)"
+        required: false
+        type: number
+        default: 30
+
+jobs:
+  cuda-build-and-test:
+    runs-on: NVIDIA-GPU-Optimized-AI-HPC
+
+    steps:
+      - name: Install git-lfs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+          git lfs install
+
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          lfs: true
+          submodules: recursive
+
+      - name: Pull LFS Files
+        run: git lfs pull
+
+      - name: Verify LFS Files
+        run: |
+          for f in examples/data/pseudopotentials/nc/Si.pz-vbc.UPF \
+                   examples/data/pseudopotentials/us/Si_PBE_USPP.UPF; do
+            if head -1 "$f" | grep -q "^version https://git-lfs"; then
+              echo "ERROR: $f is still an LFS pointer, not actual data"
+              exit 1
+            fi
+          done
+          echo "All LFS files verified."
+
+      - name: Check GPU Hardware
+        run: nvidia-smi
+
+      - name: Install CUDA Toolkit
+        # Pinned to a full commit SHA rather than a branch or a tag. This step
+        # runs on the self-hosted GPU runner, so a third-party action tracking
+        # a moving ref would execute whatever landed upstream since the last
+        # dispatch, on a machine that is not a disposable GitHub-hosted VM.
+        # b8bf9c6 is release v0.2.36 -- bump the SHA and the comment together.
+        uses: Jimver/cuda-toolkit@b8bf9c6c28f8a92fbb04dcfcaee872e60c57462d
+        id: cuda-toolkit
+        with:
+          # Matches Dockerfile.cuda, so this job gates the toolkit the
+          # published image actually ships. It used to be 13.1.1 while the
+          # image was pinned lower, which made the parity check a test of a
+          # build nobody runs.
+          #
+          # The version is chosen for the image's sake, and Dockerfile.cuda
+          # carries the reasoning: a container supplies the CUDA runtime but
+          # takes the driver from its host, an older toolkit runs on newer
+          # drivers while the reverse does not, and 12.x needs driver 525
+          # against 13.x's 580. Building against the older toolkit is what
+          # makes the image run on both driver generations.
+          #
+          # This runner is unaffected either way -- it was running 13.1.1, so
+          # its driver is already past 580 and covers 12.8 as well. Bump this
+          # and Dockerfile.cuda together, and check the driver floor on the
+          # machines meant to run the image before raising either.
+          cuda: "12.8.1"
+          method: "local"
+          linux-local-args: '["--toolkit"]'
+
+      - name: Set CUDA PATH
+        run: |
+          CUDA_DIR="${{ steps.cuda-toolkit.outputs.CUDA_PATH }}"
+          echo "Checking $CUDA_DIR ..."
+          sudo chmod -R a+rX "$CUDA_DIR"
+          ls "$CUDA_DIR/bin/nvcc" && echo "nvcc found"
+          export PATH="$CUDA_DIR/bin:$PATH"
+          echo "$CUDA_DIR/bin" >> $GITHUB_PATH
+          echo "CUDA_PATH=$CUDA_DIR" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$CUDA_DIR/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          nvcc --version
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libfftw3-dev libomp-dev liblapack-dev libblas-dev libxc-dev ccache
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,build]"
+
+      - name: Locate the ccache directory
+        id: ccache
+        run: |
+          # Resolve ccache's real store rather than hardcoding it, and bound
+          # its size -- see ci.yml's build-and-test job for why.
+          echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
+          echo "dir=$(ccache --get-config cache_dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.ccache.outputs.dir }}
+          # actions/cache writes only when the key is new, so a key that moves
+          # only with CMakeLists.txt saves once and then never takes in
+          # newly compiled objects. Make it run-unique and fall back by
+          # prefix, the way the build-directory cache already does.
+          key: ccache-cuda-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-cuda-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-
+            ccache-cuda-${{ runner.os }}-
+
+      - name: Configure CMake (CUDA)
+        run: |
+          cmake -S . -B build_cuda \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQ3_WITH_CUDA=ON \
+            -DQ3_BUILD_TESTS=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build (CUDA)
+        run: |
+          ccache -z
+          cmake --build build_cuda -j$(nproc) --target q3 q3_gpu_cuda
+          ccache -s
+
+      - name: CPU↔GPU Energy Parity (blocker 15a)
+        run: |
+          pytest tests/validation/test_gpu_energy_parity.py -v \
+            --q3-bin ./build_cuda/q3 \
+            --q3-gpu-bin ./build_cuda/q3_gpu_cuda
+
+      - name: SSH Debug Session
+        if: always() && inputs.enable_debug
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: ${{ fromJSON(inputs.debug_timeout) }}
+        with:
+          limit-access-to-actor: true
+
+      - name: Benchmark CUDA vs Serial (Si FCC 2×2×2)
+        run: |
+          echo "=== Serial baseline ==="
+          ./build_cuda/q3 examples/total_energy--semiconductor--silicon/nc.yml
+
+          echo ""
+          echo "=== CUDA GPU FP64 ==="
+          ./build_cuda/q3_gpu_cuda examples/total_energy--semiconductor--silicon/nc.yml
+
+          echo ""
+          echo "=== CUDA GPU FP32 Mixed ==="
+          ./build_cuda/q3_gpu_cuda examples/total_energy--semiconductor--silicon/nc.yml --precision mixed
+
+      - name: Benchmark Large System (Cu 3×3×3 supercell, 280 bands)
+        continue-on-error: true
+        run: |
+          echo "=== Serial baseline (Cu 3×3×3, 3 SCF iters) ==="
+          ./build_cuda/q3 examples/total_energy--metal--copper/nc_3x3x3_bench.yml
+
+          echo ""
+          echo "=== CUDA GPU FP64 (Cu 3×3×3, 3 SCF iters) ==="
+          ./build_cuda/q3_gpu_cuda examples/total_energy--metal--copper/nc_3x3x3_bench.yml
+
+          echo ""
+          echo "=== CUDA GPU FP32 Mixed (Cu 3×3×3, 3 SCF iters) ==="
+          ./build_cuda/q3_gpu_cuda examples/total_energy--metal--copper/nc_3x3x3_bench.yml --precision mixed
+
+      - name: Python Validation Tests
+        # Parity already ran (and hard-failed) in its dedicated step right after
+        # the build — skip it here so the GPU runner doesn't pay for it twice.
+        run: |
+          pytest tests/validation/ -v \
+            --ignore=tests/validation/test_gpu_energy_parity.py \
+            --q3-bin ./build_cuda/q3 \
+            --q3-gpu-bin ./build_cuda/q3_gpu_cuda

@@ -1,0 +1,35 @@
+&control
+    calculation = 'relax',
+    outdir = './qe_output',
+    prefix = 'si_relax_us',
+    pseudo_dir = '../../../data/pseudopotentials/us',
+    tprnfor = .true.,
+    tstress = .true.,
+    forc_conv_thr = 5.0e-3,
+/
+&system
+    ibrav = 2,
+    celldm(1) = 10.334,
+    nat = 2,
+    ntyp = 1,
+    ecutwfc = 40.0,
+    ecutrho = 200.0,
+    input_dft = 'XC-000I-000I-101L-130L',
+/
+&electrons
+    conv_thr = 1.0e-6,
+    mixing_mode = 'plain',
+    mixing_beta = 0.3,
+/
+&ions
+    ion_dynamics = 'bfgs',
+/
+ATOMIC_SPECIES
+  Si  28.0855  Si_PBE_USPP.UPF
+
+ATOMIC_POSITIONS crystal
+  Si  0.883  0.875  0.875
+  Si  0.125  0.125  0.125
+
+K_POINTS automatic
+  2 2 2  0 0 0

@@ -1,0 +1,23 @@
+# Build context exclusions for the Dockerfile.
+#
+# Everything here is either regenerated inside the builder stage or never read
+# by it. The two that matter are .git (largest single tree) and the Git LFS
+# example data: the build reads neither, and shipping the context across to the
+# daemon is otherwise the slowest step of a CI image build.
+.git/
+
+# Host build trees and virtualenv. .venv especially: the builder creates its
+# own at /opt/q3-src/.venv, and a host venv copied over it carries absolute
+# paths from another machine that break every interpreter shebang in it.
+build/
+build_*/
+.venv/
+node_modules/
+
+# Example inputs and pseudopotential data are read from the host at run time
+# (bind-mounted by apptainer/podman-hpc/shifter), never from inside the image.
+examples/
+
+# Container artifacts, so a local `apptainer build` result never re-enters the
+# context of the next image build.
+*.sif

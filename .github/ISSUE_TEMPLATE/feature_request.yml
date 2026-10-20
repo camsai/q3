@@ -1,0 +1,21 @@
+name: Feature request
+description: A capability Q3 does not have yet.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: capability
+    attributes:
+      label: What capability, for what calculation?
+      description: The material system and property you are after, and where Q3 stops short today.
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current workaround
+      description: How you solve this today (another tool, manual steps), if at all.
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Papers, textbook sections, or public algorithm descriptions that define the method. Q3's provenance policy (CONTRIBUTING.md) means an implementation is built from published literature, not from other codes' source.

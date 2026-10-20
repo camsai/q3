@@ -1,0 +1,69 @@
+name: Deploy Documentation
+
+on:
+  # Disabled automatic publishing while the site is not meant to be public.
+  # Re-enable by uncommenting the push trigger below.
+  # push:
+  #   branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install Doxygen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen
+
+      - name: Fetch Doxygen Awesome CSS Theme
+        run: |
+          git clone --depth 1 https://github.com/jothepro/doxygen-awesome-css.git \
+            docs/doxygen-awesome-css
+
+      - name: Generate Documentation
+        run: |
+          mkdir -p docs_build
+          doxygen Doxyfile
+
+      - name: Discourage search engine indexing
+        run: |
+          # Inject a noindex meta tag into every generated page so the site is
+          # not indexed by Google et al. while it is not meant to be public.
+          # (Crawling is still allowed so the noindex directive can be read.)
+          find docs_build/html -name '*.html' -print0 | xargs -0 sed -i \
+            's#<head>#<head><meta name="robots" content="noindex, nofollow">#I'
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs_build/html
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build-docs
+    runs-on: ubuntu-24.04
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

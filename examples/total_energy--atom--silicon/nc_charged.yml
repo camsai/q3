@@ -1,0 +1,38 @@
+material: ../data/materials/silicon_atom.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: norm-conserving
+  cutoffs:
+    wavefunction: 48.0
+    density: 192.0
+  pseudopotentials:
+    Si: ../data/pseudopotentials/nc/Si.upf
+  scf:
+    convergence_threshold: 1.0e-12
+    max_iterations: 200
+    number_of_bands: 4
+    total_charge: 3.0
+    mixing:
+      mode: broyden
+      beta: 0.3
+      ndim: 8
+    smearing:
+      type: gaussian
+      degauss: 0.01
+    kgrid:
+      dimensions:
+        - 1
+        - 1
+        - 1
+      shifts:
+        - 0
+        - 0
+        - 0
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: silicon_atom

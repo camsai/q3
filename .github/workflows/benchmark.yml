@@ -1,0 +1,221 @@
+name: Benchmark
+
+# Times the decks tagged `ci` in tests/regression/benchmark_matrix.yml on each
+# GitHub-hosted runner class and compares them against the baseline committed
+# for that class.
+#
+# What a shared runner can and cannot measure, and what follows from it. A
+# GitHub-hosted runner is a small VM on whatever hardware generation the pool
+# hands out, with neighbours on the same host. Its wall clock is not a benchmark
+# rig's, and pretending otherwise would produce a job that fails for reasons no
+# diff can explain. So:
+#
+#   1. The figure compared is the solver's own total, read from the timing
+#      counters the engine writes into its results file -- not wall clock,
+#      which also carries process start-up, reading the datasets off the
+#      runner's disk and the property run, and varies with the machine more
+#      than with the code. Wall is recorded next to it, not gated.
+#   2. Each deck runs three times, the first run is discarded, and the median
+#      is compared with a threshold that is the wider of 10% and three times
+#      the spread the deck actually showed. Measured on a 4-core x86 box the
+#      tracked decks spread by 0.4-1.5% run to run; a shared runner will be
+#      worse, and the rule widens with it instead of firing on it.
+#   3. The job is continue-on-error: a regression annotates the run and reports
+#      the numbers on the run summary, and does not block the merge. That is a
+#      deliberate trade. On this hardware a 10% move is as likely to be the
+#      neighbouring VM as the change under review, and a gate that cries wolf
+#      is turned off by the third false alarm -- which costs more than a report
+#      nobody has to override. Making it blocking wants a dedicated runner, not
+#      a tighter threshold.
+#
+# Baselines are per runner class -- docs/benchmarks/baseline-<label>.json -- and
+# the comparison refuses to compare across machine labels. Until a class has
+# one, its leg still runs the decks, publishes the numbers and prints the
+# record; the comparison step prints the command that promotes it.
+#
+# Why a workflow of its own. This was a job in ci.yml that reused the binary
+# build-and-test had produced. On its own it pays for a build (ccache keeps that
+# short) and gets what a ci.yml job could not have: a runner-class matrix,
+# x86-64 and arm64 each against its own baseline; re-runs of a measurement that
+# is noisy by nature without re-running CI; and a concurrency group that never
+# cancels, or is cancelled by, the CI it reports beside.
+#
+# No GPU leg. The one GPU runner this repository has is self-hosted, and
+# cuda.yml runs on it only when dispatched by hand, never on pull-request code.
+
+on:
+  push:
+    branches: ["main"]
+    paths: &benchmark_paths
+      # What can change the binary (built with tests off), the harness, or the
+      # baselines and the document generated from them.
+      - ".github/workflows/benchmark.yml"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "schemas/**"
+      - "src/**"
+      - "scripts/repo/generate_cpp_from_schemas.py"
+      - "scripts/repo/templates/**"
+      - "scripts/benchmark/**"
+      - "tests/regression/benchmark_matrix.yml"
+      - "docs/benchmarks/**"
+      - "PERFORMANCE.md"
+  pull_request:
+    branches: ["**"]
+    paths: *benchmark_paths
+  workflow_dispatch:
+
+concurrency:
+  # A run on main records the numbers a baseline is promoted from, so it is
+  # never cancelled. Superseded pull-request runs are fair game.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: benchmark (${{ matrix.label }})
+    strategy:
+      # One runner class regressing says nothing about the other.
+      fail-fast: false
+      matrix:
+        include:
+          # The label names the baseline series, baseline-<label>.json, so it
+          # kept its name when the runner was pinned. That series was recorded
+          # on ubuntu-24.04, back when ubuntu-latest still meant 24.04.
+          - runner: ubuntu-24.04
+            label: github-ubuntu-24.04
+          - runner: ubuntu-24.04-arm
+            label: github-ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    continue-on-error: true
+
+    env:
+      MACHINE_LABEL: ${{ matrix.label }}
+      BASELINE_PATH: docs/benchmarks/baseline-${{ matrix.label }}.json
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install System Dependencies
+        timeout-minutes: 10
+        run: |
+          for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            if [ -f "$f" ]; then sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g; s/azure\.ports\.ubuntu\.com/ports.ubuntu.com/g' "$f"; fi
+          done
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99q3-ci >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y libfftw3-dev libomp-dev liblapack-dev libblas-dev libxc-dev ccache
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[build]"
+
+      - name: Locate the ccache directory
+        id: ccache
+        run: |
+          echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
+          echo "dir=$(ccache --get-config cache_dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.ccache.outputs.dir }}
+          # Per architecture: an arm64 object is no use to an x86-64 build.
+          key: ccache-benchmark-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            ccache-benchmark-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build q3
+        # The configuration build-and-test uses, with the tests off: the same
+        # binary it used to hand this job.
+        run: |
+          cmake -S . -B build -DQ3_BUILD_TESTS=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQ3_REQUIRE_SCHEMA_CODEGEN=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build -j$(nproc) --target q3
+
+      - name: Run the benchmark decks
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/benchmarks"
+          python3 scripts/benchmark/run_benchmarks.py \
+            --q3-bin build/q3 \
+            --tag ci \
+            --machine-label "$MACHINE_LABEL" \
+            --output-directory "$RUNNER_TEMP/benchmarks/runs" \
+            --output "$RUNNER_TEMP/benchmarks/records.json" \
+            | tee -a "$RUNNER_TEMP/benchmarks/report.txt"
+
+      - name: Compare against the committed baseline
+        shell: bash
+        run: |
+          set -o pipefail
+          if [ ! -f "$BASELINE_PATH" ]; then
+            echo "No baseline is committed for $MACHINE_LABEL yet, so there is nothing to" \
+              "compare against. Take the records.json this run uploaded (or printed in its log) and promote it with:" \
+              | tee -a "$RUNNER_TEMP/benchmarks/report.txt"
+            echo "  python3 scripts/benchmark/compare_benchmarks.py records.json --write-baseline $BASELINE_PATH" \
+              | tee -a "$RUNNER_TEMP/benchmarks/report.txt"
+            exit 0
+          fi
+          python3 scripts/benchmark/compare_benchmarks.py \
+            "$RUNNER_TEMP/benchmarks/records.json" \
+            --baseline "$BASELINE_PATH" \
+            | tee -a "$RUNNER_TEMP/benchmarks/report.txt"
+
+      - name: Print the record
+        if: always()
+        # The same records.json the artifact below carries, in the log as well:
+        # a log outlives the artifact's 30 days, and promoting a baseline then
+        # needs nothing but the run page.
+        run: |
+          echo "::group::records.json (${MACHINE_LABEL})"
+          cat "$RUNNER_TEMP/benchmarks/records.json" 2>/dev/null || echo "no record was written"
+          echo "::endgroup::"
+
+      - name: Verify PERFORMANCE.md matches the committed baselines
+        # The generated section of PERFORMANCE.md is rendered from the same
+        # baseline files, so a baseline committed without regenerating it
+        # leaves the document quietly out of date. It reads every runner
+        # class's file, so one leg checks it for both.
+        if: matrix.runner == 'ubuntu-24.04'
+        run: python3 scripts/benchmark/generate_performance.py --check
+
+      - name: Upload the benchmark record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-records-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/benchmarks/records.json
+            ${{ runner.temp }}/benchmarks/report.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Report the numbers on the run summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Benchmark decks (${MACHINE_LABEL})"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/benchmarks/report.txt" 2>/dev/null || echo "no numbers were produced"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,579 @@
+name: Build Container Image
+
+# Three OCI images from one pipeline, each consumed by every container runtime
+# Q3 supports: Apptainer on most clusters, podman-hpc and Shifter on the
+# centres that provide those instead. Apptainer is the only one that reads SIF,
+# and it converts OCI to SIF natively, so OCI is what gets published and the
+# SIF is derived from it (q3.def). The workflow this replaced did the reverse --
+# built a SIF and pushed it with `apptainer push oras://` -- which left an ORAS
+# artifact only Apptainer could consume.
+#
+#   plain tag    serial q3, the default; amd64 + arm64
+#   -mpi         adds q3_mpi, built against a source MPICH; amd64 + arm64
+#   -cuda        adds q3_gpu_cuda; amd64 only, see Dockerfile.cuda for why
+#
+# Runs once per merge to main, transitively: ci.yml's publish job cuts the
+# date-based tag and release on every green main push, and the release event
+# lands here. A push-to-main trigger would build every merge twice.
+#
+# That indirection has a cost worth knowing about: this workflow fires only if
+# ci.yml ran, and ci.yml has its own `paths` filter. A change matching nothing
+# there cuts no release, so nothing here runs and nothing is published --
+# silently, with no red check to notice. #178 landed this entire pipeline and
+# published no image at all for exactly that reason. ci.yml's monitor_paths
+# now lists the container files; keep the two in step.
+on:
+  release:
+    types: [published]
+  # Container changes build and smoke-test on the PR; nothing publishes.
+  pull_request:
+    paths:
+      - Dockerfile
+      - Dockerfile.mpi
+      - Dockerfile.cuda
+      - .dockerignore
+      - q3.def
+      - .github/workflows/container.yml
+      # The jobs below run these, so a change to either can break this
+      # workflow while matching nothing above: the composite action that
+      # installs Apptainer, and the script that asserts the energy.
+      - .github/actions/**
+      - scripts/validation/check_scf_result.py
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the containers to GitHub Packages"
+        required: false
+        default: "false"
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  # Follows the repository, so each side publishes its own images without a
+  # hard-coded name: the raw repository builds staging images, and the clean
+  # mirror -- which runs this same workflow after an export -- publishes the
+  # public ghcr.io/camsai/q3 that the README documents.
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-serial:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+            machine: x86_64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            machine: aarch64
+    runs-on: ${{ matrix.os }}
+    # PR legs finish in ~6 minutes; the 2026.8.19-0 release build instead
+    # hung in apt for GitHub's full 6-hour default before being killed.
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v5
+        with:
+          # The image build itself does not read the LFS payload (.dockerignore
+          # keeps examples/ out of the context entirely), but the smoke test
+          # below runs a real example from this checkout, and its
+          # pseudopotential files are LFS objects.
+          lfs: true
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Pull LFS Files
+        run: git lfs pull
+
+      - name: Get latest Git tag
+        run: |
+          TAG=$(git describe --tags --abbrev=0 --always || echo "${{ github.sha }}")
+          echo "LATEST_TAG=$TAG" >> $GITHUB_ENV
+
+      - name: Build the OCI image
+        # Native build on a runner of this architecture -- no emulation. The
+        # image stays local to this job; publishing is a separate step so a PR
+        # exercises the identical build without pushing anything.
+        run: docker build --build-arg Q3_GIT_COMMIT=${{ github.sha }} -t q3:local .
+
+      - name: Check the image names the commit it was built from
+        # .dockerignore keeps .git out of the build context, so the SHA only
+        # reaches the binary through the build argument above. Every published
+        # image used to say "commit unknown", which left a results.json with no
+        # way to name the build that produced it (camsai/q3#6).
+        run: docker run --rm q3:local q3 --version | tee /dev/stderr | grep -F "${{ github.sha }}"
+
+      - name: Check the image is this leg's architecture
+        run: |
+          test "$(docker image inspect q3:local --format '{{.Architecture}}')" = "${{ matrix.arch }}"
+          test "$(docker run --rm q3:local uname -m)" = "${{ matrix.machine }}"
+
+      - name: Check the image links OpenBLAS
+        # The reference netlib BLAS that the unqualified -dev packages resolve
+        # to is untuned and single-threaded, and it cost the published images a
+        # factor of ten serial and forty threaded (camsai/q3#12). A Dockerfile
+        # edit that pulls it back in is otherwise silent: the run still
+        # converges, it just takes all day.
+        run: |
+          docker run --rm q3:local sh -c \
+            'ldd /usr/local/bin/q3 | tee /dev/stderr | grep -q openblas'
+
+      - name: Run an SCF through the OCI runtime
+        # The documented form for these runtimes: an explicit bind mount and a
+        # bare `q3` argument, which is how `podman-hpc run` and `shifter` invoke
+        # it. Apptainer mounts the working directory implicitly; the OCI
+        # runtimes do not, so the mount is what is being tested here as much as
+        # the binary.
+        #
+        # What is mounted is examples/, not the example's own directory: nc.yml
+        # refers to its material and pseudopotential as ../data/..., so a mount
+        # of the leaf directory leaves both outside the container and the run
+        # dies on "Cannot open JSON file". The rule the docs state -- mount a
+        # tree containing the input *and* everything it references -- is exactly
+        # what this step has to follow to be a test of anything.
+        run: |
+          docker run --rm -v "$PWD/examples:/work" \
+            -w /work/total_energy--semiconductor--silicon q3:local q3 nc.yml
+          python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" \
+            examples/total_energy--semiconductor--silicon/output/si_nc_results.json
+
+      - name: Run an SCF as a non-root user
+        # podman-hpc runs rootless: the container process is the submitting
+        # user, mapped through a user namespace, not root. An image that only
+        # works as root passes every check above and then fails on the first
+        # compute node, so the unprivileged case is checked here rather than
+        # there. The output directory is created by this step's own user, so
+        # the earlier run's root-owned output must go first.
+        #
+        # HOME is set explicitly because a uid with no /etc/passwd entry gets
+        # HOME=/ from Docker, which is not writable and is not the situation
+        # podman-hpc produces either -- it bind-mounts the user's real home.
+        # Leaving it unset would test an artefact of this runner rather than
+        # the unprivileged execution this step is here to cover.
+        run: |
+          sudo rm -rf examples/total_energy--semiconductor--silicon/output
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD/examples:/work" \
+            -w /work/total_energy--semiconductor--silicon q3:local q3 nc.yml
+          python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" \
+            examples/total_energy--semiconductor--silicon/output/si_nc_results.json
+
+      - name: Install Apptainer
+        uses: ./.github/actions/install-apptainer
+
+      - name: Convert to SIF and run the same SCF
+        # This is the conversion q3.def performs, run against the image this
+        # job just built rather than a published tag, so a pull request
+        # exercises it before anything is pushed. `docker-daemon://` reads the
+        # local image directly; the published equivalent is
+        # `apptainer build q3.sif q3.def`, checked end-to-end by verify-published.
+        run: |
+          apptainer build q3.sif docker-daemon://q3:local
+          cd examples/total_energy--semiconductor--silicon
+          sudo rm -rf output
+          apptainer exec ../../q3.sif q3 --version | tee /dev/stderr | grep -F "${{ github.sha }}"
+          apptainer exec ../../q3.sif q3 nc.yml
+          python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" output/si_nc_results.json
+
+      - name: Log in to GitHub Packages
+        if: github.event_name == 'release' || github.event.inputs.publish == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login "${REGISTRY}" \
+            --username "${{ github.actor }}" --password-stdin
+
+      - name: Publish the per-architecture image
+        # Each leg publishes only its own architecture; the manifest job below
+        # is what makes the plain tags resolve to both.
+        if: github.event_name == 'release' || github.event.inputs.publish == 'true'
+        run: |
+          REPO="${REGISTRY}/${IMAGE_NAME}"
+          docker tag q3:local "${REPO}:${LATEST_TAG}-${{ matrix.arch }}"
+          docker push "${REPO}:${LATEST_TAG}-${{ matrix.arch }}"
+
+  build-mpi:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    # Longer than the serial leg because MPICH and FFTW are both compiled from
+    # source before Q3 is, for the ABI reason Dockerfile.mpi explains.
+    timeout-minutes: 60
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v5
+        with:
+          lfs: true
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Pull LFS Files
+        run: git lfs pull
+
+      - name: Get latest Git tag
+        run: |
+          TAG=$(git describe --tags --abbrev=0 --always || echo "${{ github.sha }}")
+          echo "LATEST_TAG=$TAG" >> $GITHUB_ENV
+
+      # Only this leg is cached, and only because of what it spends its time
+      # on. Measured on the 2026.9.9-3 release build, of a 25m38s amd64 job:
+      # MPICH from source was 1313s, FFTW 54s, Q3 itself 139s -- so 85% of the
+      # job is rebuilding a toolchain whose version is a pinned ARG and
+      # therefore almost never changes. The arm64 leg does the same work in
+      # 733s; the gap is core count, not extra work (configure, which is
+      # single-threaded, is marginally faster on amd64, while `make -j$(nproc)`
+      # is 1.9x slower), so it is not something the Dockerfile can fix.
+      #
+      # Dockerfile.mpi is already ordered for this: `COPY . /opt/q3-src` comes
+      # after both source builds, so a commit invalidates the Q3 layer and
+      # leaves the MPICH and FFTW layers hit. Each of those RUN steps deletes
+      # its unpacked source before the layer closes, so what gets stored is
+      # /opt/mpich and /opt/fftw rather than a build tree.
+      #
+      # mode=max is required rather than preferred: the layers worth keeping
+      # live in the builder stage, and mode=min would store only the ones that
+      # survive into the runtime image -- exactly the wrong half. Scoped per
+      # architecture so the two legs do not evict each other.
+      #
+      # Not applied to build-serial (2 minutes, nothing to save) or build-cuda,
+      # whose multi-gigabyte base layers would dominate the repository's 10 GB
+      # cache budget and evict this one to save four minutes.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the MPI image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.mpi
+          build-args: Q3_GIT_COMMIT=${{ github.sha }}
+          tags: q3-mpi:local
+          # Into the daemon, not the registry: every step below this one runs
+          # `docker run q3-mpi:local`, and publishing stays a separate,
+          # conditional step so a pull request builds without pushing.
+          load: true
+          cache-from: type=gha,scope=mpi-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=mpi-${{ matrix.arch }}
+
+      - name: Check the image names the commit it was built from
+        # .dockerignore keeps .git out of the build context, so the SHA only
+        # reaches the binary through the build argument above. Every published
+        # image used to say "commit unknown", which left a results.json with no
+        # way to name the build that produced it (camsai/q3#6).
+        run: docker run --rm q3-mpi:local q3 --version | tee /dev/stderr | grep -F "${{ github.sha }}"
+
+      - name: Check the image links OpenBLAS
+        # The reference netlib BLAS that the unqualified -dev packages resolve
+        # to is untuned and single-threaded, and it cost the published images a
+        # factor of ten serial and forty threaded (camsai/q3#12). A Dockerfile
+        # edit that pulls it back in is otherwise silent: the run still
+        # converges, it just takes all day.
+        run: |
+          docker run --rm q3-mpi:local sh -c \
+            'ldd /usr/local/bin/q3_mpi | tee /dev/stderr | grep -q openblas'
+
+      - name: Check the image is this leg's architecture
+        run: |
+          test "$(docker image inspect q3-mpi:local --format '{{.Architecture}}')" = "${{ matrix.arch }}"
+
+      - name: Run the SCF across rank counts
+        # The image's own MPICH, not a host one -- there is no Cray MPI on a
+        # GitHub runner to swap in. That still tests what this image adds: that
+        # q3_mpi links, launches, and reaches the same ground state whatever the
+        # rank topology, which is the invariant ci.yml's mpi-validation job
+        # covers for the native build and which the container must not break.
+        #
+        # One and two ranks: Q3 parallelizes over k-points and this example
+        # reduces to two irreducible ones, so a plain launch fills exactly two
+        # pools. Rank counts beyond the k-point count belong with an input that
+        # has the k-points to fill them, which is what mpi-validation runs.
+        #
+        # Then the same two ranks in one pool, asked for by name with `--pools
+        # 1`. Nobody should reach for that layout for speed -- ranks sharing a
+        # pool distribute the FFT instead, for no measured speedup and at the
+        # cost of gamma-only, stress, checkpointing and export -- but the
+        # engine accepts it, and an accepted layout must not abort. It is also
+        # the only layout that sends a complex buffer through MPI at all: with
+        # one rank per pool every complex collective is a no-op that returns
+        # before it reaches the wire. That is exactly how camsai/q3#11 shipped
+        # in five releases -- a Fortran datatype, null in this image's
+        # --disable-fortran MPICH, on a path CI never ran.
+        #
+        # No launcher flags are needed for the concessions this environment
+        # asks for. MPICH's Hydra runs as root and oversubscribes cores without
+        # being told to; the --allow-run-as-root and oversubscribe settings
+        # ci.yml carries are OpenMPI's, and OpenMPI is not what this image is
+        # built against.
+        run: |
+          for ranks in 1 2; do
+            echo "=== q3_mpi on $ranks rank(s) ==="
+            sudo rm -rf examples/total_energy--semiconductor--silicon/output
+            docker run --rm -v "$PWD/examples:/work" \
+              -w /work/total_energy--semiconductor--silicon q3-mpi:local \
+              mpiexec -n "$ranks" q3_mpi nc.yml
+            python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" \
+              examples/total_energy--semiconductor--silicon/output/si_nc_results.json
+          done
+
+          echo "=== q3_mpi on 2 ranks sharing one pool ==="
+          sudo rm -rf examples/total_energy--semiconductor--silicon/output
+          docker run --rm -v "$PWD/examples:/work" \
+            -w /work/total_energy--semiconductor--silicon q3-mpi:local \
+            mpiexec -n 2 q3_mpi --pools 1 nc.yml
+          python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" \
+            examples/total_energy--semiconductor--silicon/output/si_nc_results.json
+
+      - name: Check the serial binary still works in this image
+        # The MPI image ships q3 as well, so `podman-hpc run <image> q3 in.yml`
+        # behaves the same way it does with the plain image.
+        run: |
+          sudo rm -rf examples/total_energy--semiconductor--silicon/output
+          docker run --rm -v "$PWD/examples:/work" \
+            -w /work/total_energy--semiconductor--silicon q3-mpi:local q3 nc.yml
+          python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" \
+            examples/total_energy--semiconductor--silicon/output/si_nc_results.json
+
+      - name: Log in to GitHub Packages
+        if: github.event_name == 'release' || github.event.inputs.publish == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login "${REGISTRY}" \
+            --username "${{ github.actor }}" --password-stdin
+
+      - name: Publish the per-architecture image
+        if: github.event_name == 'release' || github.event.inputs.publish == 'true'
+        run: |
+          REPO="${REGISTRY}/${IMAGE_NAME}"
+          docker tag q3-mpi:local "${REPO}:${LATEST_TAG}-mpi-${{ matrix.arch }}"
+          docker push "${REPO}:${LATEST_TAG}-mpi-${{ matrix.arch }}"
+
+  build-cuda:
+    # amd64 only, and Dockerfile.cuda says why: the GPUs this targets sit in
+    # x86_64 nodes and there is no arm64 GPU runner to test an aarch64 copy on.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v5
+        with:
+          lfs: true
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Pull LFS Files
+        run: git lfs pull
+
+      - name: Free disk space
+        # The CUDA base images are several gigabytes each and the builder and
+        # runtime layers coexist during the build. A hosted runner ships with
+        # toolchains this workflow never uses; removing them buys enough room
+        # that the build fails on its own merits rather than on "no space left
+        # on device" halfway through nvcc.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /usr/local/share/boost
+          df -h /
+
+      - name: Get latest Git tag
+        run: |
+          TAG=$(git describe --tags --abbrev=0 --always || echo "${{ github.sha }}")
+          echo "LATEST_TAG=$TAG" >> $GITHUB_ENV
+
+      - name: Build the CUDA image
+        run: docker build --build-arg Q3_GIT_COMMIT=${{ github.sha }} -f Dockerfile.cuda -t q3-cuda:local .
+
+      - name: Check what the image contains
+        # No SCF here, on purpose: a hosted runner has no GPU and no driver, so
+        # q3_gpu_cuda cannot run. What is checkable without one is that the
+        # image is the right architecture, that the GPU binary was built and
+        # links (Dockerfile.cuda's ldd assertion already failed the build
+        # otherwise), and that the serial binary in the same image still runs.
+        # The GPU backend's own correctness is gated by the CPU/GPU energy
+        # parity test in cuda.yml, on the self-hosted GPU runner.
+        run: |
+          test "$(docker image inspect q3-cuda:local --format '{{.Architecture}}')" = "amd64"
+          docker run --rm q3-cuda:local sh -c 'test -x /usr/local/bin/q3_gpu_cuda'
+          docker run --rm q3-cuda:local sh -c 'ldd /usr/local/bin/q3 | grep -q openblas'
+          docker run --rm q3-cuda:local q3 --version | tee /dev/stderr | grep -F "${{ github.sha }}"
+
+      - name: Run the serial SCF from the CUDA image
+        # The CPU path through the GPU image. It shares every library with the
+        # serial image except the base, so this is what catches the CUDA base
+        # image shipping a different LibXC or FFTW than Ubuntu does -- which
+        # would move the energy without failing anything else here.
+        run: |
+          docker run --rm -v "$PWD/examples:/work" \
+            -w /work/total_energy--semiconductor--silicon q3-cuda:local q3 nc.yml
+          python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" \
+            examples/total_energy--semiconductor--silicon/output/si_nc_results.json
+
+      - name: Log in to GitHub Packages
+        if: github.event_name == 'release' || github.event.inputs.publish == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login "${REGISTRY}" \
+            --username "${{ github.actor }}" --password-stdin
+
+      - name: Publish the image
+        if: github.event_name == 'release' || github.event.inputs.publish == 'true'
+        run: |
+          REPO="${REGISTRY}/${IMAGE_NAME}"
+          docker tag q3-cuda:local "${REPO}:${LATEST_TAG}-cuda-amd64"
+          docker push "${REPO}:${LATEST_TAG}-cuda-amd64"
+
+  # Makes the plain and suffixed tags manifest lists pointing at the
+  # per-architecture images, so `docker pull`, `podman-hpc pull`,
+  # `shifterimg pull` and `apptainer pull` each resolve the architecture they
+  # are running on. Without it a plain tag would resolve to whichever leg
+  # pushed last, silently publishing an image that runs on only one
+  # architecture.
+  #
+  #
+  # `imagetools create` reads each child's platform from its image config,
+  # which is why this is a few lines rather than the hand-assembled OCI index
+  # the Apptainer workflow needed: `apptainer push` wrote an empty config `{}`
+  # with no architecture in it for a manifest-list tool to read.
+  manifest:
+    needs: [build-serial, build-mpi, build-cuda]
+    if: github.event_name == 'release' || github.event.inputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Get latest Git tag
+        run: |
+          TAG=$(git describe --tags --abbrev=0 --always || echo "${{ github.sha }}")
+          echo "LATEST_TAG=$TAG" >> $GITHUB_ENV
+
+      - name: Log in to GitHub Packages
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login "${REGISTRY}" \
+            --username "${{ github.actor }}" --password-stdin
+
+      - name: Create the multi-architecture tags
+        # The CUDA image goes through imagetools too, with one source rather
+        # than two. That is not a no-op: it gives the -cuda tag the same index
+        # shape as the others, so a puller on arm64 is told the platform is
+        # unavailable instead of being handed an amd64 image to fail on later.
+        run: |
+          REPO="${REGISTRY}/${IMAGE_NAME}"
+          docker buildx imagetools create \
+            --tag "${REPO}:${LATEST_TAG}" \
+            --tag "${REPO}:latest" \
+            "${REPO}:${LATEST_TAG}-amd64" \
+            "${REPO}:${LATEST_TAG}-arm64"
+          docker buildx imagetools create \
+            --tag "${REPO}:${LATEST_TAG}-mpi" \
+            --tag "${REPO}:latest-mpi" \
+            "${REPO}:${LATEST_TAG}-mpi-amd64" \
+            "${REPO}:${LATEST_TAG}-mpi-arm64"
+          docker buildx imagetools create \
+            --tag "${REPO}:${LATEST_TAG}-cuda" \
+            --tag "${REPO}:latest-cuda" \
+            "${REPO}:${LATEST_TAG}-cuda-amd64"
+
+      - name: Inspect the published tags
+        run: |
+          REPO="${REGISTRY}/${IMAGE_NAME}"
+          for suffix in "" "-mpi"; do
+            echo "=== ${LATEST_TAG}${suffix} ==="
+            docker buildx imagetools inspect --raw "${REPO}:${LATEST_TAG}${suffix}" \
+              | tee /dev/stderr \
+              | jq -e '[.manifests[].platform.architecture] | sort == ["amd64", "arm64"]'
+          done
+          echo "=== ${LATEST_TAG}-cuda ==="
+          docker buildx imagetools inspect --raw "${REPO}:${LATEST_TAG}-cuda" \
+            | tee /dev/stderr \
+            | jq -e '[.manifests[].platform.architecture] == ["amd64"]'
+
+  # End-to-end check of what users actually pull: the published multi-arch tag,
+  # resolved by the registry, converted by the q3.def in this commit. The build
+  # jobs prove the images and the conversion; this proves the tags and the def
+  # file that names one, neither of which exists until the two jobs above run.
+  verify-published:
+    needs: manifest
+    if: github.event_name == 'release' || github.event.inputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v5
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Pull LFS Files
+        run: git lfs pull
+
+      - name: Get latest Git tag
+        run: |
+          TAG=$(git describe --tags --abbrev=0 --always || echo "${{ github.sha }}")
+          echo "LATEST_TAG=$TAG" >> $GITHUB_ENV
+
+      - name: Install Apptainer
+        uses: ./.github/actions/install-apptainer
+
+      - name: Build the SIF from q3.def and run an SCF
+        # Credentials go through APPTAINER_DOCKER_* rather than a login
+        # subcommand: the spelling of that subcommand changed across Apptainer
+        # versions (`remote login`, then `registry login`), while these two
+        # variables have been read by every version the PPA has shipped. The
+        # image is public once released, but the raw repository's package is
+        # not, and this workflow runs in both.
+        env:
+          APPTAINER_DOCKER_USERNAME: ${{ github.actor }}
+          APPTAINER_DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          apptainer build q3.sif q3.def
+          cd examples/total_energy--semiconductor--silicon
+          apptainer run ../../q3.sif nc.yml
+          python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" output/si_nc_results.json
+
+      - name: Run the published MPI image
+        # The parallel counterpart of the step above: the -mpi tag as a user
+        # pulls it, under its own MPICH, at the rank count that exercises pool
+        # parallelism.
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login "${REGISTRY}" \
+            --username "${{ github.actor }}" --password-stdin
+          sudo rm -rf examples/total_energy--semiconductor--silicon/output
+          docker run --rm -v "$PWD/examples:/work" \
+            -w /work/total_energy--semiconductor--silicon \
+            "${REGISTRY}/${IMAGE_NAME}:${LATEST_TAG}-mpi" \
+            mpiexec -n 2 q3_mpi nc.yml
+          python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" \
+            examples/total_energy--semiconductor--silicon/output/si_nc_results.json

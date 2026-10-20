@@ -1,0 +1,32 @@
+material: ../data/materials/silicon.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: paw
+  cutoffs:
+    wavefunction: 40.0
+    density: 320.0
+  pseudopotentials:
+    Si: ../data/pseudopotentials/paw/Si.upf
+  scf:
+    convergence_threshold: 1.0e-08
+    max_iterations: 200
+    mixing:
+      mode: broyden
+      beta: 0.3
+    kgrid:
+      dimensions:
+        - 2
+        - 2
+        - 2
+      shifts:
+        - 1
+        - 1
+        - 1
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: si_paw

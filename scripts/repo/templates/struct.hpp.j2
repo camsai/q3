@@ -1,0 +1,218 @@
+#pragma once
+
+// @generated from {{ schema_path }} — DO NOT EDIT
+
+{% if needs_cstdint %}
+#include <cstdint>
+{% endif %}
+{% if needs_map %}
+#include <map>
+{% endif %}
+{% if needs_optional %}
+#include <optional>
+{% endif %}
+{% if key_registry %}
+#include <stdexcept>
+{% endif %}
+{% if needs_string %}
+#include <string>
+{% endif %}
+{% if needs_vector %}
+#include <vector>
+{% endif %}
+
+#include <nlohmann/json.hpp>
+
+namespace q3::generated {
+
+{% for enum in enums %}
+enum class {{ enum.name }} {
+{% for entry in enum.entries %}
+    {{ entry.cpp_name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+};
+
+{% if enum.is_string %}
+inline void to_json(nlohmann::json& json_output, const {{ enum.name }}& enum_value) {
+    switch (enum_value) {
+{% for entry in enum.entries %}
+        case {{ enum.name }}::{{ entry.cpp_name }}: json_output = "{{ entry.json_value }}"; break;
+{% endfor %}
+    }
+}
+
+inline void from_json(const nlohmann::json& json_input, {{ enum.name }}& enum_value) {
+    const auto& string_value = json_input.get<std::string>();
+{% for entry in enum.entries %}
+{% if loop.first %}
+    if (string_value == "{{ entry.json_value }}") {
+{% else %}
+    } else if (string_value == "{{ entry.json_value }}") {
+{% endif %}
+        enum_value = {{ enum.name }}::{{ entry.cpp_name }};
+{% endfor %}
+    } else {
+        throw std::runtime_error("Unknown {{ enum.name }}: " + string_value);
+    }
+}
+{% elif enum.is_integer %}
+inline void to_json(nlohmann::json& json_output, const {{ enum.name }}& enum_value) {
+    switch (enum_value) {
+{% for entry in enum.entries %}
+        case {{ enum.name }}::{{ entry.cpp_name }}: json_output = {{ entry.json_value }}; break;
+{% endfor %}
+    }
+}
+
+inline void from_json(const nlohmann::json& json_input, {{ enum.name }}& enum_value) {
+    const auto integer_value = json_input.get<int64_t>();
+{% for entry in enum.entries %}
+{% if loop.first %}
+    if (integer_value == {{ entry.json_value }}) {
+{% else %}
+    } else if (integer_value == {{ entry.json_value }}) {
+{% endif %}
+        enum_value = {{ enum.name }}::{{ entry.cpp_name }};
+{% endfor %}
+    } else {
+        throw std::runtime_error("Unknown {{ enum.name }} value: " + std::to_string(integer_value));
+    }
+}
+{% endif %}
+
+{% endfor %}
+{% for nested in nested_structs %}
+/**
+{% if nested.description %}
+ * {{ nested.description }}
+{% endif %}
+ */
+struct {{ nested.name }} {
+{% for field in nested.fields %}
+{% if field.description %}
+    // {{ field.description }}
+{% endif %}
+    {{ field.cpp_type }} {{ field.cpp_name }}{{ field.default_value }};
+{% endfor %}
+};
+
+inline void to_json(nlohmann::json& json_output, const {{ nested.name }}& data) {
+    json_output = nlohmann::json::object();
+{% for field in nested.fields %}
+{% if field.is_optional %}
+    if (data.{{ field.cpp_name }}) {
+        json_output["{{ field.json_name }}"] = *data.{{ field.cpp_name }};
+    }
+{% else %}
+    json_output["{{ field.json_name }}"] = data.{{ field.cpp_name }};
+{% endif %}
+{% endfor %}
+}
+
+inline void from_json(const nlohmann::json& json_input, {{ nested.name }}& data) {
+{% for field in nested.fields %}
+{% if field.is_optional %}
+    if (json_input.contains("{{ field.json_name }}")) {
+        data.{{ field.cpp_name }} = json_input.at("{{ field.json_name }}").get<{{ field.inner_type }}>();
+    }
+{% else %}
+    json_input.at("{{ field.json_name }}").get_to(data.{{ field.cpp_name }});
+{% endif %}
+{% endfor %}
+}
+
+{% endfor %}
+/**
+{% if description %}
+ * {{ description }}
+{% endif %}
+ *
+ * Schema: {{ schema_path }}
+ */
+struct {{ struct_name }} {
+{% for field in fields %}
+{% if field.description %}
+    // {{ field.description }}
+{% endif %}
+    {{ field.cpp_type }} {{ field.cpp_name }}{{ field.default_value }};
+{% endfor %}
+};
+
+{% if use_macro %}
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE({{ struct_name }}{% for field in fields %}, {{ field.cpp_name }}{% endfor %})
+{% else %}
+inline void to_json(nlohmann::json& json_output, const {{ struct_name }}& data) {
+    json_output = nlohmann::json::object();
+{% for field in fields %}
+{% if field.is_optional %}
+    if (data.{{ field.cpp_name }}) {
+        json_output["{{ field.json_name }}"] = *data.{{ field.cpp_name }};
+    }
+{% else %}
+    json_output["{{ field.json_name }}"] = data.{{ field.cpp_name }};
+{% endif %}
+{% endfor %}
+}
+
+inline void from_json(const nlohmann::json& json_input, {{ struct_name }}& data) {
+{% for field in fields %}
+{% if field.is_optional %}
+    if (json_input.contains("{{ field.json_name }}")) {
+        data.{{ field.cpp_name }} = json_input.at("{{ field.json_name }}").get<{{ field.inner_type }}>();
+    }
+{% else %}
+    json_input.at("{{ field.json_name }}").get_to(data.{{ field.cpp_name }});
+{% endif %}
+{% endfor %}
+}
+{% endif %}
+
+{% if key_registry %}
+/**
+ * Key allow-lists taken straight from {{ schema_path }}: one entry per object
+ * the schema closes with "additionalProperties": false, keyed by the dotted
+ * path to it ("" is the document root, "[]" a step through an array's items).
+ *
+ * This is what makes the schema the single source of truth for which keys an
+ * input file may carry: a parser validates against these lists instead of
+ * against hand-written ones, so a key added here reaches the parser by
+ * regeneration rather than by someone remembering to edit two places.
+ */
+namespace {{ key_registry_namespace }} {
+
+inline const std::map<std::string, std::vector<std::string>>& allowed_keys_by_path() {
+    static const std::map<std::string, std::vector<std::string>> registry = {
+{% for entry in key_registry %}
+{% set entry_loop = loop %}
+        {"{{ entry.path }}",
+         {
+{% for key in entry.allowed_keys %}
+             "{{ key }}"{% if not loop.last %},{% endif %}
+
+{% endfor %}
+         }}{% if not entry_loop.last %},{% endif %}
+
+{% endfor %}
+    };
+    return registry;
+}
+
+/**
+ * Keys allowed at `schema_path`. Throws if the schema closes no object at
+ * that path — a caller asking about a path the schema does not own is a bug
+ * in the caller, not bad input.
+ */
+inline const std::vector<std::string>& allowed_keys(const std::string& schema_path) {
+    const auto& registry = allowed_keys_by_path();
+    const auto entry = registry.find(schema_path);
+    if (entry == registry.end())
+        throw std::runtime_error("{{ schema_path }} closes no object at path '" + schema_path +
+                                 "'");
+    return entry->second;
+}
+
+} // namespace {{ key_registry_namespace }}
+
+{% endif %}
+} // namespace q3::generated

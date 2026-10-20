@@ -1,0 +1,103 @@
+# Pseudopotential metadata for the vendored UPF files.
+#
+# 14 vendored files across 3 categories (NC, US, PAW) and 8 elements
+# (Si, Cu, Fe, Ni, Cr, C, Ga, As).
+
+nc:
+  source: PseudoDojo
+  version: "0.4"
+  relativistic: scalar-relativistic
+  exchange_correlation: PBE
+  accuracy: stringent
+  format: UPFv2
+  archive: nc-sr-04_pbe_stringent_upf.tgz
+  url: http://www.pseudo-dojo.org/
+  generator: ONCVPSP v3.3.0 (D. R. Hamann, 2017)
+  files:
+    Si.upf:
+      element: Si
+      z_valence: 4
+      cutoff_hint_ry: 120
+    Cu.upf:
+      element: Cu
+      z_valence: 19
+      cutoff_hint_ry: 120
+    Ga.upf:
+      element: Ga
+      z_valence: 21
+      cutoff_hint_ry: 90
+      note: "GaAs Wannier example; 3d in valence puts the sp manifold at bands 19-22"
+    As.upf:
+      element: As
+      z_valence: 23
+      cutoff_hint_ry: 90
+      note: "GaAs Wannier example; 3d in valence, same archive as the other NC files"
+    Si.pz-vbc.UPF:
+      element: Si
+      z_valence: 4
+      exchange_correlation: LDA (Perdew-Zunger)
+      source: QE distribution (von Barth and Car, pre-1984)
+      note: Legacy NC PP used for LDA silicon US test
+    Fe.upf:
+      element: Fe
+      z_valence: 16
+      cutoff_hint_ry: 90
+      note: "Window 1 LSDA-FM validation (roadmap-pinned ecutwfc=90 Ry, 12^3 k, Gaussian degauss=0.02 Ry)"
+    Ni.upf:
+      element: Ni
+      z_valence: 18
+      cutoff_hint_ry: 60
+      note: "Window 1 LSDA-FM validation (roadmap-pinned ecutwfc=60 Ry, same protocol as Fe)"
+    Cr.upf:
+      element: Cr
+      z_valence: 14
+      cutoff_hint_ry: 90
+      note: "Window 1 LSDA-AFM validation; ecutwfc=90 Ry chosen to match Fe (same 3d-metal hardness class) — not explicitly pinned by the roadmap row, flagged for review"
+    C.upf:
+      element: C
+      z_valence: 4
+      cutoff_hint_ry: 100
+      note: "Window 2 DFT-D3(BJ) graphite c-scan validation; ecutwfc=100 Ry chosen from an explicit convergence scan (40-140 Ry) on AB graphite, converged to <0.01 meV/atom by 100 Ry — see tests/validation/test_qe_graphite_d3_dispersion.py"
+
+us:
+  source: GBRV
+  version: "1.2"
+  relativistic: scalar-relativistic
+  exchange_correlation: PBE
+  format: UPFv1
+  url: https://www.physics.rutgers.edu/gbrv/
+  files:
+    Si_PBE_USPP.UPF:
+      element: Si
+      z_valence: 4
+      generator: atomic (A. Dal Corso, 2008)
+      cutoff_hint_ry: 40
+    cu_pbe_v1.2.uspp.F.UPF:
+      element: Cu
+      z_valence: 19
+      generator: Vanderbilt code v7.3.6 (kfg, 2014)
+      cutoff_hint_ry: 40
+
+paw:
+  source: PseudoDojo
+  version: "1.1"
+  relativistic: scalar-relativistic
+  exchange_correlation: PBE
+  accuracy: stringent
+  format: UPFv2
+  archive: paw-sr-11_pbe_stringent_upf.tgz
+  url: http://www.pseudo-dojo.org/
+  files:
+    Si.upf:
+      element: Si
+      z_valence: 4
+      cutoff_hint_ry: 30
+    Cu.upf:
+      element: Cu
+      z_valence: 19
+      cutoff_hint_ry: 40
+    C.upf:
+      element: C
+      z_valence: 4
+      cutoff_hint_ry: 60
+      note: "Diamond PAW example; same archive as Si.upf/Cu.upf, extracted separately"

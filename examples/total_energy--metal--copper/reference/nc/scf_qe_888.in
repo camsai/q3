@@ -1,0 +1,32 @@
+&CONTROL
+  calculation = 'scf'
+  pseudo_dir = '../../../data/pseudopotentials/nc/'
+  outdir = './tmp'
+  prefix = 'cu_nc_888'
+  verbosity = 'high'
+  tstress = .true.
+  tprnfor = .true.
+/
+&SYSTEM
+  ibrav = 2
+  celldm(1) = 6.8432
+  nat = 1
+  ntyp = 1
+  ecutwfc = 120.0
+  ecutrho = 480.0
+  occupations = 'smearing'
+  smearing = 'gaussian'
+  degauss = 0.02
+  input_dft = 'XC-000I-000I-101L-130L'
+/
+&ELECTRONS
+  conv_thr = 1.0e-8
+  mixing_beta = 0.1
+  mixing_mode = 'plain'
+/
+ATOMIC_SPECIES
+  Cu  63.546  Cu.upf
+ATOMIC_POSITIONS crystal
+  Cu  0.0  0.0  0.0
+K_POINTS automatic
+  8 8 8  1 1 1

@@ -1,0 +1,26 @@
+name: DCO
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sign-off-check:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify Signed-off-by on every commit
+        # Checks the PR's own commits (base..head); the synthetic merge
+        # commit GitHub builds for pull_request events is excluded by
+        # --no-merges inside the script.
+        run: |
+          git fetch --no-tags origin "${{ github.event.pull_request.base.ref }}"
+          python3 scripts/repo/check_dco_signoff.py \
+            --range "origin/${{ github.event.pull_request.base.ref }}..${{ github.event.pull_request.head.sha }}"

@@ -1,0 +1,32 @@
+material: ../data/materials/diamond.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: paw
+  cutoffs:
+    wavefunction: 60.0
+    density: 480.0
+  pseudopotentials:
+    C: ../data/pseudopotentials/paw/C.upf
+  scf:
+    convergence_threshold: 1.0e-08
+    max_iterations: 200
+    mixing:
+      mode: broyden
+      beta: 0.3
+    kgrid:
+      dimensions:
+        - 4
+        - 4
+        - 4
+      shifts:
+        - 0
+        - 0
+        - 0
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: c_paw

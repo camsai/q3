@@ -1,0 +1,231 @@
+<mxfile host="app.diagrams.net" modified="2026-06-13T19:41:00.000Z" agent="Q3 Architecture" version="24.0.0" type="device">
+  <diagram id="q3-architecture" name="Q3 Layered Architecture">
+    <mxGraphModel dx="1420" dy="820" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ═══════════════════════════════════════════════ -->
+        <!-- Layer 5: Properties                            -->
+        <!-- ═══════════════════════════════════════════════ -->
+        <mxCell id="L5_group" value="Layer 5: Properties" style="swimlane;startSize=28;fillColor=#F8CECC;strokeColor=#B85450;fontSize=14;fontStyle=1;rounded=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="80" y="40" width="900" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="L5_stress" value="StressResult Calculator&#xa;(stress_tensor.hpp)" style="rounded=1;whiteSpace=wrap;fillColor=#F8CECC;strokeColor=#B85450;fontSize=11;" vertex="1" parent="L5_group">
+          <mxGeometry x="20" y="40" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L5_forces" value="Forces Calculator&#xa;(forces.hpp)" style="rounded=1;whiteSpace=wrap;fillColor=#F8CECC;strokeColor=#B85450;fontSize=11;" vertex="1" parent="L5_group">
+          <mxGeometry x="240" y="40" width="180" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L5_aug_stress" value="Augmentation&#xa;Stress Calculator" style="rounded=1;whiteSpace=wrap;fillColor=#F8CECC;strokeColor=#B85450;fontSize=11;" vertex="1" parent="L5_group">
+          <mxGeometry x="440" y="40" width="180" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L5_aug_force" value="Augmentation&#xa;Force Calculator" style="rounded=1;whiteSpace=wrap;fillColor=#F8CECC;strokeColor=#B85450;fontSize=11;" vertex="1" parent="L5_group">
+          <mxGeometry x="640" y="40" width="180" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════════════════════════════════════ -->
+        <!-- Layer 4: Computation                           -->
+        <!-- ═══════════════════════════════════════════════ -->
+        <mxCell id="L4_group" value="Layer 4: Computation" style="swimlane;startSize=28;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=14;fontStyle=1;rounded=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="80" y="200" width="900" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="L4_scf" value="PlanewaveKohnSham&#xa;SCFIterator" style="rounded=1;whiteSpace=wrap;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;fontStyle=1;" vertex="1" parent="L4_group">
+          <mxGeometry x="20" y="40" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L4_pp_scf" value="Pseudopotential&#xa;PW KS SCF Iterator" style="rounded=1;whiteSpace=wrap;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" vertex="1" parent="L4_group">
+          <mxGeometry x="200" y="40" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L4_us_scf" value="Ultrasoft PP&#xa;PW KS SCF Iterator" style="rounded=1;whiteSpace=wrap;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" vertex="1" parent="L4_group">
+          <mxGeometry x="370" y="40" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L4_diag" value="Diagonalizer&#xa;(Davidson / Direct)" style="rounded=1;whiteSpace=wrap;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" vertex="1" parent="L4_group">
+          <mxGeometry x="545" y="40" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L4_xc" value="XCFunctional&#xa;(LibXC)" style="rounded=1;whiteSpace=wrap;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" vertex="1" parent="L4_group">
+          <mxGeometry x="720" y="40" width="130" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════════════════════════════════════ -->
+        <!-- Layer 3: Representation                        -->
+        <!-- ═══════════════════════════════════════════════ -->
+        <mxCell id="L3_group" value="Layer 3: Representation" style="swimlane;startSize=28;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=14;fontStyle=1;rounded=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="80" y="370" width="1090" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="L3_qs" value="PseudopotentialQuantumSystem&#xa;(quantum_system.hpp)" style="rounded=1;whiteSpace=wrap;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;fontStyle=1;" vertex="1" parent="L3_group">
+          <mxGeometry x="20" y="40" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L3_us" value="Ultrasoft QS&#xa;Extension" style="rounded=1;whiteSpace=wrap;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;" vertex="1" parent="L3_group">
+          <mxGeometry x="250" y="40" width="130" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L3_pwb" value="PlanewaveBasis&#xa;+ FFTGrid" style="rounded=1;whiteSpace=wrap;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;" vertex="1" parent="L3_group">
+          <mxGeometry x="390" y="40" width="130" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L3_kb" value="KB Projectors" style="rounded=1;whiteSpace=wrap;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;" vertex="1" parent="L3_group">
+          <mxGeometry x="530" y="40" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L3_awi" value="AtomicWavefunction&#xa;Initializer" style="rounded=1;whiteSpace=wrap;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;" vertex="1" parent="L3_group">
+          <mxGeometry x="660" y="40" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="L3_ppset" value="PseudopotentialSet&#xa;(homogeneous, as_ultrasoft)" style="rounded=1;whiteSpace=wrap;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=11;fontStyle=1;" vertex="1" parent="L3_group">
+          <mxGeometry x="820" y="40" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════════════════════════════════════ -->
+        <!-- Layer 2: Quantum System                        -->
+        <!-- ═══════════════════════════════════════════════ -->
+        <mxCell id="L2_group" value="Layer 2: Quantum System" style="swimlane;startSize=28;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=14;fontStyle=1;rounded=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="80" y="540" width="440" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="L2_wf" value="Wavefunction&#xa;(abstract)" style="rounded=1;whiteSpace=wrap;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=11;" vertex="1" parent="L2_group">
+          <mxGeometry x="20" y="38" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="L2_dens" value="ElectronDensity&#xa;(abstract)" style="rounded=1;whiteSpace=wrap;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=11;" vertex="1" parent="L2_group">
+          <mxGeometry x="170" y="38" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="L2_pot" value="Potential&#xa;(abstract)" style="rounded=1;whiteSpace=wrap;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=11;" vertex="1" parent="L2_group">
+          <mxGeometry x="320" y="38" width="100" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════════════════════════════════════ -->
+        <!-- Layer 1: Physical System                       -->
+        <!-- ═══════════════════════════════════════════════ -->
+        <mxCell id="L1_group" value="Layer 1: Physical System" style="swimlane;startSize=28;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=14;fontStyle=1;rounded=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="80" y="680" width="440" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="L1_crys" value="Crystal" style="rounded=1;whiteSpace=wrap;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=11;fontStyle=1;" vertex="1" parent="L1_group">
+          <mxGeometry x="20" y="38" width="110" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="L1_sym" value="Symmetry&#xa;(spglib)" style="rounded=1;whiteSpace=wrap;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=11;" vertex="1" parent="L1_group">
+          <mxGeometry x="150" y="38" width="110" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="L1_kp" value="KPointsGrid" style="rounded=1;whiteSpace=wrap;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=11;" vertex="1" parent="L1_group">
+          <mxGeometry x="280" y="38" width="110" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════════════════════════════════════ -->
+        <!-- Layer 0: Core                                  -->
+        <!-- ═══════════════════════════════════════════════ -->
+        <mxCell id="L0_group" value="Layer 0: Core" style="swimlane;startSize=28;fillColor=#F5F5F5;strokeColor=#666666;fontSize=14;fontStyle=1;rounded=1;arcSize=8;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="80" y="820" width="640" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="L0_types" value="Types&#xa;(Real, Complex,&#xa;Vector3D, Matrix3x3)" style="rounded=1;whiteSpace=wrap;fillColor=#F5F5F5;strokeColor=#666666;fontSize=10;fontColor=#333333;" vertex="1" parent="L0_group">
+          <mxGeometry x="15" y="35" width="140" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="L0_rad" value="Radial&#xa;Utilities" style="rounded=1;whiteSpace=wrap;fillColor=#F5F5F5;strokeColor=#666666;fontSize=10;fontColor=#333333;" vertex="1" parent="L0_group">
+          <mxGeometry x="165" y="35" width="90" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="L0_sph" value="Spherical&#xa;Harmonics" style="rounded=1;whiteSpace=wrap;fillColor=#F5F5F5;strokeColor=#666666;fontSize=10;fontColor=#333333;" vertex="1" parent="L0_group">
+          <mxGeometry x="265" y="35" width="90" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="L0_tol" value="Tolerances" style="rounded=1;whiteSpace=wrap;fillColor=#F5F5F5;strokeColor=#666666;fontSize=10;fontColor=#333333;" vertex="1" parent="L0_group">
+          <mxGeometry x="365" y="35" width="90" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="L0_log" value="Logger&#xa;(spdlog)" style="rounded=1;whiteSpace=wrap;fillColor=#F5F5F5;strokeColor=#666666;fontSize=10;fontColor=#333333;" vertex="1" parent="L0_group">
+          <mxGeometry x="465" y="35" width="90" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="L0_matrix" value="Matrix&lt;T&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#F5F5F5;strokeColor=#666666;fontSize=10;fontColor=#333333;" vertex="1" parent="L0_group">
+          <mxGeometry x="565" y="35" width="60" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════════════════════════════════════ -->
+        <!-- IO Vertical Slice                              -->
+        <!-- ═══════════════════════════════════════════════ -->
+        <mxCell id="IO_group" value="IO Vertical Slice" style="swimlane;startSize=28;fillColor=#E6E6E6;strokeColor=#999999;fontSize=14;fontStyle=1;rounded=1;arcSize=8;dashed=1;dashPattern=8 4;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="200" width="180" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="IO_parser" value="YAML / JSON&#xa;Input Parser" style="rounded=1;whiteSpace=wrap;fillColor=#E6E6E6;strokeColor=#999999;fontSize=11;" vertex="1" parent="IO_group">
+          <mxGeometry x="20" y="40" width="140" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="IO_upf" value="UPF Reader&#xa;(upf_reader.hpp)" style="rounded=1;whiteSpace=wrap;fillColor=#E6E6E6;strokeColor=#999999;fontSize=11;fontStyle=1;" vertex="1" parent="IO_group">
+          <mxGeometry x="20" y="110" width="140" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="IO_chk" value="Checkpoint&#xa;Writer" style="rounded=1;whiteSpace=wrap;fillColor=#E6E6E6;strokeColor=#999999;fontSize=11;" vertex="1" parent="IO_group">
+          <mxGeometry x="20" y="180" width="140" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="IO_out" value="JSON Output&#xa;Writer" style="rounded=1;whiteSpace=wrap;fillColor=#E6E6E6;strokeColor=#999999;fontSize=11;" vertex="1" parent="IO_group">
+          <mxGeometry x="20" y="250" width="140" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="IO_log" value="Logger Init&#xa;(MPI-aware)" style="rounded=1;whiteSpace=wrap;fillColor=#E6E6E6;strokeColor=#999999;fontSize=11;" vertex="1" parent="IO_group">
+          <mxGeometry x="20" y="320" width="140" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════════════════════════════════════ -->
+        <!-- Dependency arrows (all strictly downward)      -->
+        <!-- ═══════════════════════════════════════════════ -->
+
+        <!-- L5 → L4 -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#B85450;strokeWidth=1.5;" edge="1" source="L5_stress" target="L4_scf" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#B85450;strokeWidth=1.5;" edge="1" source="L5_forces" target="L4_pp_scf" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- L5 → L3 -->
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#B85450;strokeWidth=1;dashed=1;" edge="1" source="L5_aug_stress" target="L3_us" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#B85450;strokeWidth=1;dashed=1;" edge="1" source="L5_aug_force" target="L3_us" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- L4 → L3 -->
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6C8EBF;strokeWidth=1.5;" edge="1" source="L4_pp_scf" target="L3_qs" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6C8EBF;strokeWidth=1.5;" edge="1" source="L4_us_scf" target="L3_us" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6C8EBF;strokeWidth=1.5;" edge="1" source="L4_scf" target="L3_pwb" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- L3 → L1 -->
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82B366;strokeWidth=1.5;" edge="1" source="L3_qs" target="L1_crys" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- L3 internal -->
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82B366;strokeWidth=1;dashed=1;" edge="1" source="L3_us" target="L3_qs" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82B366;strokeWidth=1;dashed=1;" edge="1" source="L3_awi" target="L3_qs" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- L1 → L0 -->
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#D6B656;strokeWidth=1.5;" edge="1" source="L1_crys" target="L0_types" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- L3 → L0 -->
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#82B366;strokeWidth=1;" edge="1" source="L3_qs" target="L0_rad" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="190" y="660" />
+              <mxPoint x="290" y="660" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- IO → layers -->
+        <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#999999;strokeWidth=1;dashed=1;" edge="1" source="IO_parser" target="IO_upf" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════════════════════════════════════ -->
+        <!-- Legend / annotation                            -->
+        <!-- ═══════════════════════════════════════════════ -->
+        <mxCell id="legend" value="&lt;b&gt;Q3 Architecture&lt;/b&gt;&lt;br&gt;&lt;br&gt;✅ Zero layer violations&lt;br&gt;All arrows go strictly downward&lt;br&gt;&lt;br&gt;Solid = primary dependency&lt;br&gt;Dashed = secondary / inheritance" style="text;html=1;align=left;verticalAlign=top;fillColor=#FFFFCC;strokeColor=#D6B656;rounded=1;fontSize=11;spacingLeft=8;spacingTop=4;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="40" width="220" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="note_io" value="Moved upf_reader.hpp&#xa;from L3 → IO in Iteration 6" style="shape=note;size=14;fillColor=#FFFFCC;strokeColor=#D6B656;fontSize=10;whiteSpace=wrap;align=left;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="610" width="180" height="50" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

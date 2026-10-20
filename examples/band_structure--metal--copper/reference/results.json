@@ -1,0 +1,52 @@
+{
+    "system": "Cu (FCC, single-atom primitive cell)",
+    "calculation": "DFT-PBE, norm-conserving pseudopotential",
+    "reference_code": "Quantum ESPRESSO 7+ with LibXC (build_libxc/bin/pw.x)",
+    "pseudopotential": "Cu.upf (ONCV, NC)",
+    "cutoffs": {
+        "wavefunction_ry": 120.0,
+        "density_ry": 480.0
+    },
+    "kgrid": "8x8x8 shifted (1,1,1)",
+    "smearing": {
+        "type": "Gaussian",
+        "degauss_ry": 0.02
+    },
+    "lattice_parameter_angstrom": 3.62,
+
+    "total_energy": {
+        "q3_ry": -386.58337932,
+        "tolerance_ry": 0.001,
+        "note": "NC pseudopotential at experimental FCC lattice parameter"
+    },
+
+    "band_structure": {
+        "path": ["G", "X", "W", "K", "G", "L", "U", "W", "L", "K"],
+        "fermi_energy_ev": {
+            "q3_relative_to_vbm": "N/A — metallic",
+            "note": "Cu is a metal; Fermi level falls within the d-band complex."
+        },
+        "expected_features": {
+            "d_band_center_ev_below_fermi": 2.0,
+            "d_band_width_ev": 4.5,
+            "s_band_character": "Free-electron-like parabola above E_F",
+            "note": "Cu d-bands form flat bands 2-4 eV below E_F; s-band crosses at ~X and ~L"
+        }
+    },
+
+    "density_of_states": {
+        "broadening_ry": 0.01,
+        "energy_steps": 3000,
+        "expected_features": {
+            "dos_at_fermi_level": "non-zero (metallic)",
+            "d_band_peak_ev_below_fermi": 2.0,
+            "d_band_width_ev": 4.5,
+            "note": "DOS should show sharp d-band peak 2-4 eV below E_F and finite DOS at E_F"
+        }
+    },
+
+    "forces_at_equilibrium": {
+        "max_force_ry_per_bohr": 1.0e-12,
+        "note": "Single-atom cell: forces are identically zero by symmetry"
+    }
+}

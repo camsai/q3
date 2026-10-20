@@ -1,0 +1,198 @@
+name: Scheduled Tier 2 and Tier 3 Tests
+
+on:
+  schedule:
+    - cron: "0 0 1,15 * *" # Tier 2 on the 1st and 15th of every month
+    - cron: "0 3 8 * *" # Tier 3 on the 8th: the campaign-scale runs, once a month
+  workflow_dispatch: # Allow manual runs
+    inputs:
+      tier:
+        description: "Which tier to run: 2 (the slow chains) or 3 (the campaign-scale runs)"
+        default: "2"
+        type: choice
+        options: ["2", "3"]
+
+jobs:
+  scheduled-tier2:
+    runs-on: ubuntu-24.04
+    # This was the only unbounded job in the repository, and it runs the
+    # slowest tier there is, twice a month, unattended. A hang here would
+    # spend GitHub's six-hour default before failing.
+    #
+    # Sized from every run this workflow has had. All four reached the end of
+    # pytest rather than stalling, so these time the work itself:
+    #
+    #   run 28557733963  2026-07-02   68 passed,   0 failed,  12 skipped  1:06:57  job 1h12
+    #   run 29379426656  2026-07-15   68 passed,   0 failed,  12 skipped  1:07:09  job 1h12
+    #   run 30676195249  2026-08-01  213 passed,   2 failed,  58 skipped  1:37:12  job 1h44
+    #   run 31853121200  2026-08-15  320 passed,   1 failed, 122 skipped  1:47:34  job 1h57
+    #
+    # The failures in the last two are a missing Quantum ESPRESSO reference
+    # binary at tests/validation/test_qe_graphite_d3_dispersion.py, raised
+    # after the rest of the suite had already run -- a fixture gap on the
+    # runner, not a timing problem, and unrelated to this bound.
+    #
+    # The suite is growing fast: 80 collected tests to 443 in six weeks, and
+    # 41 minutes of wall clock with them. So the bound is set against that
+    # trend rather than snugly against the 1h57 worst case. 180 minutes is
+    # 1.5x the slowest run to date and absorbs roughly two more months of
+    # growth at the observed ~7 min/week, while still halving what a genuine
+    # hang costs -- which is the whole point of having a bound.
+    #
+    # Tier 3 is the Wannier campaign's whole roster and the Wannier90 parity
+    # cases: hours, once a month, and it writes its table after every row so
+    # a run that reaches the bound still leaves a table to read. Six hours
+    # is the hosted runner's ceiling.
+    timeout-minutes: ${{ (github.event.schedule == '0 3 8 * *' || github.event.inputs.tier == '3') && 360 || 180 }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          lfs: true
+          submodules: recursive
+          fetch-depth: 0 # Fetch all history for git log check
+
+      - name: Decide the tier
+        id: tier
+        run: |
+          # The schedule that fired, or the manual choice, says which tier this is.
+          if [ "${{ github.event.schedule }}" = "0 3 8 * *" ] || [ "${{ github.event.inputs.tier }}" = "3" ]; then
+            echo "tier=3" >> $GITHUB_OUTPUT
+            echo "window=31 days ago" >> $GITHUB_OUTPUT
+          else
+            echo "tier=2" >> $GITHUB_OUTPUT
+            echo "window=14 days ago" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for recent changes (over the tier's window)
+        id: check_changes
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "Proceeding with manual run"
+            echo "changes=true" >> $GITHUB_OUTPUT
+          else
+            # Commits on main since the last run of this tier: a fortnight for
+            # tier 2, a month for tier 3.
+            COMMIT_COUNT=$(git rev-list --count --since="${{ steps.tier.outputs.window }}" HEAD)
+            if [ "$COMMIT_COUNT" -gt 0 ]; then
+              echo "Found $COMMIT_COUNT commits since ${{ steps.tier.outputs.window }}. Proceeding."
+              echo "changes=true" >> $GITHUB_OUTPUT
+            else
+              echo "No commits found since ${{ steps.tier.outputs.window }}. Skipping."
+              echo "changes=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      # Every step below is gated on the check above, so a quiet fortnight
+      # produces a green run that built nothing and tested nothing. That is
+      # the intended behaviour -- there is nothing new to test -- but a green
+      # tick and an empty run look identical from the workflow list, and
+      # ci.yml has already been bitten once by a skipped step reading as a
+      # passing one. Say which of the two this was, in the one place someone
+      # glancing at the run will see.
+      - name: Say whether the tier actually ran
+        run: |
+          if [ "${{ steps.check_changes.outputs.changes }}" = "true" ]; then
+            echo "Tier ${{ steps.tier.outputs.tier }} tests ran for $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Tier ${{ steps.tier.outputs.tier }} tests were SKIPPED: no commits on main since ${{ steps.tier.outputs.window }}." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Pull LFS Files
+        if: steps.check_changes.outputs.changes == 'true'
+        run: git lfs pull
+
+      - name: Set up Python
+        if: steps.check_changes.outputs.changes == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install System Dependencies
+        if: steps.check_changes.outputs.changes == 'true'
+        timeout-minutes: 10
+        run: |
+          # Same apt-mirror hardening as ci.yml's install steps.
+          for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            if [ -f "$f" ]; then sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g; s/azure\.ports\.ubuntu\.com/ports.ubuntu.com/g' "$f"; fi
+          done
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99q3-ci >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y libfftw3-dev libomp-dev liblapack-dev libblas-dev libxc-dev ccache
+
+      - name: Install Python Dependencies
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,build]"
+
+      - name: Locate the ccache directory
+        id: ccache
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          # Resolve ccache's real store rather than hardcoding it, and bound
+          # its size -- see ci.yml's build-and-test job for why.
+          echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
+          echo "dir=$(ccache --get-config cache_dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache ccache
+        if: steps.check_changes.outputs.changes == 'true'
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.ccache.outputs.dir }}
+          # actions/cache writes only when the key is new, so a key that moves
+          # only with CMakeLists.txt saves once and then never takes in
+          # newly compiled objects. Make it run-unique and fall back by
+          # prefix, the way the build-directory cache already does.
+          key: ccache-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-
+            ccache-${{ runner.os }}-
+
+      - name: Cache Build Directory
+        if: steps.check_changes.outputs.changes == 'true'
+        uses: actions/cache@v5
+        with:
+          path: build
+          key: build-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-${{ github.sha }}
+          restore-keys: |
+            build-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}-
+            build-${{ runner.os }}-
+
+      - name: Configure CMake
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          cmake -S . -B build -DQ3_BUILD_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        if: steps.check_changes.outputs.changes == 'true'
+        run: cmake --build build -j$(nproc)
+
+      - name: Run Tier 2 Tests (DOS, supercell single-step, full SCF)
+        if: steps.check_changes.outputs.changes == 'true' && steps.tier.outputs.tier == '2'
+        run: |
+          pytest tests/ -v --tier2 --q3-bin ./build/q3
+
+      - name: Run Tier 3 Tests (the Wannier campaign roster, the Wannier90 parity cases)
+        if: steps.check_changes.outputs.changes == 'true' && steps.tier.outputs.tier == '3'
+        env:
+          Q3_CAMPAIGN_DIRECTORY: ${{ github.workspace }}/campaign-output
+        run: |
+          pytest tests/validation/test_wannier_campaign.py tests/validation/test_wannier90_parity.py \
+            -v -s --tier3 --q3-bin ./build/q3
+
+      # The campaign's finding is its table, written after every row, so even a
+      # run that reached the bound leaves one; a run that kept no table has
+      # produced nothing.
+      - name: Keep the campaign table
+        if: always() && steps.check_changes.outputs.changes == 'true' && steps.tier.outputs.tier == '3'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wannier-campaign-${{ github.run_id }}
+          path: |
+            campaign-output/campaign.md
+            campaign-output/campaign.json
+          if-no-files-found: warn

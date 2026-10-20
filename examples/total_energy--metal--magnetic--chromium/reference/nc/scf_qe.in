@@ -1,0 +1,37 @@
+&CONTROL
+  calculation = 'scf'
+  pseudo_dir = '../../../data/pseudopotentials/nc/'
+  outdir = './tmp'
+  prefix = 'cr_afm_nc'
+  verbosity = 'high'
+  tstress = .true.
+  tprnfor = .true.
+/
+&SYSTEM
+  ibrav = 1
+  celldm(1) = 5.450915
+  nat = 2
+  ntyp = 2
+  ecutwfc = 90.0
+  ecutrho = 360.0
+  nspin = 2
+  starting_magnetization(1) = 0.5
+  starting_magnetization(2) = -0.5
+  occupations = 'smearing'
+  smearing = 'gaussian'
+  degauss = 0.02
+  input_dft = 'XC-000I-000I-101L-130L'
+/
+&ELECTRONS
+  conv_thr = 1.0e-8
+  mixing_beta = 0.1
+  mixing_mode = 'plain'
+/
+ATOMIC_SPECIES
+  Cr1  51.996  Cr.upf
+  Cr2  51.996  Cr.upf
+ATOMIC_POSITIONS crystal
+  Cr1  0.0  0.0  0.0
+  Cr2  0.5  0.5  0.5
+K_POINTS automatic
+  12 12 12  1 1 1

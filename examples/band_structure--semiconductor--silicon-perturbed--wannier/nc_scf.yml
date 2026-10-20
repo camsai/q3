@@ -1,0 +1,33 @@
+material: ../data/materials/silicon_perturbed.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: norm-conserving
+  cutoffs:
+    wavefunction: 48.0
+    density: 192.0
+  pseudopotentials:
+    Si: ../data/pseudopotentials/nc/Si.upf
+  scf:
+    convergence_threshold: 1.0e-10
+    number_of_bands: 12
+    mixing:
+      mode: broyden
+      beta: 0.3
+      ndim: 8
+    kgrid:
+      dimensions:
+        - 6
+        - 6
+        - 6
+      shifts:
+        - 0
+        - 0
+        - 0
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: si_perturbed

@@ -1,0 +1,39 @@
+material: ../data/materials/copper_3x3x3.json
+model:
+  type: dft
+  subtype: gga
+  functional: pbe
+method:
+  type: pseudopotential
+  subtype: ultrasoft
+  cutoffs:
+    wavefunction: 40.0
+    density: 200.0
+  pseudopotentials:
+    Cu: ../data/pseudopotentials/us/cu_pbe_v1.2.uspp.F.UPF
+  scf:
+    convergence_threshold: 1.0e-08
+    max_iterations: 100
+    number_of_bands: 280
+    mixing:
+      mode: broyden
+      beta: 0.2
+      ndim: 32
+      preconditioning: kerker
+      q0: 0.8
+    smearing:
+      type: gaussian
+      degauss: 0.02
+    kgrid:
+      dimensions:
+        - 1
+        - 1
+        - 1
+      shifts:
+        - 0
+        - 0
+        - 0
+control:
+  calculation: scf
+  outdir: ./output
+  prefix: cu_us_3x3x3

@@ -1,0 +1,216 @@
+# The A/B parity matrix: the cases the `parity` CI job runs on both the merge
+# base's binary and the head's, comparing every numeric leaf of the results
+# each one leaves behind.
+#
+# What belongs here is a case that exercises a *distinct code path* through the
+# engine, not a case that is physically interesting. The gate does not check
+# that a number is right -- the validation suite does that -- it checks that a
+# change which claimed to move no numbers moved none. A path with no row here
+# is a path a refactor can silently break.
+#
+# Adding a row costs roughly one SCF of runner time, so the grids are the
+# smallest that still reach the path. Keep them that way: a matrix that takes
+# an hour is a matrix someone will propose skipping.
+
+defaults:
+  # FFTW_MEASURE times several transform plans and keeps the fastest, so the
+  # plan -- and with it the last bits of every transform -- depends on what
+  # else the machine was doing. That is invisible in a validation tolerance and
+  # fatal to an exact comparison, so every case here plans deterministically.
+  overrides:
+    control:
+      use_deterministic_fft_planning: true
+  timeout_seconds: 1800
+
+cases:
+  # ── Pseudopotential families ────────────────────────────────────────
+  - id: silicon-norm-conserving
+    input: examples/total_energy--semiconductor--silicon/nc.yml
+    covers: [norm-conserving, gga, scf, forces, stress]
+
+  - id: silicon-ultrasoft
+    input: examples/total_energy--semiconductor--silicon/us.yml
+    covers: [ultrasoft, augmentation-charge, gga]
+
+  - id: silicon-projector-augmented-wave
+    input: examples/total_energy--semiconductor--silicon/paw.yml
+    covers: [paw, one-center, gga]
+
+  - id: diamond-projector-augmented-wave
+    input: examples/total_energy--insulator--diamond/paw.yml
+    covers: [paw, insulator, fixed-occupations]
+
+  # ── Zone sampling ───────────────────────────────────────────────────
+  - id: silicon-gamma-only
+    input: examples/total_energy--semiconductor--silicon/nc.yml
+    covers: [gamma-only, half-sphere]
+    overrides:
+      method:
+        scf:
+          kgrid:
+            dimensions: [1, 1, 1]
+            shifts: [0, 0, 0]
+
+  - id: silicon-unshifted-mesh
+    input: examples/total_energy--semiconductor--silicon/nc.yml
+    covers: [unshifted-mesh, symmetry-reduction]
+    overrides:
+      method:
+        scf:
+          kgrid:
+            shifts: [0, 0, 0]
+
+  # ── Smearing, one case per scheme ───────────────────────────────────
+  - id: copper-fermi-dirac
+    input: examples/total_energy--metal--copper/nc_fd.yml
+    covers: [metal, smearing-fermi-dirac]
+
+  - id: copper-methfessel-paxton
+    input: examples/total_energy--metal--copper/nc_mp.yml
+    covers: [metal, smearing-methfessel-paxton]
+
+  - id: copper-marzari-vanderbilt
+    input: examples/total_energy--metal--copper/nc_mv.yml
+    covers: [metal, smearing-marzari-vanderbilt]
+
+  # ── Spin polarization ───────────────────────────────────────────────
+  - id: iron-local-spin-density
+    input: examples/total_energy--metal--magnetic--iron/nc.yml
+    overrides:
+      method:
+        scf:
+          kgrid:
+            dimensions: [4, 4, 4]
+    covers: [spin-polarized, metal]
+
+  - id: nickel-local-spin-density
+    input: examples/total_energy--metal--magnetic--nickel/nc.yml
+    overrides:
+      method:
+        scf:
+          kgrid:
+            dimensions: [4, 4, 4]
+    covers: [spin-polarized, metal]
+
+  - id: chromium-local-spin-density
+    input: examples/total_energy--metal--magnetic--chromium/nc.yml
+    overrides:
+      method:
+        scf:
+          kgrid:
+            dimensions: [4, 4, 4]
+    covers: [spin-polarized, antiferromagnetic]
+
+  # ── DFT+U, both projector schemes on both families ──────────────────
+  #
+  # No example ships a Hubbard deck, so these are the shipped silicon decks
+  # with the U block the validation suite already converges (3 eV on the 3p
+  # manifold, matching examples/.../reference/us_hubbard/scf_qe.in).
+  - id: silicon-hubbard-atomic-norm-conserving
+    input: examples/total_energy--semiconductor--silicon/nc.yml
+    covers: [hubbard, projector-atomic, norm-conserving]
+    overrides:
+      method:
+        scf:
+          hubbard:
+            - { species: Si, orbital_label: p, u_ev: 3.0 }
+          hubbard_projectors: atomic
+
+  - id: silicon-hubbard-ortho-atomic-norm-conserving
+    input: examples/total_energy--semiconductor--silicon/nc.yml
+    covers: [hubbard, projector-ortho-atomic, norm-conserving]
+    overrides:
+      method:
+        scf:
+          hubbard:
+            - { species: Si, orbital_label: p, u_ev: 3.0 }
+          hubbard_projectors: ortho-atomic
+
+  - id: silicon-hubbard-atomic-ultrasoft
+    input: examples/total_energy--semiconductor--silicon/us.yml
+    covers: [hubbard, projector-atomic, ultrasoft]
+    overrides:
+      method:
+        scf:
+          hubbard:
+            - { species: Si, orbital_label: p, u_ev: 3.0 }
+          hubbard_projectors: atomic
+
+  - id: silicon-hubbard-ortho-atomic-ultrasoft
+    input: examples/total_energy--semiconductor--silicon/us.yml
+    covers: [hubbard, projector-ortho-atomic, ultrasoft]
+    overrides:
+      method:
+        scf:
+          hubbard:
+            - { species: Si, orbital_label: p, u_ev: 3.0 }
+          hubbard_projectors: ortho-atomic
+
+  # ── Exchange-correlation families ───────────────────────────────────
+  - id: silicon-local-density-approximation
+    input: examples/total_energy--semiconductor--silicon/nc.yml
+    covers: [lda]
+    overrides:
+      model:
+        subtype: lda
+        functional: pz
+
+  # ── Dispersion and charged cells ────────────────────────────────────
+  - id: silicon-dispersion-d3
+    input: examples/total_energy--semiconductor--silicon/nc_d3.yml
+    covers: [dispersion-d3]
+
+  - id: silicon-charged-cell
+    input: examples/total_energy--semiconductor--silicon/nc_charged.yml
+    covers: [charged-cell, isolated-system-correction]
+
+  # ── Non-self-consistent paths ───────────────────────────────────────
+  #
+  # Each NSCF case runs its SCF first, in the same directory, because the
+  # band-path pass reads the potential that run leaves in the save tree.
+  - id: silicon-band-structure-nscf
+    input: examples/band_structure--semiconductor--silicon/nc_nscf.yml
+    prerequisite: examples/band_structure--semiconductor--silicon/nc.yml
+    prerequisite_overrides:
+      control:
+        calculation: self_consistent_field
+    covers: [nscf, band-path, norm-conserving]
+
+  - id: copper-band-structure-nscf
+    input: examples/band_structure--metal--copper/us_nscf.yml
+    prerequisite: examples/band_structure--metal--copper/us.yml
+    prerequisite_overrides:
+      control:
+        calculation: self_consistent_field
+    covers: [nscf, band-path, ultrasoft, metal]
+
+  # ── Atomic-orbital projections ──────────────────────────────────────
+  #
+  # `compute_projections` is what the PDOS and Loewdin-charge path hangs
+  # off, and nothing above sets it -- so without these two rows the whole
+  # projection machinery is outside the gate, which is how it stayed
+  # ungated while its metric was wrong for ultrasoft and PAW. One row per
+  # family, because that is the axis the projection's overlap operator
+  # varies along: S is the identity for norm-conserving and is not for the
+  # other two.
+  - id: silicon-projections-norm-conserving
+    input: examples/band_structure--semiconductor--silicon/nc_nscf.yml
+    prerequisite: examples/band_structure--semiconductor--silicon/nc.yml
+    prerequisite_overrides:
+      control:
+        calculation: self_consistent_field
+    covers: [nscf, projections, lowdin, norm-conserving]
+    overrides:
+      control:
+        compute_projections: true
+
+  - id: silicon-projections-ultrasoft
+    input: examples/band_structure--semiconductor--silicon/us_nscf.yml
+    prerequisite: examples/band_structure--semiconductor--silicon/us.yml
+    prerequisite_overrides:
+      control:
+        calculation: self_consistent_field
+    covers: [nscf, projections, lowdin, ultrasoft, overlap-operator]
+    overrides:
+      control:
+        compute_projections: true

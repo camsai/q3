@@ -1,0 +1,309 @@
+{
+    "entries": {
+        "copper_norm_conserving": {
+            "converged": true,
+            "counts": {
+                "davidson_iterations": 321,
+                "fft_calls": 9395,
+                "hamiltonian_applications": 3822
+            },
+            "repetitions_kept": 2,
+            "repetitions_total": 3,
+            "self_consistent_field_iterations": 12,
+            "stages": {
+                "collapse": {
+                    "maximum_ms": 397.065,
+                    "median_ms": 396.921,
+                    "minimum_ms": 396.778,
+                    "relative_spread": 0.00051
+                },
+                "diagonalize": {
+                    "maximum_ms": 21.997,
+                    "median_ms": 21.957,
+                    "minimum_ms": 21.917,
+                    "relative_spread": 0.0026
+                },
+                "hamiltonian_allreduce": {
+                    "maximum_ms": 176.605,
+                    "median_ms": 176.573,
+                    "minimum_ms": 176.54,
+                    "relative_spread": 0.00026
+                },
+                "hamiltonian_application": {
+                    "maximum_ms": 722.318,
+                    "median_ms": 720.521,
+                    "minimum_ms": 718.724,
+                    "relative_spread": 0.00353
+                },
+                "hamiltonian_fft": {
+                    "maximum_ms": 936.99,
+                    "median_ms": 933.453,
+                    "minimum_ms": 929.916,
+                    "relative_spread": 0.00536
+                },
+                "hamiltonian_kinetic": {
+                    "maximum_ms": 0.0,
+                    "median_ms": 0.0,
+                    "minimum_ms": 0.0,
+                    "relative_spread": 0.0
+                },
+                "hamiltonian_nonlocal": {
+                    "maximum_ms": 353.128,
+                    "median_ms": 353.091,
+                    "minimum_ms": 353.054,
+                    "relative_spread": 0.00015
+                },
+                "orthogonalize": {
+                    "maximum_ms": 428.892,
+                    "median_ms": 428.457,
+                    "minimum_ms": 428.022,
+                    "relative_spread": 0.00144
+                },
+                "residuals": {
+                    "maximum_ms": 2.954,
+                    "median_ms": 2.91,
+                    "minimum_ms": 2.865,
+                    "relative_spread": 0.02183
+                },
+                "ritz_vectors": {
+                    "maximum_ms": 0.039,
+                    "median_ms": 0.037,
+                    "minimum_ms": 0.036,
+                    "relative_spread": 0.04917
+                },
+                "seed": {
+                    "maximum_ms": 662.607,
+                    "median_ms": 660.54,
+                    "minimum_ms": 658.473,
+                    "relative_spread": 0.00443
+                },
+                "subspace_update": {
+                    "maximum_ms": 293.505,
+                    "median_ms": 292.854,
+                    "minimum_ms": 292.202,
+                    "relative_spread": 0.00315
+                },
+                "total": {
+                    "maximum_ms": 2529.375,
+                    "median_ms": 2524.197,
+                    "minimum_ms": 2519.02,
+                    "relative_spread": 0.0029
+                }
+            },
+            "total_energy_ry": -386.5833777807863,
+            "wall_seconds_median": 4.048,
+            "wall_seconds_relative_spread": 0.00874
+        },
+        "silicon_norm_conserving": {
+            "converged": true,
+            "counts": {
+                "davidson_iterations": 53,
+                "fft_calls": 929,
+                "hamiltonian_applications": 320
+            },
+            "repetitions_kept": 2,
+            "repetitions_total": 3,
+            "self_consistent_field_iterations": 7,
+            "stages": {
+                "collapse": {
+                    "maximum_ms": 18.757,
+                    "median_ms": 18.707,
+                    "minimum_ms": 18.657,
+                    "relative_spread": 0.0038
+                },
+                "diagonalize": {
+                    "maximum_ms": 1.251,
+                    "median_ms": 1.247,
+                    "minimum_ms": 1.242,
+                    "relative_spread": 0.00545
+                },
+                "hamiltonian_allreduce": {
+                    "maximum_ms": 25.899,
+                    "median_ms": 25.852,
+                    "minimum_ms": 25.805,
+                    "relative_spread": 0.00259
+                },
+                "hamiltonian_application": {
+                    "maximum_ms": 78.264,
+                    "median_ms": 77.562,
+                    "minimum_ms": 76.86,
+                    "relative_spread": 0.0128
+                },
+                "hamiltonian_fft": {
+                    "maximum_ms": 79.282,
+                    "median_ms": 77.831,
+                    "minimum_ms": 76.38,
+                    "relative_spread": 0.02636
+                },
+                "hamiltonian_kinetic": {
+                    "maximum_ms": 0.0,
+                    "median_ms": 0.0,
+                    "minimum_ms": 0.0,
+                    "relative_spread": 0.0
+                },
+                "hamiltonian_nonlocal": {
+                    "maximum_ms": 51.85,
+                    "median_ms": 51.799,
+                    "minimum_ms": 51.748,
+                    "relative_spread": 0.00139
+                },
+                "orthogonalize": {
+                    "maximum_ms": 19.999,
+                    "median_ms": 19.937,
+                    "minimum_ms": 19.874,
+                    "relative_spread": 0.00443
+                },
+                "residuals": {
+                    "maximum_ms": 0.423,
+                    "median_ms": 0.42,
+                    "minimum_ms": 0.417,
+                    "relative_spread": 0.01161
+                },
+                "ritz_vectors": {
+                    "maximum_ms": 0.006,
+                    "median_ms": 0.006,
+                    "minimum_ms": 0.005,
+                    "relative_spread": 0.04734
+                },
+                "seed": {
+                    "maximum_ms": 56.614,
+                    "median_ms": 55.869,
+                    "minimum_ms": 55.123,
+                    "relative_spread": 0.01886
+                },
+                "subspace_update": {
+                    "maximum_ms": 12.904,
+                    "median_ms": 12.884,
+                    "minimum_ms": 12.864,
+                    "relative_spread": 0.00223
+                },
+                "total": {
+                    "maximum_ms": 188.102,
+                    "median_ms": 186.631,
+                    "minimum_ms": 185.16,
+                    "relative_spread": 0.01115
+                }
+            },
+            "total_energy_ry": -16.91341768153001,
+            "wall_seconds_median": 0.866,
+            "wall_seconds_relative_spread": 0.00012
+        },
+        "silicon_ultrasoft": {
+            "converged": true,
+            "counts": {
+                "davidson_iterations": 79,
+                "fft_calls": 1290,
+                "hamiltonian_applications": 432
+            },
+            "repetitions_kept": 2,
+            "repetitions_total": 3,
+            "self_consistent_field_iterations": 9,
+            "stages": {
+                "collapse": {
+                    "maximum_ms": 24.628,
+                    "median_ms": 24.62,
+                    "minimum_ms": 24.612,
+                    "relative_spread": 0.00046
+                },
+                "diagonalize": {
+                    "maximum_ms": 2.195,
+                    "median_ms": 2.162,
+                    "minimum_ms": 2.129,
+                    "relative_spread": 0.02164
+                },
+                "hamiltonian_allreduce": {
+                    "maximum_ms": 11.724,
+                    "median_ms": 11.711,
+                    "minimum_ms": 11.698,
+                    "relative_spread": 0.00162
+                },
+                "hamiltonian_application": {
+                    "maximum_ms": 82.854,
+                    "median_ms": 81.837,
+                    "minimum_ms": 80.821,
+                    "relative_spread": 0.01757
+                },
+                "hamiltonian_fft": {
+                    "maximum_ms": 107.897,
+                    "median_ms": 106.448,
+                    "minimum_ms": 104.998,
+                    "relative_spread": 0.01926
+                },
+                "hamiltonian_kinetic": {
+                    "maximum_ms": 0.0,
+                    "median_ms": 0.0,
+                    "minimum_ms": 0.0,
+                    "relative_spread": 0.0
+                },
+                "hamiltonian_nonlocal": {
+                    "maximum_ms": 23.524,
+                    "median_ms": 23.518,
+                    "minimum_ms": 23.512,
+                    "relative_spread": 0.00033
+                },
+                "orthogonalize": {
+                    "maximum_ms": 42.425,
+                    "median_ms": 42.376,
+                    "minimum_ms": 42.328,
+                    "relative_spread": 0.00162
+                },
+                "residuals": {
+                    "maximum_ms": 0.592,
+                    "median_ms": 0.582,
+                    "minimum_ms": 0.572,
+                    "relative_spread": 0.02349
+                },
+                "ritz_vectors": {
+                    "maximum_ms": 0.006,
+                    "median_ms": 0.006,
+                    "minimum_ms": 0.006,
+                    "relative_spread": 0.01047
+                },
+                "seed": {
+                    "maximum_ms": 62.477,
+                    "median_ms": 62.023,
+                    "minimum_ms": 61.569,
+                    "relative_spread": 0.01036
+                },
+                "subspace_update": {
+                    "maximum_ms": 13.746,
+                    "median_ms": 13.726,
+                    "minimum_ms": 13.706,
+                    "relative_spread": 0.00203
+                },
+                "total": {
+                    "maximum_ms": 228.807,
+                    "median_ms": 227.334,
+                    "minimum_ms": 225.86,
+                    "relative_spread": 0.00917
+                }
+            },
+            "total_energy_ry": -15.717311562211318,
+            "wall_seconds_median": 1.317,
+            "wall_seconds_relative_spread": 6e-5
+        }
+    },
+    "metadata": {
+        "binary": {
+            "name": "build/q3",
+            "sha256": "903725ffe04fc48982a163bf934f1839edd72e15642583b6291c0117497c5702",
+            "version": "q3 0.1.0 (1852c66a46d75df342ee0579da30c6f5d18ba20f)"
+        },
+        "deterministic_fft_planning": true,
+        "git_commit": "1852c66a46d75df342ee0579da30c6f5d18ba20f",
+        "git_worktree_dirty": false,
+        "machine": {
+            "architecture": "x86_64",
+            "label": "github-ubuntu-latest",
+            "logical_cores": 2,
+            "processor": "AMD EPYC 9V74 80-Core Processor",
+            "release": "6.17.0-1022-azure",
+            "system": "Linux"
+        },
+        "matrix": "tests/regression/benchmark_matrix.yml",
+        "recorded_at_utc": "2026-10-08T03:31:01Z",
+        "repetitions": 3,
+        "single_threaded": true
+    },
+    "schema": "q3-benchmark-baseline-1"
+}

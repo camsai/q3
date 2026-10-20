@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use Q3 in your research, please cite it as below."
+type: software
+title: "Quantum 3xplorer: An AI-Native Engine for Next-Generation Quantum Materials Modeling"
+authors:
+  - name: "The Q3 Developers"
+license: Apache-2.0
+repository-code: "https://github.com/camsai/q3"
+url: "https://CAMSAI.org"
+# TODO(release): add doi (Zenodo), version, and date-released on the first
+# tagged release; replace the entity author with the flagship-paper author
+# list via preferred-citation when the paper is out.

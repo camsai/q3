@@ -1,0 +1,23 @@
+{
+    "system": "Si (diamond, FCC primitive cell, 2 atoms)",
+    "calculation": "DFT-PBE DOS, norm-conserving pseudopotential",
+    "reference_code": "Quantum ESPRESSO 7+ with LibXC (build_libxc/bin/pw.x)",
+    "pseudopotential": "Si.upf (ONCV, NC)",
+    "cutoffs": {
+        "wavefunction_ry": 48.0,
+        "density_ry": 192.0
+    },
+    "kgrid": "4x4x4 Gamma-centered",
+    "lattice_parameter_angstrom": 3.866976,
+
+    "fermi_energy_ry": 0.450,
+    "fermi_energy_tolerance_ry": 0.10,
+
+    "expected_features": {
+        "semiconductor_gap": true,
+        "gap_at_fermi": "DOS should be ~0 in a region around E_F (Si is a semiconductor)",
+        "valence_band_electron_count": 8,
+        "valence_band_electron_tolerance": 0.5,
+        "d_band": false
+    }
+}
