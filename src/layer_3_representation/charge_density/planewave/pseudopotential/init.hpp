@@ -5,7 +5,7 @@
  * pseudopotential-aware data.
  *
  * Adds:
- * - Projector overlap coefficients (becsum) for ultrasoft augmentation
+ * - Projector overlap coefficients for ultrasoft augmentation
  * - Augmentation charge management via needs_augmentation()
  */
 
@@ -30,7 +30,7 @@ class NormConservingPlanewaveChargeDensity : public PlanewaveChargeDensity {
         : PlanewaveChargeDensity(basis, number_of_spin_components)
         , norm_conserving_quantum_system_(&norm_conserving_quantum_system) {}
 
-    // ─── Projector overlap coefficients (becsum) ────────────────
+    // ─── Projector overlap coefficients (Quantum ESPRESSO's `becsum`) ───
     [[nodiscard]] const Matrix<Real>& projector_overlap_coefficients() const {
         return projector_overlap_coefficients_;
     }
@@ -38,14 +38,14 @@ class NormConservingPlanewaveChargeDensity : public PlanewaveChargeDensity {
         return projector_overlap_coefficients_;
     }
 
-    /// Initialize becsum storage for given number of atoms and max channels.
+    /// Initialize the coefficient storage for given number of atoms and max channels.
     void initialize_projector_overlap_coefficients(int number_of_atoms,
                                                    int maximum_projector_channels) {
         projector_overlap_coefficients_.assign(
             number_of_atoms, maximum_projector_channels * maximum_projector_channels, 0.0);
     }
 
-    /// Reset becsum to zero.
+    /// Reset the projector overlap coefficients to zero.
     void reset_projector_overlap_coefficients() {
         for (size_t row_index = 0; row_index < projector_overlap_coefficients_.rows();
              row_index++) {

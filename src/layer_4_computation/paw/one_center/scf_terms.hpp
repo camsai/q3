@@ -257,16 +257,16 @@ class PawOneCenterTerms {
              * PAW cell (SiC, NiO, any oxide) and the run still converges.
              */
             if (number_of_channels > row_capacity)
-                throw std::runtime_error(
-                    "PAW one-center channel count exceeds the allocated becsum row width");
+                throw std::runtime_error("PAW one-center channel count exceeds the allocated "
+                                         "projector overlap row width");
 
             auto occupancies = OnSiteOccupancies::zeros(number_of_channels, number_of_spins);
             for (int spin = 0; spin < number_of_spins; spin++) {
-                const auto& becsum = *projector_overlap_coefficients_by_spin[spin];
+                const auto& coefficients_for_spin = *projector_overlap_coefficients_by_spin[spin];
                 for (int first = 0; first < number_of_channels; first++)
                     for (int second = 0; second < number_of_channels; second++)
                         occupancies.at(spin, first, second) =
-                            becsum[atom_index][first * number_of_channels + second];
+                            coefficients_for_spin[atom_index][first * number_of_channels + second];
             }
 
             const auto& paw = *context.pseudopotential;

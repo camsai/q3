@@ -16,7 +16,7 @@
  *
  * **This must be built from the same Q_ij(G) the density uses.** It used to be
  * assembled from `interpolate_qfunc`, a radial-only table indexed by *beta
- * projector* pairs, while becsum is indexed by lm-expanded *channels*: the
+ * projector* pairs, while ρ_ij is indexed by lm-expanded *channels*: the
  * strides disagreed, and the angular (-i)^L Y_LM structure was missing
  * entirely. The term came out at 3.4e-7 Ry/bohr against a nonlocal term of
  * 4.3e-2 — five orders of magnitude down, for a dataset whose compensation
@@ -52,10 +52,10 @@ class UltrasoftForceCalculator {
 
     /**
      * @param potential_g_by_spin  One effective potential per spin channel.
-     * @param coefficients_by_spin One becsum per spin channel, same order.
+     * @param coefficients_by_spin One coefficient matrix per spin channel, same order.
      *
      * Spin is summed *inside*, channel against matching channel. Passing the
-     * spin-averaged potential and the spin-summed becsum instead — which is
+     * spin-averaged potential and the spin-summed coefficients instead — which is
      * what this took until 2026-08-09 — drops
      * ∫(V↑−V↓)(ρ↑−ρ↓) dQ/dR / 2. That vanishes for a non-magnetic cell, which
      * is why it survived every unpolarized test, and does not vanish for a
@@ -108,34 +108,38 @@ class UltrasoftForceCalculator {
 
                 /**
                  * A_I(G), assembled exactly as `add_augmentation_charges` does:
-                 * channel-indexed becsum against the precomputed Q_ij(G), with the
+                 * channel-indexed ρ_ij against the precomputed Q_ij(G), with the
                  * Q_ij = Q_ji symmetry folded into a single upper-triangle pass.
                  */
                 std::fill(augmentation_g.begin(), augmentation_g.end(), Complex(0.0, 0.0));
                 for (int channel_i = 0; channel_i < number_of_channels; channel_i++) {
                     int diagonal_pair = channel_i * number_of_channels + channel_i;
-                    Real diagonal_becsum =
+                    Real diagonal_projector_overlap_coefficient =
                         projector_overlap_coefficients(atom_index, diagonal_pair);
-                    if (std::abs(diagonal_becsum) >= math::tolerances::d_matrix_element_threshold) {
+                    if (std::abs(diagonal_projector_overlap_coefficient) >=
+                        math::tolerances::d_matrix_element_threshold) {
                         const Complex* q_g = ultrasoft_basis.q_function_g_data(
                             species_index, diagonal_pair, number_of_g_vectors);
                         for (int g_index = 0; g_index < number_of_g_vectors; g_index++)
-                            augmentation_g[g_index] += diagonal_becsum * q_g[g_index];
+                            augmentation_g[g_index] +=
+                                diagonal_projector_overlap_coefficient * q_g[g_index];
                     }
 
                     for (int channel_j = channel_i + 1; channel_j < number_of_channels;
                          channel_j++) {
                         int pair_ij = channel_i * number_of_channels + channel_j;
                         int pair_ji = channel_j * number_of_channels + channel_i;
-                        Real combined_becsum = projector_overlap_coefficients(atom_index, pair_ij) +
-                                               projector_overlap_coefficients(atom_index, pair_ji);
-                        if (std::abs(combined_becsum) <
+                        Real combined_projector_overlap_coefficient =
+                            projector_overlap_coefficients(atom_index, pair_ij) +
+                            projector_overlap_coefficients(atom_index, pair_ji);
+                        if (std::abs(combined_projector_overlap_coefficient) <
                             math::tolerances::d_matrix_element_threshold)
                             continue;
                         const Complex* q_g = ultrasoft_basis.q_function_g_data(
                             species_index, pair_ij, number_of_g_vectors);
                         for (int g_index = 0; g_index < number_of_g_vectors; g_index++)
-                            augmentation_g[g_index] += combined_becsum * q_g[g_index];
+                            augmentation_g[g_index] +=
+                                combined_projector_overlap_coefficient * q_g[g_index];
                     }
                 }
 

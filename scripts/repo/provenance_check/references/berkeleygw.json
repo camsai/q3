@@ -1,0 +1,7 @@
+{
+    "description": "BerkeleyGW, whose file formats Q3 writes. No identifiers are listed yet; its name is a red-flag target and its source is Fortran.",
+    "key": "berkeleygw",
+    "names_in_prose": ["BerkeleyGW"],
+    "languages": ["fortran"],
+    "identifiers": []
+}

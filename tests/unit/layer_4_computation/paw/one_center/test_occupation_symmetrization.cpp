@@ -87,7 +87,7 @@ ChannelAngularLayout make_two_s_plus_d_layout() {
 
 /**
  * A reproducible, deliberately unsymmetric ρ_ij: every entry distinct, and
- * symmetric in (i,j) the way an accumulated becsum always is.
+ * symmetric in (i,j) the way an accumulated ρ_ij always is.
  */
 Matrix<Real> make_seed_occupations(int number_of_atoms, int channels) {
     Matrix<Real> occupations(

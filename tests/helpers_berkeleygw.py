@@ -1,14 +1,27 @@
 """Independent reader/validator for BerkeleyGW mean-field files (WFN, RHO, vxc.dat).
 
 This module is a deliberately independent implementation: it was written from
-the BerkeleyGW mean-field file format's format sources -- Quantum ESPRESSO's
-``PP/src/pw2bgw.f90`` converter (the reference implementation BerkeleyGW
-itself is built against) -- WITHOUT reading Q3's own C++ writer for these
-files. Its purpose is to be a cross-check that does not share any code path,
-assumption, or bug with the writer it validates in
-``tests/validation/test_berkeleygw_export.py``. Do not "fix" a disagreement
-between this reader and the writer by copying the writer's interpretation
-here; re-derive from pw2bgw.f90 instead.
+the definition of the BerkeleyGW mean-field file format -- the records that
+Quantum ESPRESSO's ``pw2bgw.x`` converter writes and BerkeleyGW reads --
+WITHOUT reading Q3's own C++ writer for these files. Its purpose is to be a
+cross-check that does not share any code path, assumption, or bug with the
+writer it validates in ``tests/validation/test_berkeleygw_export.py``. Do not
+"fix" a disagreement between this reader and the writer by copying the
+writer's interpretation here; re-derive from the format's definition instead.
+
+Authority. The record order, contents and units follow the specification
+BerkeleyGW publishes: J. Deslippe et al., Comput. Phys. Commun. 183, 1269
+(2012), Appendix 11.1, "Specification of file formats" (arXiv:1111.4429),
+cited below as "the BerkeleyGW specification". What it leaves open -- Fortran
+record framing, integer and real kinds, the widths of the character fields
+and of vxc.dat's columns, the count repeated before each G-vector or data
+block, and the conventions of the symmetry records -- is taken from the
+converter that writes these files, Quantum ESPRESSO's ``pw2bgw.x``. Citations
+of it name the subroutine (``write_wfng`` for WFN, ``write_rhog`` for RHO,
+``write_vxc_g``/``write_vxc_r`` for vxc.dat, in ``PP/src/pw2bgw.f90`` of
+Quantum ESPRESSO 7.5, release tag ``qe-7.5``) and the record within it, never a
+line number: the line numbers first written here were read off an unpinned
+``develop`` checkout and moved with it. See PROVENANCE.md section 5.1.
 
 Framing (all three binary/text conventions below are load-bearing):
 
@@ -22,15 +35,15 @@ Framing (all three binary/text conventions below are load-bearing):
 - All reals are float64 (``<f8``), all integers int32 (``<i4``), little-endian
   -- matching ``tests/utils/qe/binary_readers.py``'s existing convention for
   Q3/QE's own Fortran-unformatted files, and standard for x86_64 Linux HPC
-  builds (this is a build/platform convention pw2bgw.f90's source text cannot
-  itself confirm; it is the one fact in this module taken on the format
-  contract's authority rather than derived from the .f90 source).
-- Fortran arrays are column-major: for a nested implied-do
-  ``((a(j,i), j=1,3), i=1,n)`` the FIRST index (``j``) varies fastest. This
-  reader reshapes with ``order="F"`` throughout; never ``order="C"`` (which
-  would silently transpose square matrices).
+  builds (a build/platform convention that the converter's source cannot
+  itself confirm; it is the one fact in this module taken from the platform
+  rather than from the format's definition).
+- Arrays are stored column-major (Fortran order): for an array of shape
+  (3, n) the FIRST index varies fastest, so element [j, i] sits at flat
+  position j + 3 * i. This reader reshapes with ``order="F"`` throughout;
+  never ``order="C"`` (which would silently transpose square matrices).
 
-Every record-parsing function below cites the pw2bgw.f90 line numbers it was
+Every record-parsing function below names the subroutine and record it was
 derived from, so a disagreement can be traced back to source.
 """
 
@@ -140,8 +153,8 @@ def _reshape_fortran(flat_array, shape):
     """Reshapes a flat array using Fortran (column-major) order.
 
     The first axis varies fastest -- e.g. for a (3,3) matrix, flat elements
-    0,1,2 become column 0 (rows 0,1,2), matching pw2bgw's
-    ``((a(j,i), j=1,3), i=1,3)`` implied-do. Using ``order="C"`` here would
+    0,1,2 become column 0 (rows 0,1,2), the column-major order in which the
+    converter writes every 3x3 block. Using ``order="C"`` here would
     silently transpose any non-symmetric matrix.
     """
     return np.asarray(flat_array).reshape(shape, order="F")
@@ -159,9 +172,9 @@ def _read_scalar_int32(reader, label):
 def _read_title_block(reader, expected_prefix, label="record 1 (stitle, sdate, stime)"):
     """Record 1: 32-byte stitle + 32-byte sdate + 32-byte stime = 96 bytes.
 
-    pw2bgw.f90:730-737 (WFN) / :1574-1581 (RHO) construct these as
-    space-padded fixed-width CHARACTER fields; :969 (WFN) / :1715 (RHO) write
-    them as one record. ``stitle`` is ``"<expected_prefix>-Real"`` or
+    The converter (``write_wfng`` for WFN, ``write_rhog`` for RHO) builds
+    these as space-padded fixed-width character fields and writes them as one
+    record. ``stitle`` is ``"<expected_prefix>-Real"`` or
     ``"<expected_prefix>-Complex"`` (e.g. "WFN-Real", "RHO-Complex").
     """
     payload = reader.read_raw_record(label)
@@ -198,13 +211,14 @@ def _read_lattice_and_symmetry_records(
 ):
     """Records 4-8: geometry, symmetry, and atoms -- identical in WFN and RHO.
 
-    pw2bgw.f90:981-987 (WFN) / :1720-1726 (RHO) write byte-identical formulas
-    for these five records (verified by direct comparison of both
-    subroutines' source).
+    ``write_wfng`` and ``write_rhog`` compute these five records the same
+    way, so WFN and RHO carry byte-identical records 4-8 (verified by
+    comparing the two subroutines).
     """
-    # Record 4: celvol, alat, avec(3,3), adot(3,3) -- 20 float64 (pw2bgw.f90:981-982 /
-    # :1720-1721). adot = alat^2 * avec^T @ avec (metric tensor), per the accumulation
-    # loop at pw2bgw.f90:778-790 / :1645-1657 (adot(j,i) = sum_k at(k,j)*at(k,i)*alat^2).
+    # Record 4: celvol, alat, avec (3x3), adot (3x3) -- 20 float64 (record 4 of both
+    # writers). avec holds the lattice vectors a_i in units of alat, one per column, and
+    # adot is the real-space metric tensor: adot[i, j] = alat^2 * (a_i . a_j), i.e.
+    # alat^2 * avec^T @ avec.
     label = f"{section_label} record 4 (celvol, alat, avec, adot)"
     payload = reader.read_raw_record(label)
     values = _as_array(payload, _FLOAT64, 20, label, reader.source_path)
@@ -213,11 +227,11 @@ def _read_lattice_and_symmetry_records(
     lattice_vectors_alat_units = _reshape_fortran(values[2:11], (3, 3)).copy()
     real_space_metric_tensor_bohr2 = _reshape_fortran(values[11:20], (3, 3)).copy()
 
-    # Record 5: recvol, blat, bvec(3,3), bdot(3,3) -- 20 float64 (pw2bgw.f90:983-984 /
-    # :1722-1723). recvol = 8*pi^3/omega (pw2bgw.f90:776 / :1643); blat = tpiba = 2*pi/alat
-    # (external cell_base module -- pw2bgw.f90 only imports it, see module docstring in
-    # read_berkeleygw_wavefunction_file). bdot = tpiba^2 * bvec^T @ bvec, same pattern as
-    # adot (pw2bgw.f90:792-804 / :1659-1671).
+    # Record 5: recvol, blat, bvec (3x3), bdot (3x3) -- 20 float64 (record 5 of both
+    # writers). recvol = (2*pi)^3 / celvol, the Brillouin-zone volume; blat = 2*pi/alat,
+    # the unit of the reciprocal lattice vectors b_i in bvec; bdot is the reciprocal
+    # metric tensor, bdot[i, j] = blat^2 * (b_i . b_j) = blat^2 * bvec^T @ bvec, built
+    # the same way as adot.
     label = f"{section_label} record 5 (recvol, blat, bvec, bdot)"
     payload = reader.read_raw_record(label)
     values = _as_array(payload, _FLOAT64, 20, label, reader.source_path)
@@ -226,8 +240,8 @@ def _read_lattice_and_symmetry_records(
     reciprocal_lattice_vectors_tpiba_units = _reshape_fortran(values[2:11], (3, 3)).copy()
     reciprocal_space_metric_tensor_inverse_bohr2 = _reshape_fortran(values[11:20], (3, 3)).copy()
 
-    # Record 6: mtrx(3,3,ntran) int32 rotation matrices, crystal basis
-    # (pw2bgw.f90:985 / :1724).
+    # Record 6: mtrx, one 3x3 int32 rotation matrix per symmetry operation, crystal
+    # basis (record 6 of both writers).
     label = f"{section_label} record 6 (symmetry rotation matrices)"
     payload = reader.read_raw_record(label)
     flat = _as_array(payload, _INT32, 9 * number_of_symmetry_operations, label, reader.source_path)
@@ -235,13 +249,16 @@ def _read_lattice_and_symmetry_records(
         flat, (3, 3, number_of_symmetry_operations)
     ).copy()
 
-    # Record 7: tnp(3,ntran) float64 (pw2bgw.f90:986 / :1725). NOTE (correction to the
-    # format contract doc, which calls these bare "fractional translations"): pw2bgw
-    # actually stores 2*pi times a rotation-inverse-transformed fractional
-    # translation, wrapped so that the CLOSED end is at +0.5, not at -0.5:
-    # the interval is (-0.5, 0.5] (pw2bgw.f90:827-851: r2 = inverse(s(:,:,i)); t2 = r2^T @
-    # ft(:,i), wrapped; translation(:,i) = t2 * tpi). This matters if this array's
-    # *values* are ever cross-checked -- the 2*pi factor is baked in on disk.
+    # Record 7: tnp, three float64 per symmetry operation (record 7 of both writers).
+    # NOTE: the BerkeleyGW specification gives these in units of the lattice vectors
+    # times 2*pi, not as bare fractional translations, and the converter's values are
+    # more specific still: it stores 2*pi times the fractional
+    # translation t carried through the inverse of the operation's crystal-basis
+    # rotation matrix S, t' = (S^-1)^T t, with each component of t' first reduced
+    # modulo 1 into (-0.5, 0.5] -- the CLOSED end at +0.5, not at -0.5 -- and only then
+    # scaled by 2*pi (the symmetry set-up shared by ``write_wfng`` and ``write_rhog``).
+    # This matters if this array's *values* are ever cross-checked -- the 2*pi factor
+    # is baked in on disk.
     label = f"{section_label} record 7 (symmetry fractional translations x 2*pi)"
     payload = reader.read_raw_record(label)
     flat = _as_array(
@@ -252,10 +269,10 @@ def _read_lattice_and_symmetry_records(
     ).copy()
 
     # Record 8: (apos(3,i), Z_i) for i=1..nat, INTERLEAVED per atom: 3 float64 then 1
-    # int32, repeated (pw2bgw.f90:987 / :1726). Positions are Cartesian, in alat units
-    # (QE's "tau" convention). A structured dtype with no alignment padding reproduces
-    # this interleaving exactly (numpy does not pad list-of-tuples dtypes unless
-    # align=True is requested, which it is not here).
+    # int32, repeated (record 8 of both writers). Positions are Cartesian, in alat
+    # units (the convention QE keeps atomic positions in). A structured dtype with no
+    # alignment padding reproduces this interleaving exactly (numpy does not pad
+    # list-of-tuples dtypes unless align=True is requested, which it is not here).
     label = f"{section_label} record 8 (atom positions interleaved with atomic numbers)"
     payload = reader.read_raw_record(label)
     atom_dtype = np.dtype([("position", _FLOAT64, (3,)), ("atomic_number", _INT32)])
@@ -285,20 +302,20 @@ def _read_lattice_and_symmetry_records(
 def read_berkeleygw_wavefunction_file(path):
     """Reads a BerkeleyGW ``WFN`` mean-field file (18 header records + body).
 
-    Header layout follows pw2bgw.f90:969-999 (``write_wfng``); body layout
-    follows pw2bgw.f90:1026-1291 (per-k-point G-vectors, then per-band
+    Header layout follows the BerkeleyGW specification's header records as
+    ``write_wfng`` writes all 18 of them; body layout follows the same
+    subroutine's body (per-k-point G-vectors, then per-band
     coefficients).
 
     Body-parsing scope: this reader supports ``number_of_spin_components ==
-    1`` bodies only (any flavor, real or complex). For ``ns > 1``,
-    ``write_wfng``'s ``proc_wf`` branch (pw2bgw.f90:712-716 defines
-    ``proc_wf = (real_or_complex == 1) .OR. (nspin > 1)``) writes a
-    fundamentally different, spin-interleaved record layout
-    (pw2bgw.f90:1250-1289: one record per band holding ALL spins'
-    coefficients concatenated, gathered via ``wfng_dist``) rather than the
-    simple one-record-per-(k,spin,band) layout this reader implements
-    (pw2bgw.f90:1227-1238, the ``proc_wf == False`` branch, which is only
-    taken for ``real_or_complex == 2 .AND. nspin == 1``). Rather than guess
+    1`` bodies only (any flavor, real or complex). ``write_wfng`` chooses
+    between two body layouts: whenever the file is real-flavored or
+    spin-polarized, it writes a fundamentally different, spin-interleaved
+    layout (one record per band holding ALL spins' coefficients
+    concatenated) rather than the simple one-record-per-(k,spin,band) layout
+    this reader implements, which it uses only for the complex flavor with
+    one spin component. For ``ns > 1`` that means the interleaved layout
+    every time. Rather than guess
     at that interleaving, a spin-polarized body raises
     ``BerkeleyGWFormatError`` with an explicit explanation. The HEADER is
     parsed fully generally for any ``ns`` -- only body (G-vector/coefficient)
@@ -320,8 +337,9 @@ def read_berkeleygw_wavefunction_file(path):
 
         # Record 2: ns, ng, ntran, cell_symmetry, nat, ecutrho, nk, nbands, ngkmax,
         # ecutwfc -- MIXED TYPES in one record: int32 x5, float64, int32 x3, float64
-        # (pw2bgw.f90:972-973; "ns" is written as nsf, "nk" as nk_g/ns -- see
-        # set_spin(), pw2bgw.f90:5224-5244).
+        # (``write_wfng`` record 2; ns is the number of spin components in the file and
+        # nk the k-points per spin channel, the converter's total k-point-state count
+        # divided by ns -- both as its ``set_spin`` subroutine arranges them).
         label = "record 2 (ns, ng, ntran, cell_symmetry, nat, ecutrho, nk, nbands, ngkmax, ecutwfc)"
         payload = reader.read_raw_record(label)
         record_2_dtype = np.dtype(
@@ -361,8 +379,9 @@ def read_berkeleygw_wavefunction_file(path):
             }
         )
 
-        # Record 3: FFTgrid(3) int32, kgrid(3) int32, kshift(3) float64
-        # (pw2bgw.f90:974-979; kshift = 0.5*k1 etc. at :979).
+        # Record 3: FFTgrid (3 int32), kgrid (3 int32), kshift (3 float64)
+        # (``write_wfng`` record 3; kshift is half the Monkhorst-Pack shift flag along
+        # each axis, so 0 or 0.5).
         label = "record 3 (FFTgrid, kgrid, kshift)"
         payload = reader.read_raw_record(label)
         record_3_dtype = np.dtype(
@@ -385,7 +404,7 @@ def read_berkeleygw_wavefunction_file(path):
             )
         )
 
-        # Record 9: ngk(nk) int32 -- plane waves per k-point (pw2bgw.f90:988).
+        # Record 9: ngk, nk int32 -- plane waves per k-point (``write_wfng`` record 9).
         label = "record 9 (ngk)"
         payload = reader.read_raw_record(label)
         number_of_gvectors_per_kpoint = _as_array(
@@ -393,19 +412,20 @@ def read_berkeleygw_wavefunction_file(path):
         ).copy()
         header["number_of_gvectors_per_kpoint"] = number_of_gvectors_per_kpoint
 
-        # Record 10: kw(nk) float64 weights, normalized so sum = 1 (pw2bgw.f90:990-991:
-        # wk(ik)*nst/2, where nst==nspin for the non-spinor case -- set_spin(),
-        # pw2bgw.f90:5224-5244 -- and Q3's own results.json documents its k-point
-        # weights as normalized to sum to 2.0 (docs/io_reference.md), so /2 recovers 1).
+        # Record 10: kw, nk float64 weights, normalized so sum = 1 (``write_wfng`` record
+        # 10 writes QE's k-point weight times the number of spin components over 2, the
+        # spin count being the one ``set_spin`` sets for the non-spinor case; QE's weights
+        # sum to 2, as Q3's results.json documents its own do (docs/io_reference.md), so
+        # /2 recovers 1).
         label = "record 10 (kw)"
         payload = reader.read_raw_record(label)
         header["kpoint_weights"] = _as_array(
             payload, _FLOAT64, number_of_kpoints, label, path
         ).copy()
 
-        # Record 11: kpt(3,nk) float64, CRYSTAL (fractional) coordinates --
-        # pw2bgw.f90:964 calls cryst_to_cart(..., at, -1) immediately before the write
-        # block and cryst_to_cart(..., bg, +1) afterward (:1002) to restore Cartesian.
+        # Record 11: kpt, shape (3, nk) float64, CRYSTAL (fractional) coordinates --
+        # QE holds k-points in Cartesian coordinates, so ``write_wfng`` converts them to
+        # crystal coordinates just before its header records and back just after.
         label = "record 11 (kpt)"
         payload = reader.read_raw_record(label)
         flat = _as_array(payload, _FLOAT64, 3 * number_of_kpoints, label, path)
@@ -413,7 +433,7 @@ def read_berkeleygw_wavefunction_file(path):
             flat, (3, number_of_kpoints)
         ).copy()
 
-        # Records 12-13: ifmin/ifmax(nk*ns) int32 (pw2bgw.f90:993-994).
+        # Records 12-13: ifmin/ifmax, nk*ns int32 each (``write_wfng`` records 12-13).
         label = "record 12 (ifmin)"
         payload = reader.read_raw_record(label)
         header["lowest_occupied_band_index"] = _as_array(
@@ -425,14 +445,14 @@ def read_berkeleygw_wavefunction_file(path):
             payload, _INT32, number_of_kpoints * number_of_spin_components, label, path
         ).copy()
 
-        # Records 14-15: energies/occupations(nbands, nk*ns) float64 (pw2bgw.f90:995-996).
-        # Energies are in Rydberg: et_g is copied from QE's `et` with no rescaling
-        # (pw2bgw.f90:855-865), and elsewhere in this same file `et(...)  * rytoev` is
-        # used whenever an eV value is needed (e.g. :4258, :5071) -- confirming `et`
-        # itself (hence et_g, hence this record) is Rydberg, not eV.
-        # NOTE: for ns > 1 the nk*ns axis is ordered spin-block-major (QE's global k
-        # list is nk points of spin-1 followed by nk points of spin-2, per the kmap
-        # construction at pw2bgw.f90:758-763) -- NOT interleaved per k-point.
+        # Records 14-15: energies/occupations, shape (nbands, nk*ns) float64 (``write_wfng``
+        # records 14-15). Energies are in Rydberg: the converter copies QE's eigenvalues
+        # into this record with no rescaling, and converts them to eV explicitly wherever
+        # else it needs eV -- confirming that the eigenvalues themselves, hence this
+        # record, are Rydberg, not eV.
+        # NOTE: for ns > 1 the nk*ns axis is ordered spin-block-major (QE's global k-point
+        # list is nk points of spin 1 followed by nk points of spin 2, and the converter
+        # keeps that order) -- NOT interleaved per k-point.
         label = "record 14 (energies)"
         payload = reader.read_raw_record(label)
         flat = _as_array(
@@ -458,13 +478,13 @@ def read_berkeleygw_wavefunction_file(path):
             flat, (number_of_bands, number_of_kpoints * number_of_spin_components)
         ).copy()
 
-        # Record 16: nrecord, always 1 (pw2bgw.f90:740 sets nrecord=1 once; grep of the
-        # whole file shows it is never recomputed from array size before any WRITE).
+        # Record 16: nrecord, always 1 (the converter sets it to 1 once and never
+        # recomputes it from an array size before any write).
         nrecord = _read_scalar_int32(reader, "record 16 (nrecord)")
         if nrecord != 1:
             raise BerkeleyGWFormatError(
                 f"{path}: record 16 (nrecord) = {nrecord}, expected 1 -- this reader "
-                f"(and pw2bgw.f90 itself, which hardcodes nrecord=1 throughout) does "
+                f"(and pw2bgw.x itself, which always writes nrecord=1) does "
                 f"not support multi-part chunked G-vector records."
             )
 
@@ -476,8 +496,8 @@ def read_berkeleygw_wavefunction_file(path):
                 f"declared number_of_g_vectors = {number_of_g_vectors}."
             )
 
-        # Record 18: gvec(3,ng) int32 Miller indices -- the charge-density G set
-        # (pw2bgw.f90:999).
+        # Record 18: gvec, shape (3, ng) int32 Miller indices -- the charge-density G
+        # set (``write_wfng`` record 18).
         label = "record 18 (gvec)"
         payload = reader.read_raw_record(label)
         flat = _as_array(payload, _INT32, 3 * number_of_g_vectors, label, path)
@@ -510,7 +530,7 @@ def _read_wfn_body(reader, header):
             f"reader only supports parsing the WFN BODY (G-vector/coefficient records) "
             f"for spin-unpolarized (ns=1) files -- see "
             f"read_berkeleygw_wavefunction_file's docstring for why ns>1 uses a "
-            f"structurally different record layout in pw2bgw.f90 that is not "
+            f"structurally different record layout in pw2bgw.x's output that is not "
             f"implemented here. The header above was parsed fully and is valid."
         )
 
@@ -519,9 +539,9 @@ def _read_wfn_body(reader, header):
     for kpoint_index in range(number_of_kpoints):
         expected_gvector_count = int(number_of_gvectors_per_kpoint[kpoint_index])
 
-        # [nrecord=1] [ngk(ik)] [gvec_k(3, ngk(ik))] -- pw2bgw.f90:1062-1069, written
-        # once per k-point (guarded by "is == 1" in the source, i.e. only for the
-        # single spin channel that exists when ns=1).
+        # [nrecord=1] [ngk] [gvec_k, shape (3, ngk)] -- ``write_wfng``'s body, written
+        # once per k-point (for the first spin channel only, which is the single spin
+        # channel that exists when ns=1).
         nrecord = _read_scalar_int32(reader, f"k-point {kpoint_index} gvec block nrecord")
         if nrecord != 1:
             raise BerkeleyGWFormatError(
@@ -540,10 +560,10 @@ def _read_wfn_body(reader, header):
         flat = _as_array(payload, _INT32, 3 * expected_gvector_count, label, path)
         kpoint_gvectors.append(_reshape_fortran(flat, (3, expected_gvector_count)).copy())
 
-        # Per band: [nrecord=1] [ngk(ik)] [coefficients(ngk(ik))] -- pw2bgw.f90:1227-1238
-        # (the proc_wf == False branch: real_or_complex==2 AND nspin==1, guaranteed here
-        # since we already rejected ns>1 above; WFN-Real with ns=1 also reduces to this
-        # exact layout since nst=1 there too -- see docstring).
+        # Per band: [nrecord=1] [ngk] [ngk coefficients] -- ``write_wfng``'s
+        # one-record-per-band layout (complex flavor AND ns=1, guaranteed here since we
+        # already rejected ns>1 above; WFN-Real with ns=1 also reduces to this exact
+        # layout, since each band's record then holds a single spin -- see docstring).
         band_coefficients = np.empty(
             (number_of_bands, expected_gvector_count), dtype=coefficient_dtype
         )
@@ -579,7 +599,8 @@ def _read_wfn_body(reader, header):
 def read_berkeleygw_charge_density_file(path):
     """Reads a BerkeleyGW ``RHO`` mean-field file (8 header records + body).
 
-    Header layout follows pw2bgw.f90:1715-1726 (``write_rhog``) -- identical
+    Header layout follows the BerkeleyGW specification as ``write_rhog``
+    writes its records 1-8 -- identical
     to WFN records 1, 4-8, but record 2 omits the k-point fields and record 3
     is FFT grid only (no kgrid/kshift).
 
@@ -587,8 +608,8 @@ def read_berkeleygw_charge_density_file(path):
       - "charge_density_gvectors": int32 ndarray, shape (3, number_of_g_vectors).
       - "charge_density_g_times_cell_volume": complex128 (or float64, if
         real flavor) ndarray, shape (number_of_g_vectors,
-        number_of_spin_components). NOTE the name: pw2bgw.f90:1706-1710
-        multiplies rho(G) by the cell volume (``omega``) before writing it
+        number_of_spin_components). NOTE the name: ``write_rhog`` multiplies
+        rho(G) by the cell volume before writing it
         -- this is the raw on-disk BerkeleyGW convention, not the bare
         density. See ``read_berkeleygw_wavefunction_file``'s docstring for
         the general conventions (framing, dtypes, column-major order).
@@ -600,7 +621,8 @@ def read_berkeleygw_charge_density_file(path):
         header.update(_read_title_block(reader, "RHO"))
 
         # Record 2: ns, ng, ntran, cell_symmetry, nat, ecutrho -- all that's shared with
-        # WFN's record 2; RHO omits nk/nbands/ngkmax/ecutwfc entirely (pw2bgw.f90:1718).
+        # WFN's record 2; RHO omits nk/nbands/ngkmax/ecutwfc entirely (``write_rhog``
+        # record 2).
         label = "record 2 (ns, ng, ntran, cell_symmetry, nat, ecutrho)"
         payload = reader.read_raw_record(label)
         record_2_dtype = np.dtype(
@@ -629,7 +651,7 @@ def read_berkeleygw_charge_density_file(path):
             }
         )
 
-        # Record 3: FFTgrid(3) int32 ONLY -- no kgrid/kshift (pw2bgw.f90:1719).
+        # Record 3: FFTgrid (3 int32) ONLY -- no kgrid/kshift (``write_rhog`` record 3).
         label = "record 3 (FFTgrid)"
         payload = reader.read_raw_record(label)
         header["fft_grid_dimensions"] = _as_array(payload, _INT32, 3, label, path).copy()
@@ -640,7 +662,8 @@ def read_berkeleygw_charge_density_file(path):
             )
         )
 
-        # Body record group 1: [nrecord=1] [ng] [gvec(3,ng)] (pw2bgw.f90:1727-1729).
+        # Body record group 1: [nrecord=1] [ng] [gvec, shape (3, ng)] (``write_rhog``'s
+        # body).
         nrecord = _read_scalar_int32(reader, "body gvec block nrecord")
         if nrecord != 1:
             raise BerkeleyGWFormatError(f"{path}: body gvec block nrecord = {nrecord}, expected 1.")
@@ -655,9 +678,9 @@ def read_berkeleygw_charge_density_file(path):
         flat = _as_array(payload, _INT32, 3 * number_of_g_vectors, label, path)
         header["charge_density_gvectors"] = _reshape_fortran(flat, (3, number_of_g_vectors)).copy()
 
-        # Body record group 2: [nrecord=1] [ng] [rho(ng,ns)] (pw2bgw.f90:1730-1738).
-        # rho(G) is multiplied by the cell volume before writing (pw2bgw.f90:1706-1710)
-        # -- see this function's docstring.
+        # Body record group 2: [nrecord=1] [ng] [rho, shape (ng, ns)] (``write_rhog``'s
+        # body). rho(G) is multiplied by the cell volume before writing -- see this
+        # function's docstring.
         nrecord = _read_scalar_int32(reader, "body rho block nrecord")
         if nrecord != 1:
             raise BerkeleyGWFormatError(f"{path}: body rho block nrecord = {nrecord}, expected 1.")
@@ -683,12 +706,15 @@ def read_berkeleygw_charge_density_file(path):
 
 # ── vxc.dat (ASCII) ───────────────────────────────────────────────────
 
-# FORMAT (3F13.9, 2I8): kx ky kz ndiag noffdiag -- pw2bgw.f90:3516 (write_vxc_g) /
-# :2931 (write_vxc_r, byte-identical format statements in both subroutines).
+# Field widths of vxc.dat's three line kinds, as ``write_vxc_g`` and ``write_vxc_r``
+# both write them. Header line: kx ky kz in three 13-wide fields with 9 decimals,
+# then ndiag noffdiag in two 8-wide integer fields.
 _VXC_HEADER_LINE_WIDTHS = (13, 13, 13, 8, 8)
-# FORMAT (2I8, 2F15.9): spin band Re(Vxc) Im(Vxc) -- pw2bgw.f90:3517 / :2932.
+# Diagonal line: spin band in two 8-wide integer fields, then Re(Vxc) Im(Vxc) in two
+# 15-wide fields with 9 decimals.
 _VXC_DIAGONAL_LINE_WIDTHS = (8, 8, 15, 15)
-# FORMAT (3I8, 2F15.9): spin band_bra band_ket Re(Vxc) Im(Vxc) -- pw2bgw.f90:3518 / :2933.
+# Off-diagonal line: spin band_bra band_ket in three 8-wide integer fields, then
+# Re(Vxc) Im(Vxc) as on a diagonal line.
 _VXC_OFFDIAGONAL_LINE_WIDTHS = (8, 8, 8, 15, 15)
 
 
@@ -720,16 +746,17 @@ def _split_fixed_width(line, widths, label, source_path):
 def read_berkeleygw_exchange_correlation_file(path):
     """Reads a BerkeleyGW ``vxc.dat`` file (ASCII exchange-correlation matrix elements).
 
-    Format follows pw2bgw.f90's ``write_vxc_g``/``write_vxc_r`` (both write
+    Format follows the BerkeleyGW specification's vxc.dat section, with
+    the column widths ``write_vxc_g``/``write_vxc_r`` use (both write
     byte-identical output): one header line per k-point
     (``kx ky kz ndiag noffdiag``, crystal coordinates), then ``ndiag``
     diagonal-matrix-element lines, then ``noffdiag`` off-diagonal lines.
     ``ndiag``/``noffdiag`` are already multiplied by ``number_of_spin_components``
-    on disk (pw2bgw.f90:3483-3484 / :2894: ``nspin * ndiag``,
-    ``nspin * noffdiag**2``), so they are exactly this reader's per-k-point
-    line counts, not a "per spin" count needing further multiplication.
-    Matrix elements are in eV (``rytoev``-scaled at the point of computation,
-    e.g. pw2bgw.f90:3340, :3439).
+    on disk (the header line carries ns times the number of diagonal
+    elements and ns times the square of the number of off-diagonal bands),
+    so they are exactly this reader's per-k-point line counts, not a "per
+    spin" count needing further multiplication. Matrix elements are in eV
+    (converted from Rydberg where each one is computed).
 
     Returns a dict: {"number_of_kpoints": int, "kpoints": [...]} where each
     entry of "kpoints" is a dict:
@@ -739,9 +766,9 @@ def read_berkeleygw_exchange_correlation_file(path):
       - "diagonal_entries": list of dicts with "spin_index", "band_index",
         "vxc_ev" (Python complex).
       - "offdiagonal_entries": list of dicts with "spin_index",
-        "band_index_bra" (pw2bgw's "ib2"), "band_index_ket" (pw2bgw's "ib"),
-        "vxc_ev" (Python complex). Derived from pw2bgw.f90:3417-3442: the
-        matrix element is ``conj(psi_ib2) . (Vxc psi_ib)``, i.e. <ib2|Vxc|ib>.
+        "band_index_bra", "band_index_ket", "vxc_ev" (Python complex). As
+        ``write_vxc_g`` computes it, the matrix element is
+        <bra|Vxc|ket> = sum_G conj(c_bra(G)) (Vxc psi_ket)(G).
     """
     path = Path(path)
     kpoint_blocks = []
@@ -757,7 +784,7 @@ def read_berkeleygw_exchange_correlation_file(path):
         )
         line_index += 1
         kpoint_crystal_coordinates = np.array(
-            [float(kx_text), float(ky_text), float(kz_text)], dtype=_FLOAT64
+            [float(text) for text in (kx_text, ky_text, kz_text)], dtype=_FLOAT64
         )
         diagonal_entry_count = int(ndiag_text)
         offdiagonal_entry_count = int(noffdiag_text)

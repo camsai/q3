@@ -3,7 +3,7 @@
 /**
  * Symmetrizing the PAW on-site occupations ρ_ij.
  *
- * ρ_ij (becsum) is accumulated as a weighted sum over the *irreducible* wedge,
+ * ρ_ij is accumulated as a weighted sum over the *irreducible* wedge,
  *
  *     ρ^a_ij = Σ_{k∈IBZ} w_k Σ_v f_kv Re[⟨ψ_kv|β^a_i⟩⟨β^a_j|ψ_kv⟩],
  *
@@ -39,7 +39,7 @@
  * with its full mesh to 1e-7 Ry.
  *
  * **Time reversal needs no separate step here**, unlike the DFT+U occupation
- * matrix. becsum is accumulated as `Re[conj(⟨β_i|ψ⟩)⟨β_j|ψ⟩]`, which is
+ * matrix. ρ_ij is accumulated as `Re[conj(⟨β_i|ψ⟩)⟨β_j|ψ⟩]`, which is
  * already the average over the ±k pair the wedge folded together — the real
  * part *is* the Θ projection. Quantum ESPRESSO's collinear becsum is real by
  * the same construction.
@@ -63,7 +63,7 @@
 namespace q3::paw_one_center {
 
 /**
- * What each becsum channel of one species means angularly.
+ * What each ρ_ij channel of one species means angularly.
  *
  * The expanded channels run over (radial β, m) in `harmonic_order_sequence`
  * order, so a channel's angular partners are the ones sharing its β — a
@@ -105,7 +105,7 @@ build_channel_angular_layout(const std::vector<int>& beta_index_per_channel,
  * The point-group average of ρ_ij, with D^l(R) built once and reused.
  *
  * Built once per run (the operations and the datasets do not change during an
- * SCF) and applied to every becsum array each iteration. `is_active()` is
+ * SCF) and applied to every ρ_ij array each iteration. `is_active()` is
  * false when there is nothing to do — one operation, or no channels — so the
  * caller does not need a second condition of its own.
  */

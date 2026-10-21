@@ -79,6 +79,19 @@ jobs:
           SKIP=clang-tidy \
             pre-commit run --all-files --show-diff-on-failure
 
+      # The same check as the `provenance` pre-commit hook above, run again for
+      # its report: the findings still carried in the baseline, grouped by
+      # rule, land in the run summary, so the remaining debt is visible on
+      # every push rather than only in a JSON file.
+      - name: Check GPL-derivation signals (PROVENANCE.md)
+        run: |
+          set +e
+          python3 scripts/repo/check_provenance.py --check --report > "$RUNNER_TEMP/provenance.txt"
+          status=$?
+          cat "$RUNNER_TEMP/provenance.txt"
+          { echo '```'; cat "$RUNNER_TEMP/provenance.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
       # The public tree must be exportable at every commit, not just when
       # someone remembers to run the packer. Catching a quote of proprietary engine source, a
       # link into plan/, or an unbalanced vault marker here costs one review

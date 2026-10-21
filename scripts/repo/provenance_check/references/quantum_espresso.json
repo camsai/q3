@@ -1,0 +1,33 @@
+{
+    "description": "Quantum ESPRESSO, public GPL source, so its names are plain text. identifiers: its variable names, which must not be Q3 C++ identifiers (PROVENANCE.md section 2).",
+    "key": "quantum_espresso",
+    "names_in_prose": ["Quantum ESPRESSO", "Quantum Espresso", "QE"],
+    "languages": ["fortran"],
+    "identifiers": [
+        "becsum",
+        "vkb",
+        "igk",
+        "igk_k",
+        "eigts1",
+        "eigts2",
+        "eigts3",
+        "qrad",
+        "nhtol",
+        "nhtolm",
+        "indv",
+        "deeq",
+        "tab_at",
+        "ijtoh",
+        "okvan",
+        "nkb",
+        "nhm",
+        "ngms",
+        "nrxx",
+        "npwx",
+        "evc",
+        "psic",
+        "vrs",
+        "vltot",
+        "dfftp"
+    ]
+}

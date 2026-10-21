@@ -297,12 +297,12 @@ class UltrasoftAugmentationStressTensorCalculator {
                     }
                 }
 
-                // Now for each atom of this species, contract dqg with becsum and V*(G)*SF
+                // Now for each atom of this species, contract dqg with ρ_ij and V*(G)*SF
                 for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
                     if (crystal_structure_.species_type_index(atom_index) != species_type_index)
                         continue;
 
-                    // Compute becsum-weighted dQ(G): aux(G) = sum_{ij} D_ij * dQ_ij(G)/dG_beta
+                    // Compute ρ_ij-weighted dQ(G): aux(G) = sum_{ij} D_ij * dQ_ij(G)/dG_beta
                     std::vector<Complex> aux(number_of_g_vectors, Complex(0.0, 0.0));
 
                     triangle_pair_index = 0;

@@ -3,29 +3,32 @@
 /**
  * BerkeleyGWExchangeCorrelationFile — writes BerkeleyGW's `vxc.dat` mean-field file.
  *
- * Layout (pw2bgw.f90's `write_vxc_g`/`write_vxc_r`, both byte-identical, a
- * 2026-07-27 `develop` checkout -- format statements at pw2bgw:3516-3518 /
- * :2931-2933): per k-point, one ASCII header line `FORMAT (3F13.9, 2I8)` =
- * `kx ky kz ndiag noffdiag` (k in CRYSTAL coordinates; the two integers
- * written there are `nspin*ndiag` and `nspin*noffdiag^2`, pw2bgw:3483-3484),
- * then `ndiag` diagonal
- * lines `FORMAT (2I8, 2F15.9)` = `spin band Re(Vxc) Im(Vxc)`. Diagonal-only
- * is in scope here, so `noffdiag = 0` always and no off-diagonal
- * (`FORMAT (3I8, 2F15.9)`) lines are ever written. `ndiag` = the full band
- * count: Q3 has no analog of pw2bgw's `diag_nmin`/`diag_nmax` partial-range
- * input, so every band is written, matching WFN's own energies/occupations
- * records (which are likewise unconditionally all-band). Matrix elements
- * are in eV (pw2bgw:3340's `dummy * CMPLX(rytoev, 0.0D0, KIND=dp)`), i.e.
- * Q3's own `constants::RY_TO_EV`, applied once at the very end.
+ * Layout (the BerkeleyGW specification's vxc.dat section, with the column
+ * widths of pw2bgw.x's `write_vxc_g`/`write_vxc_r`, which write byte-identical
+ * text -- see header.hpp for both citations): per k-point, one ASCII header
+ * line `kx ky kz ndiag noffdiag` -- three 13-wide fixed-point fields with 9
+ * decimals, then two 8-wide integers (k in CRYSTAL coordinates; the two
+ * integers are already multiplied by nspin -- nspin*ndiag, and nspin times
+ * the number of off-diagonal band pairs) -- then `ndiag` diagonal lines
+ * `spin band Re(Vxc) Im(Vxc)` -- two 8-wide integers, then two 15-wide
+ * fixed-point fields with 9 decimals. Diagonal-only is in scope here, so
+ * `noffdiag = 0` always and no off-diagonal lines (three 8-wide integers,
+ * then the two values) are ever written. `ndiag` = the full band count: Q3
+ * has no analog of pw2bgw.x's `diag_nmin`/`diag_nmax` partial-range input,
+ * so every band is written, matching WFN's own energies/occupations records
+ * (which are likewise unconditionally all-band). Matrix elements are in eV,
+ * as the specification requires (pw2bgw.x converts each element from
+ * Rydberg where it computes it), i.e. Q3's own `constants::RY_TO_EV`,
+ * applied once at the very end.
  *
  * ── The physics: sidestepping the dense-grid transform ──────────────────
  *
- * pw2bgw computes `<psi_nk|Vxc|psi_nk>` by transforming psi_nk to real
+ * pw2bgw.x computes `<psi_nk|Vxc|psi_nk>` by transforming psi_nk to real
  * space on the DENSE (charge-density) FFT grid, multiplying pointwise by
- * Vxc(r), and transforming back (pw2bgw:3260-3316). Q3's only wavefunction
+ * Vxc(r), and transforming back (write_vxc_g). Q3's only wavefunction
  * G<->R transform (`WavefunctionTransformer`, reached via
  * `PlanewaveBasis::g_to_r`/`r_to_g`) targets the coarser SMOOTH grid
- * (`fft_wave()`), not the dense one (`fft_rho()`) -- reproducing pw2bgw's
+ * (`fft_wave()`), not the dense one (`fft_rho()`) -- reproducing pw2bgw.x's
  * route literally would need a new G->R transform Q3 does not expose.
  *
  * That transform is avoidable entirely: pointwise multiplication in real

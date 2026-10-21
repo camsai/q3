@@ -131,6 +131,20 @@ repos:
         # .github/workflows/addon-leak-check.yml and the packer's export gate.
         entry: python scripts/repo/check_no_addon_leak.py
 
+      - id: provenance
+        name: no new GPL-derivation signals (PROVENANCE.md § 4.2)
+        language: python
+        # Red-flag wording, a reference's language in C++/Python code, and its
+        # variable names as C++ identifiers -- one data file per reference in
+        # scripts/repo/provenance_check/references/ -- ratcheted against
+        # scripts/repo/check_provenance_baseline.json. The phrase rule reads
+        # every file the export ships, so the script rescans the whole tree;
+        # always_run because a stale baseline entry is a failure too, and the
+        # file that cleared it need not match any pattern here.
+        entry: python scripts/repo/check_provenance.py --check
+        pass_filenames: false
+        always_run: true
+
       - id: dco-signoff
         name: DCO sign-off (CONTRIBUTING.md)
         language: python

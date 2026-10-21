@@ -45,7 +45,7 @@ struct NormConservingPlanewaveKohnShamSCFState : public PlanewaveKohnShamSCFStat
     NormConservingPlanewaveKohnShamEnergies energies_data_;
 
     /**
-     * Projector overlap coefficients (becsum).
+     * Projector overlap coefficients ⟨ψ|β_i⟩⟨β_j|ψ⟩ summed over bands.
      * Empty for norm-conserving; populated for ultrasoft by the US iterator.
      */
     Matrix<Real> projector_overlap_coefficients;

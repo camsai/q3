@@ -1,0 +1,57 @@
+[
+    {
+        "path": "PROVENANCE.md",
+        "rules": ["red_flag_phrase"],
+        "reason": "Lists the red-flag phrases themselves (section 4.2), so that people know not to write them."
+    },
+    {
+        "path": "scripts/repo/check_provenance.py",
+        "rules": ["red_flag_phrase"],
+        "reason": "The check's docstring describes the phrases it searches for."
+    },
+    {
+        "path": "scripts/repo/provenance_check/core.py",
+        "rules": ["red_flag_phrase"],
+        "reason": "Defines the phrases RedFlagPhraseRule searches for, in its docstring and its patterns."
+    },
+    {
+        "path": "tests/python/test_check_provenance.py",
+        "rules": ["red_flag_phrase", "fortran_syntax", "quantum_espresso_identifier"],
+        "reason": "Test fixtures spell every signal on purpose to prove the check fires (PROVENANCE.md section 5.4)."
+    },
+    {
+        "path": "src/io/input/parser/qe.hpp",
+        "rules": ["quantum_espresso_identifier"],
+        "reason": "Quantum ESPRESSO input reader: its namelist keys (nat, ntyp, ityp, nosym_evc, ...) are the format (PROVENANCE.md section 5.1)."
+    },
+    {
+        "path": "src/io/input/parser/qe_input_format.hpp",
+        "rules": ["quantum_espresso_identifier"],
+        "reason": "Registers the Quantum ESPRESSO input format; names come from the format (PROVENANCE.md section 5.1)."
+    },
+    {
+        "path": "src/io/checkpoint/qe.hpp",
+        "rules": ["quantum_espresso_identifier"],
+        "reason": "Quantum ESPRESSO save-directory reader: record and tag names are the on-disk format (PROVENANCE.md section 5.1)."
+    },
+    {
+        "path": "src/io/charge_density/kohn_sham/planewave/checkpoint/qe.hpp",
+        "rules": ["quantum_espresso_identifier"],
+        "reason": "Quantum ESPRESSO charge-density file reader: record names are the on-disk format (PROVENANCE.md section 5.1)."
+    },
+    {
+        "path": "src/io/charge_density/kohn_sham/planewave/checkpoint/qe_reader.hpp",
+        "rules": ["quantum_espresso_identifier"],
+        "reason": "Quantum ESPRESSO charge-density file reader: record names are the on-disk format (PROVENANCE.md section 5.1)."
+    },
+    {
+        "path": "src/io/wavefunction/kohn_sham/planewave/checkpoint/qe.hpp",
+        "rules": ["quantum_espresso_identifier"],
+        "reason": "Quantum ESPRESSO wavefunction file reader: record names (igwx, evc, ...) are the on-disk format (PROVENANCE.md section 5.1)."
+    },
+    {
+        "path": "src/io/wavefunction/kohn_sham/planewave/checkpoint/qe_reader.hpp",
+        "rules": ["quantum_espresso_identifier"],
+        "reason": "Quantum ESPRESSO wavefunction file reader: record names (igwx, evc, ...) are the on-disk format (PROVENANCE.md section 5.1)."
+    }
+]

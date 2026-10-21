@@ -3,32 +3,34 @@
 /**
  * BerkeleyGWWavefunctionFile — writes BerkeleyGW's `WFN` mean-field file.
  *
- * Layout (pw2bgw.f90, `write_wfng`, a 2026-07-27 `develop` checkout):
+ * Layout (the BerkeleyGW specification, as pw2bgw.x's `write_wfng` writes it
+ * -- see header.hpp for both citations; shapes in brackets, first index fastest):
  *   records 1-8:  BerkeleyGWCommonHeader (include_kpoint_fields=true)
- *   record  9:    ngk(nk)                          -- plane waves per k-point
- *   record 10:    kw(nk)                           -- weights, normalized to sum to 1
- *   record 11:    kpt(3,nk)                        -- crystal (fractional) coordinates
- *   record 12:    ifmin(nk*ns)                     -- lowest occupied band (1-based)
- *   record 13:    ifmax(nk*ns)                     -- highest occupied band (1-based, 0 if none)
- *   record 14:    energies(nbands,nk*ns)           -- Rydberg
- *   record 15:    occupations(nbands,nk*ns)
- *   record 16-18: nrecord=1, ng, gvec(3,ng)         -- charge-density G-set
+ *   record  9:    ngk[nk]                          -- plane waves per k-point
+ *   record 10:    kw[nk]                           -- weights, normalized to sum to 1
+ *   record 11:    kpt[3,nk]                        -- crystal (fractional) coordinates
+ *   record 12:    ifmin[nk*ns]                     -- lowest occupied band (1-based)
+ *   record 13:    ifmax[nk*ns]                     -- highest occupied band (1-based, 0 if none)
+ *   record 14:    energies[nbands,nk*ns]           -- Rydberg
+ *   record 15:    occupations[nbands,nk*ns]
+ *   record 16-18: nrecord=1, ng, gvec[3,ng]         -- charge-density G-set
  *   body:         per k-point, gvec_k then per-band coefficients (see below)
  *
  * Always written as flavor 2 ("WFN-Complex"): Q3 stores wavefunction
  * coefficients as Complex regardless of gamma-only status, so there is no
- * Q3-side "real" storage to map onto pw2bgw's flavor-1 (real_or_complex=1)
+ * Q3-side "real" storage to map onto pw2bgw.x's flavor-1 (real_or_complex=1)
  * path, which additionally reorders bands/k-points into time-reversal pairs
- * (pw2bgw's real_wfng() subroutine) -- out of scope here.
+ * (pw2bgw.x's real_wfng subroutine) -- out of scope here.
  *
  * SCOPE: spin-unpolarized (ns=1) only. write_to_file() rejects ns>1 up
  * front with a clear error rather than writing a silently-wrong file.
  * The WFN body has two layouts, selected by the file's own flavor tag and
- * spin count (pw2bgw:712-716). For flavor 2 with ns=1 -- our case -- each
- * band is one record of exactly ngk coefficients, which is what write_body()
+ * spin count (write_wfng chooses between them). For flavor 2 with ns=1 --
+ * our case -- each band is one record of exactly ngk coefficients, which is what write_body()
  * below implements. For flavor 1, or for ns>1 with either flavor, each BAND
  * is instead a SINGLE record holding all ns spins' coefficients concatenated,
- * G index fastest and spin index slowest (pw2bgw:1273-1287), not one record
+ * G index fastest and spin index slowest (write_wfng; this is the
+ * specification's ng-values-per-spin data layout), not one record
  * per (k,spin,band) as write_body() produces. Implementing that interleaving
  * correctly, with no BerkeleyGW reference file available in this environment to
  * validate against, was judged too risky to guess at silently -- rejecting is
@@ -101,10 +103,9 @@ class BerkeleyGWWavefunctionFile {
 
     /**
      * A band is "occupied" for ifmin/ifmax purposes when its occupation
-     * exceeds this threshold -- the same 0.5 cutoff pw2bgw:911 applies to
-     * its own per-band occupation array, which is QE's raw band weight
-     * normalized by the
-     * k-point weight (wg_g = wg/wk), i.e. a per-band occupation number on a
+     * exceeds this threshold -- the same 0.5 cutoff write_wfng applies to
+     * its own per-band occupations, which are QE's band weights divided by
+     * the k-point weight, i.e. a per-band occupation number on a
      * max-1-per-(k,spin)-state scale; Q3's own
      * occupation_by_kpoint_state_index_and_band_index() is on the identical
      * max-1 scale (the fixed-occupation path returns exactly 1.0 or 0.0; the
@@ -126,12 +127,13 @@ class BerkeleyGWWavefunctionFile {
 
     /**
      * Record 10: kw(nk), normalized so sum(kw) = 1 as BerkeleyGW requires.
-     * pw2bgw:991 gets there by writing `wk(ik)*dble(nst)/2.0d0`, which leans on
-     * QE's invariant that `wk` sums to 2. Q3's *generated* grids share that
+     * write_wfng gets there by writing QE's k-point weight times the number of
+     * spin components over 2, which leans on QE's invariant that its k-point
+     * weights sum to 2. Q3's *generated* grids share that
      * invariant (KPointsGrid::scale_weights()'s docstring, halved exactly once
      * for a spin-polarized run in
      * system_builder.hpp:build_global_kpoint_grid_from_input), so dividing by
-     * spin_degeneracy() would reproduce pw2bgw's factor exactly for them.
+     * spin_degeneracy() would reproduce the converter's factor exactly for them.
      *
      * It does NOT hold for an explicit `control.kpoints_list`, whose weights
      * reach here from the input file verbatim -- nothing in the pipeline
@@ -170,9 +172,9 @@ class BerkeleyGWWavefunctionFile {
      * KPoint::coordinates are already stored in crystal coordinates
      * throughout (kpoint.hpp's docstring; PlaneWaveSelector::select()
      * converts them to Cartesian only locally, for its own G-vector
-     * bookkeeping) -- unlike pw2bgw, which must call `cryst_to_cart(...,-1)`
-     * before writing because QE's own `xk` is Cartesian internally, Q3 needs
-     * no conversion here.
+     * bookkeeping) -- unlike pw2bgw.x, which must convert to crystal
+     * coordinates before writing because QE holds its k-points in Cartesian
+     * coordinates internally, Q3 needs no conversion here.
      */
     void write_kpoint_coordinates_record(std::ofstream& output_file) const {
         std::vector<double> coordinates(3 * record_.number_of_kpoints());
@@ -187,7 +189,7 @@ class BerkeleyGWWavefunctionFile {
                                     static_cast<int32_t>(coordinates.size() * sizeof(double)));
     }
 
-    /// Records 12-13: ifmin(nk*ns), ifmax(nk*ns), both 1-based (pw2bgw:903-916).
+    /// Records 12-13: ifmin[nk*ns], ifmax[nk*ns], both 1-based (write_wfng records 12-13).
     void write_occupied_band_bounds_records(std::ofstream& output_file) const {
         int number_of_kpoints = record_.number_of_kpoints();
         int number_of_spin_components = record_.number_of_spin_components;
@@ -220,16 +222,14 @@ class BerkeleyGWWavefunctionFile {
     }
 
     /**
-     * Record 14: energies(nbands,nk*ns), Rydberg. pw2bgw:995 writes
-     * `et_g(ib,ik)` with NO unit conversion (unlike vxc.dat's explicit
-     * `*rytoev`) -- QE's own `et` eigenvalue array is already Rydberg
-     * internally, matching Q3's own convention (AGENTS.md § Units: "use the
-     * same units as Quantum ESPRESSO"; FlavorResult's `_in_ry`-suffixed
-     * fields), so eigenvalue() is copied as-is. Band is the fast (first)
-     * Fortran index, so for each k-point-state all nbands values are
-     * written contiguously before moving to the next state -- same
-     * spin-major state ordering as records 12-13 (see
-     * write_occupied_band_bounds_records).
+     * Record 14: energies[nbands,nk*ns], Rydberg, as the BerkeleyGW
+     * specification requires. write_wfng writes QE's eigenvalues with NO
+     * unit conversion (unlike vxc.dat's explicit conversion to eV) -- QE's
+     * eigenvalues are already Rydberg internally, matching Q3's own convention (AGENTS.md § Units:
+     * "use the same units as Quantum ESPRESSO"; FlavorResult's `_in_ry`-suffixed fields), so
+     * eigenvalue() is copied as-is. Band is the fast (first) Fortran index, so for each
+     * k-point-state all nbands values are written contiguously before moving to the next state --
+     * same spin-major state ordering as records 12-13 (see write_occupied_band_bounds_records).
      */
     void write_eigenvalues_record(std::ofstream& output_file) const {
         write_band_major_matrix_record(output_file, [this](int state_index, int band_index) {
@@ -283,8 +283,9 @@ class BerkeleyGWWavefunctionFile {
     }
 
     /**
-     * Body (pw2bgw:1026-1069 for the gvec_k triple, pw2bgw:1227-1238 for the
-     * per-band coefficients -- the flavor-2, ns=1 branch, the only one
+     * Body (the BerkeleyGW specification's per-k-point G-vector list, then
+     * the coefficients of each band, as write_wfng writes them -- the
+     * flavor-2, ns=1 layout, the only one
      * implemented here; see the class comment's SCOPE note): per k-point, in
      * physical-k-point order (0..nk-1), one [nrecord][ngk][gvec_k] triple,
      * then per band one [nrecord][ngk][coefficients] triple. write_to_file()

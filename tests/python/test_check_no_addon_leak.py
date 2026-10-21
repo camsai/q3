@@ -101,10 +101,22 @@ def random_base64(seed: bytes, length: int) -> str:
         ("HTTPServer", ["HTTP", "Server"]),
         ("EXPECTED_NUMBER_OF_FOO", ["EXPECTED", "NUMBER", "OF", "FOO"]),
         ("x86_64", ["x86", "64"]),
+        ("ZEBRAsReader", ["ZEBRAs", "Reader"]),
+        ("readFOXesFile", ["read", "FOXes", "File"]),
+        ("IDsList", ["IDs", "List"]),
+        # Only a lone plural ending stays with the acronym, not a word that starts with s.
+        ("ABCsize", ["AB", "Csize"]),
     ],
 )
 def test_sub_words_split_at_underscores_case_changes_and_acronyms(token, pieces):
     assert checker.sub_words(token) == pieces
+
+
+def test_a_plural_ending_gives_every_stem_it_could_have():
+    assert checker.plural_stems("zebras") == ("zebra",)
+    assert checker.plural_stems("foxes") == ("foxe", "fox")
+    assert checker.plural_stems("zebra") == ()
+    assert checker.plural_stems("s") == (), "a stem keeps a letter"
 
 
 def test_a_trailing_number_also_stands_for_the_word_before_it():
@@ -134,7 +146,41 @@ def test_a_sub_word_term_matches_any_piece_in_any_case(text):
     assert matched_terms(text) == {"zebra"}
 
 
-@pytest.mark.parametrize("text", ["zebras", "ZEBRAS", "zebrafish", "Zebrafish", "subzebra"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "zebras",
+        "Zebras",
+        "ZEBRAS",
+        "ZEBRAs",
+        "readZEBRAsFile",
+        "ZebrasReader",
+        "list_of_zebras",
+        "two zebras.",
+        "zebra's",
+        "ZEBRA's",
+        "zebras'",
+        "the zebra\u2019s stripes",
+    ],
+)
+def test_a_sub_word_term_matches_its_plural_and_possessive(text):
+    assert matched_terms(text) == {"zebra"}
+
+
+#: A sub-word term whose plural takes ``es``, kept apart from the shared fixtures.
+FOX_MATCHER = checker.TermMatcher(
+    checker.Denylist(SALT, (checker.DenylistEntry(neutral_digest("sub-word", "fox"), "sub-word"),))
+)
+
+
+@pytest.mark.parametrize("text", ["foxes", "Foxes", "FOXES", "FOXes", "readFOXesFile", "FOXs"])
+def test_a_sub_word_term_matches_its_es_plural(text):
+    assert [entry.mode for _, entry in FOX_MATCHER.matches(text)] == ["sub-word"]
+
+
+@pytest.mark.parametrize(
+    "text", ["zebrafish", "Zebrafish", "subzebra", "zebrass", "zebrasque", "ZEBRAsize"]
+)
 def test_a_sub_word_term_does_not_match_inside_a_longer_word(text):
     assert matched_terms(text) == set()
 
@@ -157,6 +203,7 @@ def test_a_whole_word_term_matches_the_bare_token(text):
         "MAXIMUM_REFERENCE_QUOKKA",
         "QUOKKA2",
         "QUOKKAS",
+        "QUOKKAs",
         "Quokka",
         "quokka",
     ],

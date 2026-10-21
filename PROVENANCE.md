@@ -107,13 +107,13 @@ itself a signal — ask before proceeding.
 
 ### Step 2 — Decide whether you may consult another implementation at all
 
-| Source                               | May you read it?                                             |
-| ------------------------------------ | ------------------------------------------------------------ |
-| Public, permissively licensed        | Yes, freely                                                  |
-| Public, strong copyleft (GPL)        | Yes to understand and to cross-check numbers — never to copy |
-| Proprietary / licensed source        | **No.** Do not open it. See § 6                              |
-| Public documentation, manuals, wikis | Yes                                                          |
-| Another engine's **output** files    | Yes — outputs are data, not expression                       |
+| Source                               | May you read it?                                   |
+| ------------------------------------ | -------------------------------------------------- |
+| Public, permissively licensed        | Yes, freely                                        |
+| Public, strong copyleft (GPL)        | In a research session only (below) — never to copy |
+| Proprietary / licensed source        | **No.** Do not open it. See § 6                    |
+| Public documentation, manuals, wikis | Yes                                                |
+| Another engine's **output** files    | Yes — outputs are data, not expression             |
 
 ### Step 3 — Separate reading from writing
 
@@ -124,7 +124,8 @@ have it open in a second buffer, and do not paste it into a scratch file to
 For an AI agent this is a hard rule with a specific failure mode: never place
 license-incompatible source into your context and then generate the
 corresponding implementation in the same session. That is machine-assisted
-translation, and it produces a derivative work.
+translation, and it produces a derivative work. The two kinds of session below
+make this rule operational.
 
 ### Step 4 — Write it in this codebase's own idiom
 
@@ -146,6 +147,61 @@ is not only safe but desirable.
 
 Provenance comments are an asset. Keep writing them — just describe what
 actually happened (§ 4).
+
+### Research sessions and implementation sessions
+
+Step 3 separates reading from writing. For AI-assisted work that separation is
+a property of the **session**: one conversation context, including everything
+carried into it — summaries of earlier context, forks of another session, and
+files or notes it was handed. A person's session is a stretch of work on one
+task. Every session is exactly one of two kinds, decided before it starts.
+
+-   **Research session.** May read GPL source, published papers, manuals, and
+    other engines' outputs. It produces **prose notes only**: the equations,
+    conventions, and numbers it found, each with its citation (a GPL file or
+    routine name is fine as a citation). It writes no code and no
+    pseudo-code that follows the source's structure, and it quotes no source.
+    It never opens proprietary source (§ 6).
+-   **Implementation session.** Writes Q3 code from papers, public
+    documentation, other engines' outputs, Q3's own code, and research notes.
+    It **never fetches or opens GPL or proprietary source** — not by reading a
+    local checkout, not by fetching a web page that shows it, and not by
+    accepting it pasted from elsewhere. When it needs something only the source
+    can answer, it stops and asks for a research session; it does not look
+    itself.
+
+A session does not change kind partway through. A research session that finds
+a defect reports it; the fix is written in a separate implementation session.
+A fork or continuation of a research session is a research session.
+
+Research notes pass to an implementation session as prose. If a note quotes
+source code, it is not a research note: remove the quotation before it is
+handed over.
+
+### Side-by-side reviews
+
+The check § 4.4 says nothing cheaper can replace — reading an implementation
+next to the code it might derive from — is a **research session**, done by
+someone who **did not write the code under review**: a person, or an AI
+session run by someone other than the module's author. The reviewer compares
+structure (decomposition, naming, control flow, the order of operations where
+alternatives existed; § 2), not numbers. Reviews are recorded per module in
+the [provenance register](docs/provenance_register.md), which also lists each
+module's published sources and validation gates; § 7 says when to update it.
+
+### AI tools and licensed data
+
+-   **Never place licensed dataset contents in an AI session's context.** The
+    format-level identity facts that may be committed — a dataset's title line,
+    its valence charge, its SHA-256 digest — are the only parts of a licensed
+    dataset an AI session may see. Point tools at the dataset through the
+    environment variable that locates it; do not read the file into the
+    session.
+-   **Use AI tools for engine-adjacent work only under no-training and
+    no-retention terms.** Engine-adjacent work is any work on a module that
+    another computational materials science code also implements, or on parity
+    with such a code. Check the tool's terms before the session starts, not
+    after.
 
 ---
 
@@ -217,14 +273,40 @@ implementing it is interoperability, and removing such citations would make
 the readers and writers unmaintainable with no offsetting benefit. Existing
 citations of this kind stay by owner decision.
 
-**One question here is open, and this document does not settle it:** whether a
-converter's source _is_ the citable authority for a format, or whether a
-published specification exists that should be cited instead. Where a published
-spec does exist, citing it is strictly better provenance — it removes the
-licensing question entirely, and it does not rot the way a citation pinned to
-a dated checkout of a moving branch does. Prefer the published spec when you
-have one; keep the existing citations where the question is still under
-review.
+**Cite the published specification first, and the converter only for what it
+leaves open.** A published spec is strictly better provenance than a
+converter's source: it removes the licensing question entirely, and it does
+not rot the way a citation pinned to a dated checkout of a moving branch does.
+Where a format has no spec, or the spec is silent on a detail, the program that
+writes the files is the authority. Cite it by release tag, subroutine and
+record, never by line number on a development branch, and state what the code
+computes in this codebase's notation, never as a quoted expression in the
+other code's variable names.
+
+The BerkeleyGW export resolved this question on 2026-10-20 as follows:
+
+-   **The spec.** BerkeleyGW publishes the format of its WFN, RHO and VXC files
+    and of `vxc.dat` in J. Deslippe et al., Comput. Phys. Commun. 183, 1269
+    (2012), Appendix 11.1 ([arXiv:1111.4429](https://arxiv.org/abs/1111.4429)).
+    It gives each header record's contents, order and units, the body layout,
+    the normalization of RHO's G = 0 component, and `vxc.dat`'s line contents
+    in eV. The BerkeleyGW 4.0 manual specifies only the HDF5 variant
+    ([wfn_h5_spec](https://manual.berkeleygw.org/4.0/wfn_h5_spec/)). The
+    readers and writers in `src/io/mean_field_export/berkeleygw/` and
+    `tests/helpers_berkeleygw.py` cite the appendix as their authority.
+-   **What the spec leaves open.** It does not give the Fortran record framing,
+    the integer and real kinds, the 32-byte character fields and their date
+    format, the count repeated before each body block, `vxc.dat`'s column
+    widths, or the exact transposition and pairing of the symmetry records.
+    For these the citation is Quantum ESPRESSO's `pw2bgw.x` at release 7.5 (tag
+    `qe-7.5`, the version of the local reference build), named by subroutine
+    (`write_wfng`, `write_rhog`, `write_vxc_g`, `write_vxc_r`) and record.
+    The symmetry conventions are also pinned by unit tests against that
+    release's output.
+-   **What was retired.** About a hundred line-number citations pinned to a
+    2026-07-27 `develop` checkout, and the Fortran expressions quoted with QE's
+    variable names, were replaced by the record they describe and the
+    mathematics it carries. No citation was removed without a replacement.
 
 ### 5.2 Reproduction commands
 
@@ -279,6 +361,18 @@ is no later rewrite that undoes it.
 -   [ ] Cross-code validation compares numbers, not implementations
 -   [ ] Any new dependency's license is compatible with how we distribute
 -   [ ] If you consulted another implementation, you closed it before writing
+-   [ ] The pull request states its session type (implementation or research)
+        and the sources consulted
+-   [ ] No implementation session behind the change fetched or opened GPL or
+        proprietary source; any research session behind it left prose notes
+        only, with no code
+-   [ ] No licensed dataset contents entered an AI session's context
+-   [ ] AI tools used for engine-adjacent work ran under no-training and
+        no-retention terms
+-   [ ] If the change adds or rewrites a module in the
+        [provenance register](docs/provenance_register.md), its row is added
+        or updated, and a rewritten module's review is reset to "not yet
+        reviewed"
 
 This list is a floor, not a proof — see § 4.4 for what it cannot catch.
 

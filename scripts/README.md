@@ -26,6 +26,7 @@ energy are both "checks", and have nothing else in common.
 | `check_cpp_type_queries.py`       | dynamic type queries only fall (AGENTS.md § Calculator Design); baseline beside it | pre-commit                       |
 | `check_docstring_coverage.py`     | public C++/Python APIs stay documented; baseline beside it                         | pre-commit                       |
 | `check_no_addon_leak.py`          | add-on engine text stays under `addons/` paths; hashed denylist beside it          | pre-commit, `addon-leak-check`   |
+| `check_provenance.py`             | no new derivation signals (PROVENANCE.md § 4.2); core in `provenance_check/`       | pre-commit, `ci`                 |
 | `check_pull_request_size.py`      | a pull request's reviewable size, generated and vendored paths excluded            | `ci` (advisory)                  |
 | `format_yaml_floats.py`           | k-point floats in example YAML to nine decimals                                    | pre-commit                       |
 | `generate_cpp_from_schemas.py`    | C++ headers from JSON schemas, with `templates/`                                   | CMake, pre-commit (`--check`)    |

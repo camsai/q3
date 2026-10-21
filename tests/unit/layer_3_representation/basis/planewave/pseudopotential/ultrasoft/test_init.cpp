@@ -154,7 +154,7 @@ TEST(UltrasoftPlanewaveBasisMixedSpecies, QFunctionTableIsBuiltOnlyForTheAugment
 
 TEST(UltrasoftPlanewaveBasisMixedSpecies, NormConservingAtomAddsNoAugmentationCharge) {
     /**
-     * becsum is accumulated over *every* atom, so a norm-conserving atom in a
+     * ρ_ij is accumulated over *every* atom, so a norm-conserving atom in a
      * mixed cell arrives here with nonzero ⟨ψ|β_i⟩⟨β_j|ψ⟩. It has no Q(G) table,
      * and the atom loop used to read one anyway: `q_function_g_data` took the
      * address of an element of an empty vector and the accumulation then read
@@ -163,8 +163,8 @@ TEST(UltrasoftPlanewaveBasisMixedSpecies, NormConservingAtomAddsNoAugmentationCh
      * failing outright.
      *
      * The check is a comparison rather than a crash test for that reason. The
-     * density built with becsum on both atoms must equal the density built with
-     * becsum on the ultrasoft atom alone: whatever the norm-conserving atom's
+     * density built with ρ_ij on both atoms must equal the density built with
+     * ρ_ij on the ultrasoft atom alone: whatever the norm-conserving atom's
      * coefficients are, they contribute nothing. Reading past the end of an
      * empty vector gives whatever the allocator left there, so the two runs
      * agreeing exactly is what says the entry was skipped and not merely

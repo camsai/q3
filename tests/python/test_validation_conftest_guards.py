@@ -57,8 +57,8 @@ def test_non_mpi_validation_tests_run_without_an_mpi_binary():
     The behavioural half of the test above: runs a real collection with
     `--q3-bin` pointed at a path that cannot exist, and fails if the MPI guard's
     skip reason reaches a module it does not apply to. Tests in the module may
-    still skip for their own prerequisites (licensed POTCARs), which is why the
-    assertion is on the *reason* rather than on a pass count.
+    still skip for their own prerequisites (licensed pseudopotential datasets),
+    which is why the assertion is on the *reason* rather than on a pass count.
     """
     completed = subprocess.run(
         [

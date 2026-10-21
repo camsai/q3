@@ -5,9 +5,11 @@ End-to-end validation for the BerkeleyGW mean-field export
 Overlays `control.mean_field_export: berkeleygw` onto the existing silicon
 SCF example (examples/total_energy--semiconductor--silicon/nc.yml) and, if
 the run actually produced `WFN`/`RHO` in its outdir, reads them back with
-the INDEPENDENT reader in tests/helpers_berkeleygw.py (derived solely from
-QE's pw2bgw.f90 -- see that module's docstring) and checks the physical and
-structural invariants a correct BerkeleyGW mean-field export must satisfy.
+the INDEPENDENT reader in tests/helpers_berkeleygw.py (derived from the
+format's definition alone -- BerkeleyGW's published specification and the
+pw2bgw.x converter that writes these files; see that module's docstring)
+and checks the physical and structural invariants a correct BerkeleyGW
+mean-field export must satisfy.
 
 As of this writing, `control.mean_field_export` is not yet an accepted
 control key (confirmed against a current q3 build: it is rejected at YAML
@@ -139,8 +141,9 @@ def test_berkeleygw_mean_field_export(q3_command, tmp_path):
     )
     kpoint_weight_sum = float(np.sum(wfn["kpoint_weights"]))
     assert abs(kpoint_weight_sum - 1.0) < KPOINT_WEIGHT_SUM_TOLERANCE, (
-        f"k-point weights sum to {kpoint_weight_sum}, expected 1.0 (pw2bgw.f90:990-991 "
-        f"scales by nst/2 specifically so they do)"
+        f"k-point weights sum to {kpoint_weight_sum}, expected 1.0 (the BerkeleyGW "
+        f"specification's 0-to-1 weights; pw2bgw.x scales QE's by the spin count over 2 "
+        f"specifically so they do)"
     )
     assert np.all(wfn["kpoints_crystal_coordinates"] >= -1.0)
     assert np.all(wfn["kpoints_crystal_coordinates"] <= 1.0)
@@ -158,12 +161,13 @@ def test_berkeleygw_mean_field_export(q3_command, tmp_path):
     )
 
     # ── geometry: avec/bvec mutually consistent ──────────────────────
-    # Convention concluded from the format contract's "blat = tpiba = 2*pi/alat"
-    # (docs/BGW_FORMAT_CONTRACT.md) combined with the standard reciprocal-lattice
-    # identity a_i . b_j = 2*pi*delta_ij and pw2bgw's own adot/bdot formulas
-    # (pw2bgw.f90:778-804 / :1645-1671), which show alat and tpiba are exactly the
-    # scale factors taking dimensionless avec/bvec to physical vectors. Since
-    # alat * tpiba = alat * (2*pi/alat) = 2*pi exactly, the 2*pi cancels and
+    # Convention concluded from blat = 2*pi/alat combined with the standard
+    # reciprocal-lattice identity a_i . b_j = 2*pi*delta_ij and the metric tensors
+    # adot[i, j] = alat^2 (a_i . a_j) and bdot[i, j] = blat^2 (b_i . b_j) that the
+    # BerkeleyGW specification's records 4-5 carry (as pw2bgw.x's write_wfng and
+    # write_rhog compute them), which show alat and blat are exactly the scale factors
+    # taking dimensionless avec/bvec to physical vectors. Since
+    # alat * blat = alat * (2*pi/alat) = 2*pi exactly, the 2*pi cancels and
     # avec[:,i] . bvec[:,j] = delta_ij with NO leftover factor -- see this repo's
     # final report for the full derivation.
     avec = wfn["lattice_vectors_alat_units"]
@@ -183,16 +187,16 @@ def test_berkeleygw_mean_field_export(q3_command, tmp_path):
         expected_adot,
         rtol=GEOMETRY_RELATIVE_TOLERANCE,
         atol=GEOMETRY_ABSOLUTE_TOLERANCE,
-    ), "adot must equal alat^2 * avec^T @ avec (pw2bgw.f90:778-790)"
+    ), "adot must equal alat^2 * avec^T @ avec (the real-space metric tensor, record 4)"
 
-    tpiba = wfn["reciprocal_lattice_parameter_inverse_bohr"]
-    expected_bdot = tpiba**2 * (bvec.T @ bvec)
+    blat = wfn["reciprocal_lattice_parameter_inverse_bohr"]
+    expected_bdot = blat**2 * (bvec.T @ bvec)
     assert np.allclose(
         wfn["reciprocal_space_metric_tensor_inverse_bohr2"],
         expected_bdot,
         rtol=GEOMETRY_RELATIVE_TOLERANCE,
         atol=GEOMETRY_ABSOLUTE_TOLERANCE,
-    ), "bdot must equal tpiba^2 * bvec^T @ bvec (pw2bgw.f90:792-804)"
+    ), "bdot must equal blat^2 * bvec^T @ bvec (the reciprocal metric tensor, record 5)"
 
     # ── wavefunctions ─────────────────────────────────────────────────
     global_gvector_set = {
@@ -222,7 +226,7 @@ def test_berkeleygw_mean_field_export(q3_command, tmp_path):
     # ── RHO ───────────────────────────────────────────────────────────
     assert rho["number_of_g_vectors"] == wfn["number_of_g_vectors"]
     gamma_index = _find_gamma_column_index(rho["charge_density_gvectors"])
-    # rho(G) is multiplied by the cell volume before writing (pw2bgw.f90:1706-1710),
+    # rho(G) is multiplied by the cell volume before writing (pw2bgw.x's write_rhog),
     # and the density's own G=0 component is the cell-AVERAGE density,
     # electron_count / cell_volume (the convention QE's rho%of_g(1) and Q3's
     # charge_density_g share). The two cell volumes cancel:
@@ -285,7 +289,7 @@ def test_berkeleygw_mean_field_export(q3_command, tmp_path):
         assert kpoint_block["offdiagonal_entry_count"] == 0, (
             "BerkeleyGWExchangeCorrelationFile is diagonal-only; noffdiag must be 0"
         )
-        # ndiag already nspin-scaled on disk (pw2bgw convention); nspin==1 here so it is
+        # ndiag already nspin-scaled on disk (BerkeleyGW specification); nspin==1 here so it is
         # exactly the full band count -- Q3 has no partial diag_nmin/diag_nmax selection.
         assert kpoint_block["diagonal_entry_count"] == wfn["number_of_bands"]
         assert len(kpoint_block["diagonal_entries"]) == wfn["number_of_bands"]
@@ -410,7 +414,7 @@ def test_berkeleygw_nscf_export_matches_scf_density_and_normalizes_weights(q3_co
     weights = scf_wavefunction["kpoint_weights"]
     nscf_config["control"]["calculation"] = "nscf"
     nscf_config["control"]["kpoints_list"] = [
-        [float(kpoints[0, i]), float(kpoints[1, i]), float(kpoints[2, i]), float(weights[i])]
+        [*(float(coordinate) for coordinate in kpoints[:, i]), float(weights[i])]
         for i in range(kpoints.shape[1])
     ]
     nscf_input_path = tmp_path / "nscf.yml"

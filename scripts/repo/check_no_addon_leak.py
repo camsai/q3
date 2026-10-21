@@ -10,11 +10,14 @@ reports every place that names one.
 
 **Matching.** Text is cut into identifier-like tokens (runs of word characters),
 and each token into sub-words at underscores and at camelCase and acronym
-boundaries: ``FooBARReader`` becomes ``Foo``, ``BAR``, ``Reader``. Digits stay
-with the letters before them, so ``Bar2`` is one sub-word, and it also stands
-for ``Bar``. Every denylist entry has exactly one mode:
+boundaries: ``FooBARReader`` becomes ``Foo``, ``BAR``, ``Reader``. A plural ``s``
+or ``es`` after an acronym stays with it, so ``BARsReader`` is ``BARs`` and ``Reader``.
+Digits stay with the letters before them, so ``Bar2`` is one sub-word, and it
+also stands for ``Bar``. Every denylist entry has exactly one mode:
 
-- ``sub-word``: case-insensitive; any sub-word equals the term.
+- ``sub-word``: case-insensitive; any sub-word equals the term, or the term
+  with a plural ``s`` or ``es``, and so does the whole token. A possessive needs
+  no rule of its own: the apostrophe ends the token, so ``Bar's`` holds ``Bar``.
 - ``whole-word``: case-sensitive; a whole token equals the term. For a term
   that is also an ordinary word inside longer names, ``NUMBER_OF_TERM`` and
   ``term_list`` stay clean and only the bare token matches.
@@ -72,6 +75,7 @@ RELEASE_IGNORE = ".releaseignore"
 #: The directory segment that every add-on path carries.
 ADDON_SEGMENT = "addons"
 #: Vendored upstream text. It is exported unchanged, so it is exempt rather than reworded.
+#: A recorded decision: the engine names in the vendored ESSE schemas are accepted third-party data.
 VENDORED_PREFIXES = ("schemas/esse/",)
 
 SUB_WORD_MODE = "sub-word"
@@ -92,10 +96,16 @@ TOKEN = re.compile(r"\w+")
 #: A token that can match: one with a letter in it. Numeric data is most of the
 #: tokens of a dataset file, and none of them can, so they are never visited.
 LETTERED_TOKEN = re.compile(r"(?<!\w)\w*[A-Za-z]\w*")
-#: One sub-word of an underscore-free token: an acronym running into a capitalized
-#: word (the ``BAR`` of ``BARReader``), a capitalized or lower-case word, an acronym,
-#: or a bare number. Digits stay with the letters before them.
-SUB_WORD = re.compile(r"[A-Z]+[0-9]*(?=[A-Z][a-z])|[A-Z]?[a-z]+[0-9]*|[A-Z]+[0-9]*|[0-9]+")
+#: One sub-word of an underscore-free token: an acronym with a plural ``s`` or ``es``
+#: (the ``BARs`` of ``BARsReader``, which would otherwise split as ``BA`` and ``Rs``), an
+#: acronym running into a capitalized word (the ``BAR`` of ``BARReader``), a
+#: capitalized or lower-case word, an acronym, or a bare number. Digits stay with
+#: the letters before them.
+SUB_WORD = re.compile(
+    r"[A-Z]{2,}e?s(?![a-z])|[A-Z]+[0-9]*(?=[A-Z][a-z])|[A-Z]?[a-z]+[0-9]*|[A-Z]+[0-9]*|[0-9]+"
+)
+#: The plural endings a sub-word term also matches with.
+PLURAL_SUFFIXES = ("s", "es")
 #: What ends a phrase between two tokens: punctuation, or a word character, which
 #: is a token without a letter (a number) standing between them.
 PHRASE_BREAK = re.compile(r"[.,;:!?]|\w")
@@ -188,6 +198,20 @@ def sub_word_forms(piece: str) -> tuple[str, ...]:
     if not stem:
         return ()
     return (lowered, stem) if stem != lowered else (lowered,)
+
+
+def plural_stems(lowered: str) -> tuple[str, ...]:
+    """
+    What a lower-cased word would be without a plural ending, for sub-word terms.
+
+    ``boxes`` gives ``boxe`` and ``box``: the word cannot say which ending it
+    has, so both are tried. A stem must keep a letter, or it could match nothing.
+    """
+    return tuple(
+        lowered[: -len(suffix)]
+        for suffix in PLURAL_SUFFIXES
+        if lowered.endswith(suffix) and re.search("[a-z]", lowered[: -len(suffix)])
+    )
 
 
 def looks_encoded(run: str) -> bool:
@@ -426,6 +450,11 @@ class TermMatcher:
         # (the 5E of 1.5E+01, which is distinct for every value) needs no hash.
         entries = [self._entry(WHOLE_WORD_MODE, token) if token[0].isalpha() else None]
         entries += [self._entry(SUB_WORD_MODE, form) for piece in forms for form in piece]
+        # A plural reaches a sub-word term too, as one sub-word or as the whole
+        # token, whichever way its letters split.
+        singulars = {stem for piece in forms if piece for stem in plural_stems(piece[0])}
+        singulars.update(plural_stems(token.lower()))
+        entries += [self._entry(SUB_WORD_MODE, stem) for stem in sorted(singulars)]
         for left, right in zip(forms, forms[1:]):
             entries += self._phrases_between(left, right)
         return TokenAnalysis(

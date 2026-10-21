@@ -36,7 +36,8 @@
  * are restored as soon as the engine is built, and the term stays built from
  * them for the rest of the run.
  *
- * **becsum is ρ_ij.** No conversion happens between the array the ultrasoft
+ * **The projector overlap coefficients are ρ_ij** (Quantum ESPRESSO's
+ * `becsum`). No conversion happens between the array the ultrasoft
  * iterator accumulates and the occupancy matrix the one-center engine
  * consumes; they are the same object in the same channel order. That
  * agreement is a property of the dataset, and `PawOneCenterTerms::build`
@@ -500,12 +501,12 @@ class PawPlanewavePseudopotentialKohnShamSCFIterator
     void refresh_one_center_terms() {
         if (!one_center_terms_.is_active())
             return;
-        std::vector<const Matrix<Real>*> becsum_by_spin;
-        becsum_by_spin.reserve(projector_overlap_coefficients_by_spin_.size());
+        std::vector<const Matrix<Real>*> coefficient_pointers_by_spin;
+        coefficient_pointers_by_spin.reserve(projector_overlap_coefficients_by_spin_.size());
         for (const auto& per_spin : projector_overlap_coefficients_by_spin_)
-            becsum_by_spin.push_back(&per_spin);
+            coefficient_pointers_by_spin.push_back(&per_spin);
         one_center_terms_.update_by_spin(
-            crystal_structure(), becsum_by_spin, becsum_row_capacity());
+            crystal_structure(), coefficient_pointers_by_spin, projector_overlap_row_capacity());
     }
 
     void add_one_center_to_d_matrix() {
@@ -525,7 +526,7 @@ class PawPlanewavePseudopotentialKohnShamSCFIterator
         }
     }
 
-    /// Σ_a Σ_ij ρ_ij D^oc_ij, over the same channel indexing becsum uses.
+    /// Σ_a Σ_ij ρ_ij D^oc_ij, over the same channel indexing ρ_ij uses.
     /**
      * −Σ (ρ^mix − ρ^out) · D^oc(ρ^mix), with D^oc as it now stands.
      *
@@ -538,21 +539,21 @@ class PawPlanewavePseudopotentialKohnShamSCFIterator
             contract_with_one_center_potential(projector_overlap_coefficients_by_spin_);
     }
 
-    [[nodiscard]] Real
-    contract_with_one_center_potential(const std::vector<Matrix<Real>>& becsum_by_spin) const {
+    [[nodiscard]] Real contract_with_one_center_potential(
+        const std::vector<Matrix<Real>>& coefficients_by_spin) const {
         if (!one_center_terms_.is_active())
             return 0.0;
         Real accumulated = 0.0;
         /**
          * Σ_σ Σ_a Σ_ij ρ^σ_ij D^oc,σ_ij — each channel's occupancies against its
-         * own D. Pairing the spin-summed becsum with one channel's D would
+         * own D. Pairing the spin-summed ρ_ij with one channel's D would
          * double count one channel and drop the other.
          *
-         * Indexed by the atom's own channel count, which is the stride becsum
+         * Indexed by the atom's own channel count, which is the stride ρ_ij
          * is written with; see the note in `PawOneCenterTerms::update_by_spin`.
          */
-        for (size_t spin = 0; spin < becsum_by_spin.size(); spin++) {
-            const auto& becsum = becsum_by_spin[spin];
+        for (size_t spin = 0; spin < coefficients_by_spin.size(); spin++) {
+            const auto& coefficients_for_spin = coefficients_by_spin[spin];
             for (int atom_index = 0; atom_index < crystal_structure().number_of_atoms();
                  atom_index++) {
                 const auto& correction =
@@ -563,8 +564,9 @@ class PawPlanewavePseudopotentialKohnShamSCFIterator
                 int number_of_channels = one_center_terms_.number_of_channels(species_index);
                 for (int first = 0; first < number_of_channels; first++) {
                     for (int second = 0; second < number_of_channels; second++) {
-                        accumulated += becsum[atom_index][first * number_of_channels + second] *
-                                       correction[first * number_of_channels + second];
+                        accumulated +=
+                            coefficients_for_spin[atom_index][first * number_of_channels + second] *
+                            correction[first * number_of_channels + second];
                     }
                 }
             }
@@ -575,12 +577,12 @@ class PawPlanewavePseudopotentialKohnShamSCFIterator
     /**
      * Allocated row length of the projector overlap array.
      *
-     * The ultrasoft iterator sizes becsum rows by the *maximum* channel count
+     * The ultrasoft iterator sizes ρ_ij rows by the *maximum* channel count
      * over species so a mixed cell's array is rectangular. It is **not** the
      * indexing stride: the accumulation writes at `i * nh_atom + j`. Passed
      * down only so the reader can bound-check itself.
      */
-    [[nodiscard]] int becsum_row_capacity() const {
+    [[nodiscard]] int projector_overlap_row_capacity() const {
         int maximum_channels = 0;
         const auto& basis = quantum_system_snapshot_->pseudopotential_basis();
         for (int species_index = 0; species_index < crystal_structure().number_of_species();

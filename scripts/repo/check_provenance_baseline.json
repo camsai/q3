@@ -1,0 +1,20 @@
+{
+    "src/layer_3_representation/basis/planewave/pseudopotential/ultrasoft/init.hpp": {
+        "quantum_espresso_identifier: qrad": 2
+    },
+    "src/layer_3_representation/pseudopotential/planewave/ultrasoft/internal/charge_density_augmentation.hpp": {
+        "quantum_espresso_identifier: qrad": 2
+    },
+    "src/layer_3_representation/pseudopotential/planewave/ultrasoft/internal/effective_potential_non_local.hpp": {
+        "quantum_espresso_identifier: qrad": 3
+    },
+    "src/layer_3_representation/pseudopotential/ultrasoft/internal/charge_density_augmentation.hpp": {
+        "quantum_espresso_identifier: qrad": 2
+    },
+    "src/layer_5_properties/stress_tensor/planewave/pseudopotential/ultrasoft/internal/augmentation.hpp": {
+        "quantum_espresso_identifier: qrad": 6
+    },
+    "tests/unit/layer_3_representation/pseudopotential/planewave/ultrasoft/internal/test_charge_density_augmentation.cpp": {
+        "quantum_espresso_identifier: qrad": 9
+    }
+}

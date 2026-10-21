@@ -6,25 +6,33 @@
  *
  * Framing: Fortran `form='unformatted', access='sequential'` via
  * QEBinaryRecordFormat -- every record is `[int32 length][payload][int32
- * length]`, matching QE's own I/O (and BerkeleyGW's pw2bgw.f90 converter,
- * which is this format's actual source of truth). Line numbers in the
- * comments below are indicative only -- they were read off a 2026-07-27
- * `develop` checkout of `PP/src/pw2bgw.f90` and that branch moves. The
- * subroutine names (write_wfng, write_rhog, write_vxc_g, write_vxc_r) are
- * the durable anchors; locate those first, then the statement described.
- * All reals are float64, all ints int32.
+ * length]`, matching QE's own I/O. All reals are float64, all ints int32.
  *
- * Fortran multi-dimensional arrays are column-major: the FIRST array index
- * varies fastest. Concretely, for an array `a(i,j)` written as
- * `((a(i,j),i=1,N),j=1,M)`, the flattened byte order is
- * `a(1,1),a(2,1),...,a(N,1),a(1,2),...` -- this is why `avec`/`bvec` (indexed
- * `at(component,vector)`) flatten "vector-major" (all 3 components of vector
- * 1, then all 3 of vector 2, ...) while `mtrx` (indexed
- * `s(row,column,operation)`) flattens "column-major within each 3x3 block"
- * (all 3 rows of column 1, then all 3 rows of column 2, ...) -- both are the
- * SAME general rule, just applied to arrays whose first index means
- * something different. (QE's `s` is itself the transpose of Q3's rotation,
- * so mtrx comes out as Q3's rotation flattened row by row; see record 6.)
+ * Authority. The record order, contents and units are those BerkeleyGW
+ * publishes: J. Deslippe et al., Comput. Phys. Commun. 183, 1269 (2012),
+ * Appendix 11.1, "Specification of file formats" (arXiv:1111.4429) -- "the
+ * BerkeleyGW specification" below. What it leaves open -- record framing,
+ * integer and real kinds, the width of the character fields, the count
+ * repeated before each body block, the exact conventions of the symmetry
+ * records -- follows Quantum ESPRESSO's pw2bgw.x converter, whose output
+ * BerkeleyGW reads. Citations of the converter name the subroutine of
+ * `PP/src/pw2bgw.f90` in QE 7.5 (release tag `qe-7.5`) -- write_wfng,
+ * write_rhog, write_vxc_g, write_vxc_r -- and the record, never a line
+ * number: the line numbers first cited here were read off a 2026-07-27
+ * `develop` checkout and moved with that branch. The same convention holds
+ * in wavefunction.hpp, charge_density.hpp and exchange_correlation.hpp.
+ *
+ * Arrays are stored column-major (Fortran order): the FIRST index varies
+ * fastest, so an N x M array a[i][j] is laid out a[1][1], a[2][1], ...,
+ * a[N][1], a[1][2], ... -- this is why `avec`/`bvec` (first index the
+ * Cartesian component, second the lattice vector) flatten "vector-major"
+ * (all 3 components of vector 1, then all 3 of vector 2, ...) while `mtrx`
+ * (first index the row, second the column, third the operation) flattens
+ * "column-major within each 3x3 block" (all 3 rows of column 1, then all 3
+ * rows of column 2, ...) -- both are the SAME general rule, just applied to
+ * arrays whose first index means something different. (The rotation matrix
+ * the converter writes is itself the transpose of Q3's rotation, so mtrx
+ * comes out as Q3's rotation flattened row by row; see record 6.)
  * Mixed-type records (2, 3, 8) are built as manual byte buffers rather than
  * plain C structs: a struct interleaving int32 and
  * double fields gets compiler-inserted alignment padding before each double
@@ -33,18 +41,20 @@
  * exactly such a struct -- see docs/io_reference.md §4.8 on why the
  * mean-field record writes every scalar component-by-component instead).
  *
- * Records 1-8 (pw2bgw:969-987 for WFN; the RHO writer at pw2bgw:1715-1726 is
- * byte-identical except records 2-3 omit the k-point fields):
- *   1. stitle(32) sdate(32) stime(32)                    -- char, 96 bytes
+ * Records 1-8 (the BerkeleyGW specification's first eight header records;
+ * write_wfng for WFN, and write_rhog for RHO, which is byte-identical except
+ * that records 2-3 omit the k-point fields). Shapes in brackets, first index
+ * fastest:
+ *   1. stitle[32] sdate[32] stime[32]                    -- char, 96 bytes
  *   2. ns ng ntran cell_symmetry nat ecutrho
- *      [nk nbands ngkmax ecutwfc]                        -- mixed, k-point
- *                                                            fields bracketed
- *   3. FFTgrid(3) [kgrid(3) kshift(3)]                    -- mixed
- *   4. celvol alat avec(3,3) adot(3,3)                    -- float64
- *   5. recvol blat bvec(3,3) bdot(3,3)                    -- float64
- *   6. mtrx(3,3,ntran)                                    -- int32
- *   7. tnp(3,ntran)                                       -- float64
- *   8. (apos(3,i), Z_i) for i=1..nat                       -- mixed, interleaved
+ *      {nk nbands ngkmax ecutwfc}                        -- mixed, k-point
+ *                                                            fields in braces
+ *   3. FFTgrid[3] {kgrid[3] kshift[3]}                    -- mixed
+ *   4. celvol alat avec[3,3] adot[3,3]                    -- float64
+ *   5. recvol blat bvec[3,3] bdot[3,3]                    -- float64
+ *   6. mtrx[3,3,ntran]                                    -- int32
+ *   7. tnp[3,ntran]                                       -- float64
+ *   8. (apos[3], Z) per atom, for each of the nat atoms   -- mixed, interleaved
  */
 
 #include <algorithm>
@@ -81,12 +91,15 @@ class BerkeleyGWCommonHeader {
     /**
      * @param stitle                 32-byte title, e.g. "WFN-Complex" or
      *                               "RHO-Complex" (space-padded/truncated to
-     *                               32 bytes; pw2bgw:734-736 always pads with
-     *                               spaces, never a NUL terminator).
+     *                               32 bytes; pw2bgw.x's write_wfng and
+     *                               write_rhog always pad with spaces, never
+     *                               a NUL terminator).
      * @param include_kpoint_fields  true for WFN (record 2 carries
      *                               nk/nbands/ngkmax/ecutwfc and record 3
      *                               carries kgrid/kshift), false for RHO
-     *                               (pw2bgw:1717-1719).
+     *                               (the BerkeleyGW specification's
+     *                               wavefunction-only fields; write_rhog
+     *                               records 2-3).
      */
     BerkeleyGWCommonHeader(const MeanFieldRecord& record,
                            std::string stitle,
@@ -100,7 +113,8 @@ class BerkeleyGWCommonHeader {
 
     /**
      * kgrid and kshift for an explicit k-point list (crystal coordinates) --
-     * the numbers pw2bgw is given as wfng_nk and wfng_dk for the same points.
+     * the numbers pw2bgw.x takes as its wfng_nk and wfng_dk inputs for the
+     * same points.
      *
      * Only a grid the list pins down is returned:
      *   1. the list unfolded by the crystal's rotations and time reversal,
@@ -245,10 +259,11 @@ class BerkeleyGWCommonHeader {
 
     /**
      * Metric tensor `dot[i][j] = vectors[i] . vectors[j] * scale^2` -- used
-     * for both `adot` (direct lattice, scale = alat) and `bdot` (reciprocal
-     * lattice, scale = tpiba), matching pw2bgw:783-790/797-804 exactly (a
-     * symmetric Gram matrix, so row-major vs. column-major flattening are
-     * byte-identical either way).
+     * for both `adot` (direct lattice, a_i . a_j scaled by alat^2) and `bdot`
+     * (reciprocal lattice, b_i . b_j scaled by (2*pi/alat)^2), the real- and
+     * reciprocal-space metric tensors of the BerkeleyGW specification's
+     * records 4 and 5 (a symmetric Gram matrix, so row-major vs.
+     * column-major flattening are byte-identical either way).
      */
     [[nodiscard]] static Matrix3x3 metric_tensor(const Matrix3x3& vectors, Real scale) {
         Matrix3x3 result;
@@ -273,7 +288,7 @@ class BerkeleyGWCommonHeader {
 
     /**
      * Record 1: stitle(32) sdate(32) stime(32) -- 96 bytes of padded chars.
-     * sdate/stime mirror pw2bgw:730-732's "DD-Mon-YYYY"/"HH:MM:SS" formats;
+     * sdate/stime mirror the "DD-Mon-YYYY"/"HH:MM:SS" formats pw2bgw.x writes;
      * BerkeleyGW does not parse these fields back, so exact QE locale
      * behavior is not required, only well-formed fixed-width padding.
      */
@@ -297,12 +312,13 @@ class BerkeleyGWCommonHeader {
     }
 
     /**
-     * Record 2 (pw2bgw:971-973 for WFN, pw2bgw:1717-1718 for RHO):
+     * Record 2 (the BerkeleyGW specification's record 2; write_wfng for WFN,
+     * write_rhog for RHO):
      *   WFN: ns ng ntran cell_symmetry nat ecutrho nk nbands ngkmax ecutwfc
      *   RHO: ns ng ntran cell_symmetry nat ecutrho
      * ecutrho/ecutwfc are already in Rydberg in Q3 (PlanewaveBasisConfig
-     * docstring), matching pw2bgw's own `ecutrho`/`ecutwfc` units exactly --
-     * no conversion.
+     * docstring), the unit the BerkeleyGW specification gives for both cutoffs
+     * -- no conversion.
      */
     void write_dimension_record(std::ofstream& output_file,
                                 int number_of_symmetry_operations) const {
@@ -351,14 +367,16 @@ class BerkeleyGWCommonHeader {
     }
 
     /**
-     * Record 3 (pw2bgw:975-979 for WFN, pw2bgw:1719 for RHO):
-     *   WFN: FFTgrid(3) kgrid(3) kshift(3)
-     *   RHO: FFTgrid(3)
-     * FFTgrid is the DENSE (charge-density) FFT grid `dfftp` in pw2bgw, not
+     * Record 3 (the BerkeleyGW specification's record 3; write_wfng for WFN,
+     * write_rhog for RHO):
+     *   WFN: FFTgrid[3] kgrid[3] kshift[3]
+     *   RHO: FFTgrid[3]
+     * FFTgrid is the DENSE (charge-density) FFT grid in pw2bgw.x's output, not
      * the smooth wavefunction grid -- Q3's analog is fft_rho(), not
-     * fft_wave(). For a Monkhorst-Pack run kshift = 0.5 * (grid shift flag),
-     * matching pw2bgw:978's `0.5d0*dble(k1)` (Q3's KPointsGrid::grid_shifts()
-     * stores the same 0/1 shift-flag convention as QE's k1/k2/k3). An explicit
+     * fft_wave(). For a Monkhorst-Pack run kshift = 0.5 * (grid shift flag)
+     * on each axis, matching what write_wfng writes from QE's 0/1 K_POINTS
+     * offsets (Q3's KPointsGrid::grid_shifts() stores the same 0/1 shift-flag
+     * convention). An explicit
      * k-point list -- how BerkeleyGW's WFN and WFNq are normally produced --
      * has no grid in the record, so kgrid/kshift are recovered from the
      * points themselves (kpoint_grid_from_list()); BerkeleyGW's epsilon
@@ -408,14 +426,14 @@ class BerkeleyGWCommonHeader {
     }
 
     /**
-     * Record 4: celvol alat avec(3,3) adot(3,3) -- all float64, so a flat
+     * Record 4: celvol alat avec[3,3] adot[3,3] -- all float64, so a flat
      * vector is safe (no interleaved int32 to trigger alignment padding).
-     * avec flattens vector-major (pw2bgw:981's `at(j,i)` has the Cartesian
-     * component j as the fast index, i.e. all 3 components of lattice
-     * vector i before moving to vector i+1) -- Q3's lattice_vectors() is
-     * already stored row-per-vector, so writing rows in order is exactly
-     * this flattening. avec is in units of alat (Crystal::lattice_vectors()
-     * docstring); adot = avec . avec^T * alat^2 (pw2bgw:783-790).
+     * avec flattens vector-major (the Cartesian component is the fast index,
+     * i.e. all 3 components of lattice vector i before moving to vector
+     * i+1) -- Q3's lattice_vectors() is already stored row-per-vector, so
+     * writing rows in order is exactly this flattening. avec is in units of
+     * alat (Crystal::lattice_vectors() docstring); adot is the metric tensor,
+     * a_i . a_j scaled by alat^2 (metric_tensor()).
      */
     void write_direct_lattice_record(std::ofstream& output_file) const {
         const Matrix3x3& lattice_vectors = record_.lattice_vectors;
@@ -443,19 +461,20 @@ class BerkeleyGWCommonHeader {
 
     /**
      * Record 5: recvol blat bvec(3,3) bdot(3,3) -- same shape as record 4,
-     * for the reciprocal lattice. recvol = 8*pi^3/omega (pw2bgw:776); blat =
-     * tpiba = 2*pi/alat. bvec is in units of tpiba (Crystal's
+     * for the reciprocal lattice. recvol = (2*pi)^3 / celvol, the Brillouin-zone
+     * volume; blat = 2*pi/alat. bvec is in units of 2*pi/alat (Crystal's
      * reciprocal_lattice_vectors() docstring).
      */
     void write_reciprocal_lattice_record(std::ofstream& output_file) const {
         const Matrix3x3& reciprocal_lattice_vectors = record_.reciprocal_lattice_vectors;
-        Real tpiba = record_.two_pi_over_lattice_parameter;
-        Matrix3x3 reciprocal_metric = metric_tensor(reciprocal_lattice_vectors, tpiba);
+        Real two_pi_over_lattice_parameter = record_.two_pi_over_lattice_parameter;
+        Matrix3x3 reciprocal_metric =
+            metric_tensor(reciprocal_lattice_vectors, two_pi_over_lattice_parameter);
 
         std::vector<double> buffer;
         buffer.reserve(20);
         buffer.push_back(8.0 * constants::pi * constants::pi * constants::pi / record_.cell_volume);
-        buffer.push_back(tpiba);
+        buffer.push_back(two_pi_over_lattice_parameter);
         for (int vector_index = 0; vector_index < 3; vector_index++) {
             buffer.push_back(reciprocal_lattice_vectors[vector_index].x);
             buffer.push_back(reciprocal_lattice_vectors[vector_index].y);
@@ -473,13 +492,16 @@ class BerkeleyGWCommonHeader {
 
     /**
      * Record 6: mtrx(3,3,ntran) -- int32 rotation matrices in crystal
-     * coordinates, carrying QE's `s` exactly as pw2bgw writes it (write_wfng,
-     * the `((s(k,j,i),k=1,3),j=1,3)` record): Fortran column-major, so within
-     * each 3x3 block mtrx(1,1), mtrx(2,1), mtrx(3,1), mtrx(1,2), ... QE's `s`
-     * is the TRANSPOSE of Q3's real-space `rotation` (QE rotates crystal
-     * coordinates as x'_j = sum_i s(i,j) x_i), so mtrx(k,j) = rotation[j][k]
-     * and the bytes are `rotation` flattened row by row. Checked operation by
-     * operation against QE 7.5's data-file-schema.xml and pw2bgw output for
+     * coordinates, carrying QE's crystal-coordinate rotation matrix S exactly
+     * as write_wfng writes it: first index fastest, so within each 3x3 block
+     * mtrx[1][1], mtrx[2][1], mtrx[3][1], mtrx[1][2], ... S is the TRANSPOSE
+     * of Q3's real-space `rotation` (QE rotates crystal coordinates as
+     * x'_j = sum_i S_ij x_i), so mtrx[k][j] = rotation[j][k] and the bytes are
+     * `rotation` flattened row by row. The BerkeleyGW specification describes
+     * mtrx only as rotation matrices in the reciprocal-lattice basis; the
+     * exact convention -- transposition, and pairing with record 7 -- is
+     * pinned by the comparisons that follow, not by the specification.
+     * Checked operation by operation against QE 7.5's data-file-schema.xml and pw2bgw output for
      * wurtzite ZnO, diamond Si and trigonal Te. BerkeleyGW reads mtrx as the
      * same matrix QE uses, so writing `rotation` itself hands it R^T: the
      * group is unchanged, but each matrix is paired with the wrong record-7
@@ -505,9 +527,11 @@ class BerkeleyGWCommonHeader {
     /**
      * Record 7: tnp(3,ntran) -- float64 fractional translations in crystal
      * coordinates times 2*pi, NOT SymmetryOperation::fractional_translation
-     * copied verbatim. pw2bgw (write_wfng) derives tnp from QE's `(s, ft)` as
-     * `(s^-1)^T . ft`, wrapped modulo 1, then scaled by 2*pi. In Q3's terms
-     * `s = rotation^T` (record 6) and `ft = -fractional_translation` (QE
+     * copied verbatim: the BerkeleyGW specification gives tnp in units of the
+     * lattice vectors times 2*pi, and write_wfng derives it from QE's rotation
+     * S and fractional translation f as (S^-1)^T f, reduced modulo 1, then
+     * scaled by 2*pi. In Q3's terms S = rotation^T (record 6) and
+     * f = -fractional_translation (QE
      * stores its translations with the opposite sign; the same check against
      * QE 7.5's XML confirms it for every operation), so
      *
@@ -517,7 +541,7 @@ class BerkeleyGWCommonHeader {
      * Q3 already stores rotation^-1 transposed, as reciprocal_rotation =
      * (rotation^-1)^T (operation.hpp), so rotation^-1 . t contracts t with
      * reciprocal_rotation's FIRST index. The trigonal-Te test pins the sign
-     * against pw2bgw's own numbers: there the 3_1 screw's c/3 and -c/3 differ.
+     * against pw2bgw.x's own output: there the 3_1 screw's c/3 and -c/3 differ.
      *
      * The result is then reduced to a canonical representative modulo 1. The
      * 1e-6 is added to BOTH comparison thresholds rather than forming a
@@ -527,13 +551,13 @@ class BerkeleyGWCommonHeader {
      * translation sitting exactly on the boundary -- 0.5 is common, e.g.
      * glide planes and the diamond structure -- stays put instead of flipping
      * sign under rounding noise. Truncation toward zero rather than
-     * round-to-nearest is what places the closed end at +0.5; pw2bgw makes
+     * round-to-nearest is what places the closed end at +0.5; pw2bgw.x makes
      * the same choice.
      */
     void write_symmetry_translation_record(
         std::ofstream& output_file,
         const std::vector<SymmetryOperation>& symmetry_operations) const {
-        constexpr Real eps6 = 1.0e-6; // matches pw2bgw's own eps6 tolerance
+        constexpr Real boundary_tolerance = 1.0e-6; // the same 1e-6 pw2bgw.x widens by
         std::vector<double> buffer;
         buffer.reserve(3 * symmetry_operations.size());
         for (const auto& operation : symmetry_operations) {
@@ -548,9 +572,9 @@ class BerkeleyGWCommonHeader {
             }
             for (int component = 0; component < 3; component++) {
                 Real& value = rotated_translation[component];
-                if (value >= eps6 + 0.5)
+                if (value >= boundary_tolerance + 0.5)
                     value -= std::trunc(value + 0.5);
-                if (value < eps6 - 0.5)
+                if (value < boundary_tolerance - 0.5)
                     value -= std::trunc(value - 0.5);
             }
             for (int component = 0; component < 3; component++) {
@@ -569,7 +593,8 @@ class BerkeleyGWCommonHeader {
      * element size a multiple of 8, corrupting the interleaving for atom 2
      * onward). Positions are Cartesian in units of alat
      * (Crystal::convert_from_crystal_to_cartesian()); Z is the atomic number
-     * (pw2bgw:987 via QE's `atomic_number()`, matching Crystal::atomic_number()).
+     * (the BerkeleyGW specification's atomic numbers, as Crystal::atomic_number()
+     * gives them, and as write_wfng writes them).
      */
     void write_atom_record(std::ofstream& output_file) const {
         int number_of_atoms = record_.number_of_atoms();

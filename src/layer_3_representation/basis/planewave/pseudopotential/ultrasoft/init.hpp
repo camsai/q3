@@ -172,7 +172,7 @@ class UltrasoftPlanewaveBasis : public NormConservingPlanewaveBasis {
      * eliminating the per-G interpolation that dominated the previous implementation.
      *
      * @param crystal_structure  Crystal geometry
-     * @param projector_overlap_coefficients  ⟨ψ|β⟩⟨β|ψ⟩ summed over bands (becsum)
+     * @param projector_overlap_coefficients  ⟨ψ|β⟩⟨β|ψ⟩ summed over bands
      * @param charge_density_g  Charge density in G-space (modified in place)
      */
     void add_augmentation_charges(
@@ -193,7 +193,7 @@ class UltrasoftPlanewaveBasis : public NormConservingPlanewaveBasis {
              * which atoms contribute to it.
              *
              * In a mixed cell `precompute_q_functions_g` leaves the entry for a
-             * norm-conserving species empty, but becsum is accumulated over
+             * norm-conserving species empty, but ρ_ij is accumulated over
              * *every* atom, so its ⟨ψ|β_i⟩⟨β_j|ψ⟩ are nonzero and this loop
              * reached `q_function_g_data` for it anyway. That takes the address
              * of an element of an empty vector and then reads
@@ -210,10 +210,10 @@ class UltrasoftPlanewaveBasis : public NormConservingPlanewaveBasis {
                 projector_mapping_table_.number_of_channels(species_type_index);
 
             /**
-             * Accumulate becsum-weighted Q_ij(G) over all channel pairs.
+             * Accumulate ρ_ij-weighted Q_ij(G) over all channel pairs.
              * Exploit Q_ij(G) = Q_ji(G) symmetry: loop only over upper triangle.
-             * For i < j: use (becsum(i,j) + becsum(j,i)) * Q_ij(G) in a single pass.
-             * For i == j: use becsum(i,i) * Q_ii(G) directly.
+             * For i < j: use (ρ_ij + ρ_ji) * Q_ij(G) in a single pass.
+             * For i == j: use ρ_ii * Q_ii(G) directly.
              */
             std::vector<Complex> augmentation_g(number_of_g_vectors, Complex(0.0, 0.0));
 
@@ -223,13 +223,14 @@ class UltrasoftPlanewaveBasis : public NormConservingPlanewaveBasis {
                 {
                     int channel_pair_index =
                         channel_index_i * number_of_projector_channels + channel_index_i;
-                    Real becsum_value =
+                    Real diagonal_projector_overlap_coefficient =
                         projector_overlap_coefficients(atom_index, channel_pair_index);
-                    if (std::abs(becsum_value) >= 1e-15) {
+                    if (std::abs(diagonal_projector_overlap_coefficient) >= 1e-15) {
                         const Complex* q_g_data = q_function_g_data(
                             species_type_index, channel_pair_index, number_of_g_vectors);
                         for (int g_index = 0; g_index < number_of_g_vectors; ++g_index) {
-                            augmentation_g[g_index] += becsum_value * q_g_data[g_index];
+                            augmentation_g[g_index] +=
+                                diagonal_projector_overlap_coefficient * q_g_data[g_index];
                         }
                     }
                 }
@@ -240,15 +241,17 @@ class UltrasoftPlanewaveBasis : public NormConservingPlanewaveBasis {
                      ++channel_index_j) {
                     int pair_ij = channel_index_i * number_of_projector_channels + channel_index_j;
                     int pair_ji = channel_index_j * number_of_projector_channels + channel_index_i;
-                    Real combined_becsum = projector_overlap_coefficients(atom_index, pair_ij) +
-                                           projector_overlap_coefficients(atom_index, pair_ji);
-                    if (std::abs(combined_becsum) < 1e-15)
+                    Real combined_projector_overlap_coefficient =
+                        projector_overlap_coefficients(atom_index, pair_ij) +
+                        projector_overlap_coefficients(atom_index, pair_ji);
+                    if (std::abs(combined_projector_overlap_coefficient) < 1e-15)
                         continue;
 
                     const Complex* q_g_data =
                         q_function_g_data(species_type_index, pair_ij, number_of_g_vectors);
                     for (int g_index = 0; g_index < number_of_g_vectors; ++g_index) {
-                        augmentation_g[g_index] += combined_becsum * q_g_data[g_index];
+                        augmentation_g[g_index] +=
+                            combined_projector_overlap_coefficient * q_g_data[g_index];
                     }
                 }
             }

@@ -9,7 +9,7 @@
  *      no to `== ultrasoft` and yes to `has_augmentation_charges()`. Every
  *      factory that asked the first question was routing PAW down the
  *      norm-conserving path and dropping its augmentation charges.
- *   2. **Channel-order disagreement.** becsum is ρ_ij directly — no conversion
+ *   2. **Channel-order disagreement.** ρ_ij is consumed directly — no conversion
  *      — so the plane-wave side's expanded projector order and the one-center
  *      module's have to be the same order. If they are not, every occupancy
  *      lands in the wrong element while the matrix stays symmetric and
@@ -74,7 +74,7 @@ TEST(PawScfTermsTest, ChannelExpansionMatchesTheProjectorMappingTableOrder) {
     /**
      * The load-bearing one. `expand_channels` walks the partial waves;
      * `ProjectorMappingTable` walks the β projectors. They are built from
-     * different arrays by different code, and becsum is indexed by the second
+     * different arrays by different code, and ρ_ij is indexed by the second
      * while the one-center engine indexes by the first.
      *
      * Compared element by element rather than by count: two expansions can
@@ -114,7 +114,7 @@ TEST(PawScfTermsTest, DIsTheDerivativeOfTheOneCenterEnergyThroughTheDriver) {
     /**
      * The A2.5 identity re-asserted at the level the SCF actually calls, not
      * only at the level the one-center module's own gate covers. The driver
-     * adds channel bookkeeping, a becsum stride, and a per-species context
+     * adds channel bookkeeping, a ρ_ij stride, and a per-species context
      * between the SCF and the engine, and an indexing slip in any of those
      * would break D ≡ ∂E/∂ρ_ij while leaving both quantities individually
      * plausible.

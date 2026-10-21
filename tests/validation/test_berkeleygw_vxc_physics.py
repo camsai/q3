@@ -10,10 +10,12 @@ independent reader. This test checks the *numbers*, by rebuilding
 formulas. It shares no code path with the exporter:
 
   * Q3's exporter evaluates the G-space double sum
-    ``sum_{G,G'} conj(c(G)) V_xc(G-G') c(G')`` (pw2bgw.f90's ``write_vxc_g``),
+    ``sum_{G,G'} conj(c(G)) V_xc(G-G') c(G')`` (the quantity pw2bgw.x's
+    ``write_vxc_g`` evaluates),
     using the V_xc the SCF actually converged to.
   * This test evaluates the real-space product
-    ``(1/N_r) sum_r |psi(r)|^2 V_xc(r)`` (pw2bgw.f90's ``write_vxc_r``),
+    ``(1/N_r) sum_r |psi(r)|^2 V_xc(r)`` (the quantity pw2bgw.x's
+    ``write_vxc_r`` evaluates),
     using a V_xc it rebuilds itself from ``RHO`` via its own implementation
     of the Perdew-Zunger 1981 functional -- not libxc, which is what Q3
     calls.

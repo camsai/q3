@@ -16,7 +16,8 @@ low-level drift (record padding, a Fortran record marker, a truncated
 mantissa) that a binary format consumer trips over.
 
 Two bytes legitimately differ, and only two: records 1 of WFN and RHO carry
-the file's creation date and time (pw2bgw.f90:730-737 / :1574-1581), which
+the file's creation date and time (the BerkeleyGW specification's record 1,
+which pw2bgw.x's write_wfng and write_rhog fill in), which
 are wall-clock stamps and therefore differ between any two runs -- including
 two runs of the *same* code. Those records are excluded from the byte
 comparison by skipping the first Fortran record (whose length is

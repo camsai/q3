@@ -4,8 +4,8 @@
  * One-center densities from on-site occupancies.
  *
  * Given ρ_ij — the cross-band occupancies the ultrasoft machinery already
- * accumulates as becsum — this builds the two lm-decomposed radial densities a
- * PAW energy needs:
+ * accumulates as its projector overlap coefficients — this builds the two
+ * lm-decomposed radial densities a PAW energy needs:
  *
  *     n¹  = Σ_ij ρ_ij φ_i φ_j                    (all-electron)
  *     ñ¹  = Σ_ij ρ_ij [ φ̃_i φ̃_j + Q_ij^L(r) ]   (pseudo, compensated)

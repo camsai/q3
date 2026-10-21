@@ -253,7 +253,7 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
      * Overlap coefficients ⟨β_i|ψ_nk⟩ at convergence.
      *
      * Returns an empty matrix for norm-conserving calculations.
-     * The ultrasoft iterator overrides this to return the actual becsum.
+     * The ultrasoft iterator overrides this to return the accumulated coefficients.
      */
     [[nodiscard]] virtual const Matrix<Real>& projector_overlap_coefficients() const {
         static const Matrix<Real> empty_matrix{};
@@ -376,7 +376,7 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
     }
 
   protected:
-    /// Cached KB projectors per k-point (reused by becsum accumulation).
+    /// Cached KB projectors per k-point (reused by the projector overlap accumulation).
     std::vector<q3::Matrix<Complex>> cached_kleinman_bylander_projectors_;
 
     /// DFT+U (Hubbard): resolved atom/shell manifolds; empty means no correction is active.
@@ -904,7 +904,7 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
         int number_of_kpoints = kpoint_grid().number_of_kpoints();
         int number_of_kpoint_states = number_of_kpoints * number_of_spin_components();
 
-        // Wire or pre-compute KB projectors for each k-point (reused by becsum accumulation)
+        // Wire or pre-compute KB projectors for each k-point (reused by ρ_ij accumulation)
         if (cached_kleinman_bylander_projectors_.empty()) {
             cached_kleinman_bylander_projectors_.resize(number_of_kpoints);
             for (int kpoint_index = 0; kpoint_index < number_of_kpoints; ++kpoint_index) {

@@ -4,7 +4,7 @@
  * UltrasoftPlanewavePseudopotentialKohnShamSCFIterator — ultrasoft plane-wave PSP SCF (layer 4).
  *
  * Extends the norm-conserving pseudopotential iterator with the ultrasoft-only
- * machinery: the projector overlap coefficients (becsum), the augmentation charges
+ * machinery: the projector overlap coefficients, the augmentation charges
  * added to the smooth density, the effective D-matrix used by the Hamiltonian, and
  * the smooth (pre-augmentation) charge density that is mixed and snapshotted.
  */
@@ -144,7 +144,7 @@ class UltrasoftPlanewavePseudopotentialKohnShamSCFIterator
         snapshot_smooth_density();
         auto timer_us_snap = std::chrono::high_resolution_clock::now();
         accumulate_projector_overlaps();
-        auto timer_us_becsum = std::chrono::high_resolution_clock::now();
+        auto timer_us_projector_overlaps = std::chrono::high_resolution_clock::now();
         add_augmentation_to_charge_density();
         auto timer_us_aug = std::chrono::high_resolution_clock::now();
         warn_if_total_charge_deviates();
@@ -158,10 +158,12 @@ class UltrasoftPlanewavePseudopotentialKohnShamSCFIterator
             std::chrono::duration<double, std::milli>(timer_us_snap - timer_us_base).count());
         log::debug(
             "       projector_overlaps:{:.1f} ms",
-            std::chrono::duration<double, std::milli>(timer_us_becsum - timer_us_snap).count());
+            std::chrono::duration<double, std::milli>(timer_us_projector_overlaps - timer_us_snap)
+                .count());
         log::debug(
             "       augmentation:      {:.1f} ms",
-            std::chrono::duration<double, std::milli>(timer_us_aug - timer_us_becsum).count());
+            std::chrono::duration<double, std::milli>(timer_us_aug - timer_us_projector_overlaps)
+                .count());
     }
 
     void symmetrize_density() override {
@@ -238,7 +240,7 @@ class UltrasoftPlanewavePseudopotentialKohnShamSCFIterator
     }
 
     /**
-     * Accumulate the per-atom projector overlap coefficients (becsum) from the bands.
+     * Accumulate the per-atom projector overlap coefficients from the bands.
      *
      * Uses BLAS zgemm to compute all <beta|psi> overlaps in a single call
      * instead of per-projector-per-band zdotc calls.
@@ -246,7 +248,7 @@ class UltrasoftPlanewavePseudopotentialKohnShamSCFIterator
     /**
      * Virtual so PAW can damp the result before it is used.
      *
-     * becsum feeds two things — the augmentation charge on the grid and, for
+     * The coefficients feed two things — the augmentation charge on the grid and, for
      * PAW, the on-site D matrix — and the second closes a loop that the
      * density mixer cannot reach: ρ_ij is recomputed from fresh ψ every step,
      * so its feedback gain is 1 no matter how small the mixing beta. That is
@@ -400,7 +402,7 @@ class UltrasoftPlanewavePseudopotentialKohnShamSCFIterator
                                                        static_cast<int>(projector_overlaps.size()));
             }
 
-            // Accumulate becsum from projector_overlaps
+            // Accumulate the projector overlap coefficients from projector_overlaps
             int current_projector_index = 0;
             for (int atom_index = 0; atom_index < crystal_structure().number_of_atoms();
                  ++atom_index) {
@@ -447,7 +449,7 @@ class UltrasoftPlanewavePseudopotentialKohnShamSCFIterator
             }
         }
 
-        // Reduce projector overlap coefficients (becsum) across all ranks
+        // Reduce projector overlap coefficients across all ranks
         if (execution_policy_ != nullptr) {
             execution_policy_->reduce_vector(projector_overlap_coefficients_.raw());
             for (auto& per_spin : projector_overlap_coefficients_by_spin_)

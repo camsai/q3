@@ -224,9 +224,9 @@ agent, in the raw repository and in the published tree:
     the dataset files themselves, the engine's _outputs_, and Q3's own parity
     experiments. A build-time add-on that supports such an engine restates this rule in
     that engine's own terms in its `AGENTS.md`.
--   **Quantum ESPRESSO (GPL) may be read and cited** — file/routine citations
-    in comments are encouraged as provenance — but never translate or
-    transcribe its code. Formulas, constants, and conventions are fine;
+-   **Quantum ESPRESSO (GPL) may be read, in a research session, and cited**
+    — file/routine citations in comments are encouraged as provenance — but
+    never translate or transcribe its code. Formulas, constants, and conventions are fine;
     carried-over code structure or expression is not (GPLv2 is incompatible
     with this repo's Apache-2.0). When in doubt, implement from the paper and
     validate against QE's numbers.
@@ -234,6 +234,17 @@ agent, in the raw repository and in the published tree:
     content derived from them beyond format-level identity facts (a dataset's title
     line, its valence charge, its SHA-256 digest). Licensed datasets stay outside
     version control and are located at runtime through an environment variable.
+-   **Every session is a research session or an implementation session, never
+    both.** A research session may read GPL source and writes prose notes only,
+    no code; an implementation session never fetches or opens GPL or
+    proprietary source, and asks for a research session when it needs one.
+    Side-by-side reviews are research sessions, run by someone who did not
+    write the code, and are recorded in
+    [docs/provenance_register.md](docs/provenance_register.md). Never place
+    licensed dataset contents in an AI session's context, and use AI tools for
+    engine-adjacent work only under no-training and no-retention terms. The
+    definitions are in [PROVENANCE.md](PROVENANCE.md) § 3; state the session
+    type and the sources consulted in the pull request.
 
 ## Repositories: raw and clean
 

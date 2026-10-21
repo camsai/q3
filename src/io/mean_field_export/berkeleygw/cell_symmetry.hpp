@@ -4,13 +4,16 @@
  * BerkeleyGW's `cell_symmetry` header field: 1 for a lattice of the hexagonal
  * family, 0 for every other.
  *
- * pw2bgw takes it from QE's `ibrav` (pw2bgw:806-825): 4 (hexagonal) and 5
+ * The BerkeleyGW specification defines it as 0 for cubic and 1 for hexagonal
+ * symmetry (Deslippe et al., Comput. Phys. Commun. 183, 1269 (2012), Appendix
+ * 11.1; see header.hpp). pw2bgw.x takes it from QE's `ibrav` input (in
+ * write_wfng and write_rhog, QE 7.5): 4 (hexagonal) and 5
  * (trigonal R) give 1, and the cubic, tetragonal, orthorhombic, monoclinic
  * and triclinic indices give 0. Q3 records the same index when the input names
  * a Bravais lattice. Every other cell is a free lattice, index 0: a YAML
  * lattice outside the cubic family, YAML `lattice.vectors`, and QE's
  * `CELL_PARAMETERS`, which is how Materials Project cells arrive. The export
- * used to refuse those, because pw2bgw settles that case from an input Q3 has
+ * used to refuse those, because pw2bgw.x settles that case from an input Q3 has
  * no counterpart of, which shut out every non-cubic crystal.
  *
  * The index only names the shape of the lattice, so the shape is read off the
