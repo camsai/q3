@@ -214,3 +214,16 @@ repos:
       - id: check-yaml
       - id: check-json
       - id: check-merge-conflict
+
+  # REUSE: every file has a declared copyright and license (REUSE.toml). The
+  # license texts the spec wants in LICENSES/ are not committed: `reuse
+  # download` fetches the ones REUSE.toml names from SPDX into that gitignored
+  # directory first, so each tree lints against exactly the licenses it uses.
+  # charset-normalizer is the encoding detector reuse needs without libmagic.
+  - repo: https://github.com/fsfe/reuse-tool
+    rev: v6.2.0
+    hooks:
+      - id: reuse
+        entry: sh -c 'reuse download --all > /dev/null && reuse lint'
+        args: []
+        additional_dependencies: [charset-normalizer]

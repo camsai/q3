@@ -15,12 +15,18 @@
 
 ARG MPICH_VERSION=4.2.3
 ARG FFTW_VERSION=3.3.10
+# FFTW is GPL-2.0-or-later, so this image is a combined work distributed under
+# GPL-3.0-or-later as a whole, and container.yml publishes this exact tarball
+# with every release (THIRD_PARTY_NOTICES.md). The checksum is what makes the
+# file compiled here and the file published the same. Change both together.
+ARG FFTW_SHA256=56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467
 
 # ---------- Stage 1: build ----------
 FROM ubuntu:24.04 AS builder
 
 ARG MPICH_VERSION
 ARG FFTW_VERSION
+ARG FFTW_SHA256
 ENV DEBIAN_FRONTEND=noninteractive
 
 # libfftw3-dev is deliberately absent: FFTW is built from source below, and a
@@ -68,6 +74,8 @@ RUN curl -fsSL "https://www.mpich.org/static/downloads/${MPICH_VERSION}/mpich-${
         --disable-static \
     && make -j"$(nproc)" \
     && make install \
+    && mkdir -p /opt/q3-licenses/mpich \
+    && cp --parents COPYRIGHT modules/*/COPYING modules/*/COPYRIGHT /opt/q3-licenses/mpich/ \
     && rm -rf "/tmp/mpich-${MPICH_VERSION}"
 
 ENV PATH=/opt/mpich/bin:$PATH
@@ -95,7 +103,9 @@ RUN case "$(uname -m)" in \
         aarch64) simd="--enable-neon" ;; \
         *)       simd="" ;; \
     esac \
-    && curl -fsSL "https://www.fftw.org/fftw-${FFTW_VERSION}.tar.gz" | tar -xz -C /tmp \
+    && curl -fsSL -o /tmp/fftw.tar.gz "https://www.fftw.org/fftw-${FFTW_VERSION}.tar.gz" \
+    && echo "${FFTW_SHA256}  /tmp/fftw.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/fftw.tar.gz -C /tmp && rm /tmp/fftw.tar.gz \
     && cd "/tmp/fftw-${FFTW_VERSION}" \
     && ./configure \
         --prefix=/opt/fftw \
@@ -107,6 +117,8 @@ RUN case "$(uname -m)" in \
         MPICC=/opt/mpich/bin/mpicc \
     && make -j"$(nproc)" \
     && make install \
+    && mkdir -p /opt/q3-licenses/fftw \
+    && cp COPYING COPYRIGHT /opt/q3-licenses/fftw/ \
     && rm -rf "/tmp/fftw-${FFTW_VERSION}" \
     && case "$(uname -m)" in \
         x86_64) \
@@ -147,13 +159,24 @@ RUN cmake -S . -B build \
     && cmake --build build -j"$(nproc)" \
     && cmake --install build
 
+# The license file of each FetchContent dependency compiled into the binaries,
+# for the runtime stage's license directory (THIRD_PARTY_NOTICES.md).
+RUN for source in build/_deps/*-src; do \
+        target="/opt/q3-licenses/$(basename "$source" -src)"; \
+        mkdir -p "$target" \
+        && find "$source" -maxdepth 1 -type f \( -iname 'licen[cs]e*' -o -iname 'copying*' \) \
+            -exec cp {} "$target" \; \
+        && test -n "$(ls -A "$target")" || { echo "no license file in $source" >&2; exit 1; }; \
+    done
+
 # ---------- Stage 2: runtime ----------
 FROM ubuntu:24.04
 
 LABEL org.opencontainers.image.title="Q3 (MPI)" \
       org.opencontainers.image.description="Q3 DFT engine with MPI k-point pool and band-group parallelism" \
       org.opencontainers.image.vendor="Mat3ra" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="GPL-3.0-or-later" \
+      q3.license.notice="This image is a combined work including FFTW and is distributed under GPL-3.0-or-later as a whole; Q3's own source is Apache-2.0."
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -194,6 +217,18 @@ ENV PATH=/opt/mpich/bin:/usr/local/bin:$PATH \
 RUN if ldd /usr/local/bin/* | grep 'not found'; then exit 1; fi \
     && q3 --version > /dev/null \
     && mpiexec --version > /dev/null
+
+# Notices, license texts and the written offer, as in Dockerfile. FFTW's and
+# MPICH's own notices come from their builds above.
+COPY LICENSE.md THIRD_PARTY_NOTICES.md /usr/share/licenses/q3/
+COPY --from=builder /opt/q3-licenses/ /usr/share/licenses/q3/
+ARG Q3_SOURCE_BUNDLE_URL=""
+ARG Q3_SOURCE_BUNDLE_SHA256=""
+RUN printf '\n## This image\n\n-   Complete corresponding source: %s\n-   SHA-256: %s\n' \
+        "${Q3_SOURCE_BUNDLE_URL:-none, not a published build}" "${Q3_SOURCE_BUNDLE_SHA256:-none}" \
+        >> /usr/share/licenses/q3/THIRD_PARTY_NOTICES.md
+LABEL q3.source-bundle.url="${Q3_SOURCE_BUNDLE_URL}" \
+      q3.source-bundle.sha256="${Q3_SOURCE_BUNDLE_SHA256}"
 
 # The serial binary, so `podman-hpc run <image> q3 input.yml` behaves the same
 # way as with the plain image. Reach the parallel one by name, under the

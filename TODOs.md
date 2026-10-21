@@ -1359,6 +1359,12 @@ dftd3_threebody=.false.` and ignoring what the file said, so `vdw_corr='dft-d3'`
         CPU fallbacks still plan with FFTW, so CMake refuses those combinations; give them
         PocketFFT paths, then decide whether to make `pocketfft` the default so released
         binaries and containers link no GPL library.
+-   [ ] **[S]** **CUDA image: GPL FFTW + proprietary CUDA runtime under counsel review;
+        fallback is a PocketFFT CPU path for GPU builds (§3.2)** — the `-cuda` image ships
+        FFTW (GPL-2.0-or-later) beside NVIDIA's CUDA runtime libraries under NVIDIA's EULA.
+        It is published with the same GPL compliance as the other images
+        (`THIRD_PARTY_NOTICES.md`, the release's source bundle); if counsel rules the
+        combination out, the item above is the way to drop FFTW from GPU builds.
 
 ### 3.3 Conventions & cleanup
 

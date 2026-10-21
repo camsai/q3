@@ -13,9 +13,18 @@
 # migrate` squashes the image onto every compute node, and Shifter unpacks it
 # per job.
 
+# Ubuntu's FFTW, pinned. It is GPL-2.0-or-later, so this image is a combined
+# work distributed under GPL-3.0-or-later as a whole, and container.yml
+# publishes the Ubuntu source package of exactly this version with every
+# release (THIRD_PARTY_NOTICES.md). The pin is what keeps the image and that
+# source the same build; 3.3.10-1ubuntu3 is in noble's release pocket, which
+# never changes.
+ARG FFTW_UBUNTU_VERSION=3.3.10-1ubuntu3
+
 # ---------- Stage 1: build ----------
 FROM ubuntu:24.04 AS builder
 
+ARG FFTW_UBUNTU_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 
 # git is not optional: spglib and (when the system LibXC is too old to be
@@ -36,7 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
         git \
-        libfftw3-dev \
+        libfftw3-dev=${FFTW_UBUNTU_VERSION} \
         libopenblas-dev \
         libxc-dev \
         libomp-dev \
@@ -71,14 +80,26 @@ RUN cmake -S . -B build \
     && cmake --build build -j"$(nproc)" \
     && cmake --install build
 
+# The license file of each FetchContent dependency compiled into the binaries,
+# for the runtime stage's license directory (THIRD_PARTY_NOTICES.md).
+RUN for source in build/_deps/*-src; do \
+        target="/opt/q3-licenses/$(basename "$source" -src)"; \
+        mkdir -p "$target" \
+        && find "$source" -maxdepth 1 -type f \( -iname 'licen[cs]e*' -o -iname 'copying*' \) \
+            -exec cp {} "$target" \; \
+        && test -n "$(ls -A "$target")" || { echo "no license file in $source" >&2; exit 1; }; \
+    done
+
 # ---------- Stage 2: runtime ----------
 FROM ubuntu:24.04
 
 LABEL org.opencontainers.image.title="Q3" \
       org.opencontainers.image.description="Q3 — a modern, from-scratch, extensible Density Functional Theory engine" \
       org.opencontainers.image.vendor="Mat3ra" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="GPL-3.0-or-later" \
+      q3.license.notice="This image is a combined work including FFTW and is distributed under GPL-3.0-or-later as a whole; Q3's own source is Apache-2.0."
 
+ARG FFTW_UBUNTU_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Runtime halves of the builder's -dev packages, resolved for Ubuntu 24.04:
@@ -94,7 +115,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # (spglib, yaml-cpp, spdlog, nlohmann_json) is static — CMakeLists.txt forces
 # BUILD_SHARED_LIBS OFF for the FetchContent tree — so it needs nothing here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libfftw3-double3 \
+        libfftw3-double3=${FFTW_UBUNTU_VERSION} \
         libopenblas0-openmp \
         libxc9 \
         libgomp1 \
@@ -117,6 +138,20 @@ RUN if ldd /usr/local/bin/* | grep 'not found'; then exit 1; fi \
 
 ENV PATH=/usr/local/bin:$PATH \
     OMP_NUM_THREADS=1
+
+# The notices and license texts (THIRD_PARTY_NOTICES.md says what is where),
+# then the written offer: container.yml publishes the release's source bundle
+# first and passes its URL and SHA-256 in. Local and pull-request builds are
+# not distributed and leave both empty.
+COPY LICENSE.md THIRD_PARTY_NOTICES.md /usr/share/licenses/q3/
+COPY --from=builder /opt/q3-licenses/ /usr/share/licenses/q3/
+ARG Q3_SOURCE_BUNDLE_URL=""
+ARG Q3_SOURCE_BUNDLE_SHA256=""
+RUN printf '\n## This image\n\n-   Complete corresponding source: %s\n-   SHA-256: %s\n' \
+        "${Q3_SOURCE_BUNDLE_URL:-none, not a published build}" "${Q3_SOURCE_BUNDLE_SHA256:-none}" \
+        >> /usr/share/licenses/q3/THIRD_PARTY_NOTICES.md
+LABEL q3.source-bundle.url="${Q3_SOURCE_BUNDLE_URL}" \
+      q3.source-bundle.sha256="${Q3_SOURCE_BUNDLE_SHA256}"
 
 # Bare `q3`, so `podman-hpc run <image> q3 input.yml` and `shifter q3
 # input.yml` name the executable the same way the docs do. ENTRYPOINT would

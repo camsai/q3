@@ -36,10 +36,16 @@ ARG CUDA_VERSION=12.8.1
 # also stops the build from silently taking that default if it ever changes.
 ARG CUDA_ARCHITECTURES="80;90"
 
+# Ubuntu's FFTW, pinned for the reason the serial Dockerfile gives: the GPL
+# source container.yml publishes must be this exact build. The CUDA image's
+# combination with NVIDIA's runtime is under counsel review (TODOs.md §3.2).
+ARG FFTW_UBUNTU_VERSION=3.3.10-1ubuntu3
+
 # ---------- Stage 1: build ----------
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS builder
 
 ARG CUDA_ARCHITECTURES
+ARG FFTW_UBUNTU_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 
 # OpenBLAS for the same reason the serial Dockerfile gives: the reference
@@ -50,7 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
         git \
-        libfftw3-dev \
+        libfftw3-dev=${FFTW_UBUNTU_VERSION} \
         libopenblas-dev \
         libxc-dev \
         libomp-dev \
@@ -85,14 +91,26 @@ RUN cmake -S . -B build \
     && cmake --build build -j"$(nproc)" \
     && cmake --install build
 
+# The license file of each FetchContent dependency compiled into the binaries,
+# for the runtime stage's license directory (THIRD_PARTY_NOTICES.md).
+RUN for source in build/_deps/*-src; do \
+        target="/opt/q3-licenses/$(basename "$source" -src)"; \
+        mkdir -p "$target" \
+        && find "$source" -maxdepth 1 -type f \( -iname 'licen[cs]e*' -o -iname 'copying*' \) \
+            -exec cp {} "$target" \; \
+        && test -n "$(ls -A "$target")" || { echo "no license file in $source" >&2; exit 1; }; \
+    done
+
 # ---------- Stage 2: runtime ----------
 FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu24.04
 
 LABEL org.opencontainers.image.title="Q3 (CUDA)" \
       org.opencontainers.image.description="Q3 DFT engine with the NVIDIA CUDA GPU backend" \
       org.opencontainers.image.vendor="Mat3ra" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="GPL-3.0-or-later" \
+      q3.license.notice="This image is a combined work including FFTW and is distributed under GPL-3.0-or-later as a whole; Q3's own source is Apache-2.0."
 
+ARG FFTW_UBUNTU_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 
 # OpenBLAS matters here for the CPU-side stages and for `q3`, the serial
@@ -107,7 +125,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # GPU, and a missing driver surfaces at run time as a CUDA error rather than
 # as a link failure.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libfftw3-double3 \
+        libfftw3-double3=${FFTW_UBUNTU_VERSION} \
         libopenblas0-openmp \
         libxc9 \
         libgomp1 \
@@ -125,6 +143,18 @@ ENV PATH=/usr/local/bin:$PATH \
 
 RUN if ldd /usr/local/bin/* | grep 'not found'; then exit 1; fi \
     && q3 --version > /dev/null
+
+# Notices, license texts and the written offer, as in Dockerfile. NVIDIA's
+# license for the CUDA libraries is the base image's /NGC-DL-CONTAINER-LICENSE.
+COPY LICENSE.md THIRD_PARTY_NOTICES.md /usr/share/licenses/q3/
+COPY --from=builder /opt/q3-licenses/ /usr/share/licenses/q3/
+ARG Q3_SOURCE_BUNDLE_URL=""
+ARG Q3_SOURCE_BUNDLE_SHA256=""
+RUN printf '\n## This image\n\n-   Complete corresponding source: %s\n-   SHA-256: %s\n' \
+        "${Q3_SOURCE_BUNDLE_URL:-none, not a published build}" "${Q3_SOURCE_BUNDLE_SHA256:-none}" \
+        >> /usr/share/licenses/q3/THIRD_PARTY_NOTICES.md
+LABEL q3.source-bundle.url="${Q3_SOURCE_BUNDLE_URL}" \
+      q3.source-bundle.sha256="${Q3_SOURCE_BUNDLE_SHA256}"
 
 # The serial binary, as in the other images. The GPU one is reached by name:
 # `podman-hpc run --gpu <image> q3_gpu_cuda input.yml`.

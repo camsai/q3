@@ -60,3 +60,6 @@ q3_ase_workdir/
 
 # Optional install path
 install
+
+# License texts for `reuse lint`, downloaded from SPDX by the reuse pre-commit hook
+LICENSES/
