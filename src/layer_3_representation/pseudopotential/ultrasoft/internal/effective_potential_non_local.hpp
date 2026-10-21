@@ -7,6 +7,11 @@
  * Combines the bare D_ij^ion matrix with the G-space integral of
  * V_eff(G) × Q_ij(G) × e^{-iG·τ} to produce the effective D-matrix
  * used in the non-local Hamiltonian.
+ *
+ * Implements Eq. (13) of K. Laasonen, A. Pasquarello, R. Car, C. Lee &
+ * D. Vanderbilt, Phys. Rev. B 47, 10142 (1993), with V_eff their Eq. (12).
+ * For a PAW dataset the same integral is D̂_ij, Eq. (44) of G. Kresse &
+ * D. Joubert, Phys. Rev. B 59, 1758 (1999).
  */
 
 #include <complex>

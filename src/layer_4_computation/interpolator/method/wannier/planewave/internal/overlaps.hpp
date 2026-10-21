@@ -294,7 +294,7 @@ class PlanewaveBlochOverlapCalculator {
          * compute_q_g_single()'s general (nonzero-argument) branch is
          * normalized for its existing charge-density consumer
          * (add_augmentation_charges() / precompute_q_functions_g(), which
-         * use the identical interpolate_qrad()-based formula with no
+         * use the identical interpolate_augmentation_function()-based formula with no
          * volume factor of their own) -- not for the S-operator/overlap
          * convention this augmentation term needs, where Q_ij must be the
          * cell-size-independent real-space integral

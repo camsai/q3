@@ -7,6 +7,9 @@
  * of the ion-ion Coulomb interaction. Split into G-space and R-space sums
  * with an optimal convergence parameter α.
  *
+ * Differentiates the Ewald summation of P. P. Ewald, Ann. Phys. 369, 253
+ * (1921), with respect to the atomic positions.
+ *
  * This contribution is independent of pseudopotential type.
  */
 

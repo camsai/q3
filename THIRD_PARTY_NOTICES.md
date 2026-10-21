@@ -36,6 +36,18 @@ and SHA-256 at the end of its copy of this file and in the labels `q3.source-bun
 and `q3.source-bundle.sha256`. The bundle stays available for as long as the image is
 distributed.
 
+The commit the bundle names is permanent: the published repository's history is not
+rewritten after the public release, so the commit URL in the bundle's `README.txt` resolves
+for as long as the image is distributed. A snapshot of Q3's source at that commit is also
+available on request from the address in `LICENSE.md`'s copyright notice.
+
+The bundle covers FFTW, the GPL component Q3 itself links. The rest of each image is
+Ubuntu 24.04's binary packages, unmodified: the GNU C Library, the GCC runtime libraries
+and the base image's GPL and LGPL tools. Their corresponding source is Ubuntu's published
+source package for each version the image installs, at
+<https://archive.ubuntu.com/ubuntu/pool/> and on Launchpad, and
+`/usr/share/doc/<package>/copyright` in the image names each package's license.
+
 ## Components
 
 | Component                                                          | License                                 | Upstream                                |

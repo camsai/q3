@@ -9,6 +9,11 @@
  *
  * These fields are populated by the UPF readers when reading an
  * ultrasoft pseudopotential file.
+ *
+ * Q_ij(r) is Eq. (20) of D. Vanderbilt, Phys. Rev. B 41, 7892 (1990), and the
+ * overlap integrals enter his overlap operator, Eq. (11). The L-resolved,
+ * pseudized Q_ij^L(r) is Eqs. (27)–(28) of K. Laasonen, A. Pasquarello,
+ * R. Car, C. Lee & D. Vanderbilt, Phys. Rev. B 47, 10142 (1993).
  */
 
 #include <vector>

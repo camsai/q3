@@ -8,6 +8,9 @@
  * expanded with preconditioned residuals, and collapsed back to the target
  * number of bands when it reaches the maximum allowed size (4×number_of_bands).
  *
+ * Implements the iterative method of E. R. Davidson, J. Comput. Phys. 17, 87
+ * (1975), in block form: the subspace is expanded for all bands together.
+ *
  * The Hamiltonian application H|ψ⟩ is delegated to a
  * PlanewaveHamiltonianApplicator (serial or GPU).
  *

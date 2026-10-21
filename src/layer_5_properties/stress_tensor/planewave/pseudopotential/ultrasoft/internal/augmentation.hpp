@@ -8,10 +8,11 @@
  * pseudopotentials, this contribution is identically zero.
  *
  * Uses analytical derivatives of Q_ij(G) via the product rule applied to
- *   Q_ij(G) = sum_lm (-i)^l * c_lm * Ylm(G^) * qrad_l(|G|)
+ *   Q_ij(G) = sum_lm (-i)^l * c_lm * Ylm(G^) * Q_ij^l(|G|)
  * (Vanderbilt, PRB 41, 7892 (1990)), which has exactly two terms:
- *   dQ_ij/dG_alpha = sum_lm (-i)^l * c_lm * [dYlm/dG_alpha * qrad(|G|)
- *                    + Ylm * dqrad/d|G| * G_alpha/|G|]
+ *   dQ_ij/dG_alpha = sum_lm (-i)^l * c_lm * [dYlm/dG_alpha * Q_ij^l(|G|)
+ *                    + Ylm * dQ_ij^l/d|G| * G_alpha/|G|]
+ * where Q_ij^l(|G|) is the radial Fourier transform of Q_ij in channel l.
  *
  * Two stages, in this order because Q_ij(G) carries no atom dependence while
  * the occupancies and the structure factor carry nothing else:
@@ -19,6 +20,12 @@
  *      species rather than once per atom
  *   2. Weight by the projector occupancies and contract with
  *      V*(G)*e^{-iGτ}*G_alpha
+ *
+ * The expansion differentiated is the Fourier transform of Eq. (27) of
+ * K. Laasonen, A. Pasquarello, R. Car, C. Lee & D. Vanderbilt, Phys. Rev. B
+ * 47, 10142 (1993), with the radial transform of their Eq. (32). The strain
+ * derivative is taken in the stress formalism of O. H. Nielsen &
+ * R. M. Martin, Phys. Rev. B 32, 3780 (1985).
  */
 
 #include <cmath>
@@ -140,7 +147,7 @@ class UltrasoftAugmentationStressTensorCalculator {
 
         /**
          * One species type at a time, to bound the per-species dQ buffer below.
-         * Note that qrad(|G|) and its |G|-derivative are NOT pre-tabulated: both
+         * Note that Q_ij^l(|G|) and its |G|-derivative are NOT pre-tabulated: both
          * are interpolated inside the G loop, once per (pair, LM, G).
          */
 
@@ -252,18 +259,20 @@ class UltrasoftAugmentationStressTensorCalculator {
                                 if (g_abs < math::tolerances::zero_vector_magnitude_threshold)
                                     continue;
 
-                                Real qrad_value =
-                                    augmentation_q_table.interpolate_qrad(species_type_index,
-                                                                          projector_pair_index,
-                                                                          angular_momentum,
-                                                                          g_abs);
-
-                                Real qrad_derivative_value =
-                                    augmentation_q_table.interpolate_qrad_derivative(
+                                Real augmentation_function_value =
+                                    augmentation_q_table.interpolate_augmentation_function(
                                         species_type_index,
                                         projector_pair_index,
                                         angular_momentum,
                                         g_abs);
+
+                                Real augmentation_function_derivative_value =
+                                    augmentation_q_table
+                                        .interpolate_augmentation_function_derivative(
+                                            species_type_index,
+                                            projector_pair_index,
+                                            angular_momentum,
+                                            g_abs);
 
                                 Real ylm_value =
                                     spherical_harmonics_table.value(g_index, product_lm_index);
@@ -272,9 +281,9 @@ class UltrasoftAugmentationStressTensorCalculator {
 
                                 Real g_beta = g_cartesian_vectors[g_index][polarization_index_b];
                                 Real derivative_contribution =
-                                    dylm_value * qrad_value + ylm_value * qrad_derivative_value *
-                                                                  g_beta *
-                                                                  inverse_g_magnitude[g_index];
+                                    dylm_value * augmentation_function_value +
+                                    ylm_value * augmentation_function_derivative_value * g_beta *
+                                        inverse_g_magnitude[g_index];
 
                                 Real weighted = gaunt_coefficient_value * derivative_contribution;
 

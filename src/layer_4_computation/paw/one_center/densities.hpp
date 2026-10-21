@@ -17,6 +17,15 @@
  * makes the electrostatics cancel between the two grids, and it is exactly
  * what the gate on this file checks.
  *
+ * In equation numbers: n¹ and ñ¹ are Eqs. (16)–(17) of P. E. Blöchl, Phys.
+ * Rev. B 50, 17953 (1994), and Eqs. (5)–(7) of G. Kresse & D. Joubert, Phys.
+ * Rev. B 59, 1758 (1999), with ρ_ij their Eq. (7); the compensated ñ¹ above
+ * is their ñ¹ + n̂. The moment condition is Kresse & Joubert's Eq. (24), and
+ * the compensation charge their Eq. (27).
+ * Blöchl's own moments, his Eq. (24), also include the nuclear charge; the
+ * Kresse–Joubert form used here leaves it out and treats the ion-ion term by
+ * an Ewald sum instead.
+ *
  * Everything is r-weighted: partial waves are stored as r·φ, so a product of
  * two already carries the r² of the volume element, and the result is the
  * `u_L(r) = r² ρ_L(r)` form the radial Poisson solve expects. No factor of r²

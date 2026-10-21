@@ -6,6 +6,11 @@
  *
  * The planewave-specific implementation (PlanewaveAugmentationChargeTable)
  * provides the concrete Bessel-transform-based tables.
+ *
+ * The tables hold the radial transform of Eq. (32) of K. Laasonen,
+ * A. Pasquarello, R. Car, C. Lee & D. Vanderbilt, Phys. Rev. B 47, 10142
+ * (1993), for the Q_ij^L of their Eq. (27). The augmented density they feed
+ * is Eq. (18) of D. Vanderbilt, Phys. Rev. B 41, 7892 (1990).
  */
 
 #include "layer_0_core/math/interpolation/lagrange.hpp"
@@ -18,20 +23,23 @@ class AugmentationChargeTable {
     virtual ~AugmentationChargeTable() = default;
 
     /**
-     * Interpolate the L-resolved Q radial function at a given q value.
+     * Interpolate Q_ij^L(q), the radial Fourier transform of Q_ij in channel L,
+     * at a given q value.
      */
-    [[nodiscard]] virtual Real interpolate_qrad(int species_type_index,
-                                                int projector_pair_index,
-                                                int angular_momentum,
-                                                Real q_value) const = 0;
+    [[nodiscard]] virtual Real interpolate_augmentation_function(int species_type_index,
+                                                                 int projector_pair_index,
+                                                                 int angular_momentum,
+                                                                 Real q_value) const = 0;
 
     /**
-     * Interpolate the derivative dQ_rad/dq of the L-resolved Q radial function.
+     * Interpolate the derivative dQ_ij^L/dq of the radial Fourier transform of
+     * Q_ij in channel L.
      */
-    [[nodiscard]] virtual Real interpolate_qrad_derivative(int species_type_index,
-                                                           int projector_pair_index,
-                                                           int angular_momentum,
-                                                           Real q_value) const = 0;
+    [[nodiscard]] virtual Real
+    interpolate_augmentation_function_derivative(int species_type_index,
+                                                 int projector_pair_index,
+                                                 int angular_momentum,
+                                                 Real q_value) const = 0;
 
     /**
      * Interpolate the total (L=0) Q function at a given q value.

@@ -169,7 +169,7 @@ def test_every_static_dependency_ships_its_license(tmp_path):
         cache, packager.CMAKE_LISTS_PATH.read_text(), tmp_path / "licenses"
     )
     shipped = {path.stem for path in (tmp_path / "licenses").glob("*.txt")}
-    assert shipped == {"nlohmann_json", "yaml-cpp", "spdlog", "spglib"}
+    assert shipped == {"nlohmann_json", "yaml-cpp", "spdlog", "spglib", "pocketfft"}
     assert {component["name"] for component in components} == shipped
     assert (tmp_path / "licenses" / "yaml-cpp.txt").read_text() == "yaml-cpp license\n"
 
@@ -302,6 +302,22 @@ def _tree(tmp_path):
     (root / "licenses" / "spglib.txt").write_text("BSD\n")
     (root / "INSTALL.txt").write_text("install\n")
     return root
+
+
+def test_every_archive_carries_the_third_party_notices():
+    """The notices name FFTW as the GPL runtime dependency; the archive must carry them."""
+    assert "THIRD_PARTY_NOTICES.md" in packager.TOP_LEVEL_DOCUMENTS
+    assert (packager.REPOSITORY_ROOT / "THIRD_PARTY_NOTICES.md").is_file()
+
+
+def test_install_notes_say_fftw_is_a_gpl_runtime_dependency(tmp_path):
+    fftw = packager.LinkedLibrary(
+        "libfftw3.so.3", "/lib/libfftw3.so.3", "libfftw3-double3", "3.3.10"
+    )
+    packager.write_install_notes(tmp_path, "linux-x86_64", [fftw])
+    notes = (tmp_path / "INSTALL.txt").read_text()
+    assert "FFTW" in notes and "GPL-2.0-or-later" in notes
+    assert "THIRD_PARTY_NOTICES.md" in notes
 
 
 def test_two_archives_of_the_same_files_are_byte_identical(tmp_path, monkeypatch):

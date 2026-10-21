@@ -107,6 +107,7 @@ jobs:
           echo "$checksum  $name/fftw-$version.tar.gz" | sha256sum -c -
           cp Dockerfile Dockerfile.mpi Dockerfile.cuda .dockerignore THIRD_PARTY_NOTICES.md "$name/"
           echo "Q3 source: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$GITHUB_SHA ($LATEST_TAG)" > "$name/README.txt"
+          echo "That commit is permanent: the published repository's history is not rewritten after the public release." >> "$name/README.txt"
           tar -czf "$name.tar.gz" "$name"
           ls -l "$name" "$name.tar.gz"
           if [ "$PUBLISH" = true ]; then

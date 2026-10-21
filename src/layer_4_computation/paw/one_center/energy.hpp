@@ -16,6 +16,12 @@
  * — and getting the second of those wrong (using one core for both) shifts
  * every element with a core correction by a smooth, plausible amount.
  *
+ * In equation numbers: the split E = Ẽ + E¹ − Ẽ¹ is stated with Eq. (18) of
+ * P. E. Blöchl, Phys. Rev. B 50, 17953 (1994), whose Eqs. (20) and (21) are
+ * E¹ and Ẽ¹. The pseudized core in the pseudo branch's exchange-correlation
+ * term is the Kresse–Joubert form, Eqs. (22)–(23) of G. Kresse & D. Joubert,
+ * Phys. Rev. B 59, 1758 (1999).
+ *
  * The result is reported as four separate numbers rather than one total, on
  * purpose: they are the same four-way (Hartree|XC x AE|PS) per-atom split
  * Quantum ESPRESSO reports, so a µRy-gate failure can be bisected against the

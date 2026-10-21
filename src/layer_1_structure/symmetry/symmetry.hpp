@@ -4,6 +4,10 @@
  * Crystal symmetry via spglib.
  *
  * Provides spacegroup detection, symmetry operations, and IBZ k-point reduction.
+ *
+ * Space-group detection is delegated to spglib, cited as its documentation
+ * asks: A. Togo, K. Shinohara & I. Tanaka, Sci. Technol. Adv. Mater.: Methods
+ * 4, 2384822 (2024).
  */
 
 #include <cmath>

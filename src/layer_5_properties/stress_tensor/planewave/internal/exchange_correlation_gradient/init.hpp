@@ -6,7 +6,9 @@
  *
  * ExchangeCorrelationStressTensorCalculator's diagonal term is exact and
  * complete for a local functional; only gradient-corrected functionals add
- * the Nielsen-Martin ∇ρ⊗∇ρ term. That difference used to live behind a
+ * the Nielsen-Martin ∇ρ⊗∇ρ term (formalism: O. H. Nielsen & R. M. Martin,
+ * Phys. Rev. B 32, 3780 (1985); gradient-corrected extension: A. Dal Corso &
+ * R. Resta, Phys. Rev. B 50, 4327 (1994)). That difference used to live behind a
  * `requires_density_gradient()` branch inside compute(); it now lives in
  * create_exchange_correlation_gradient_stress_calculator(), which resolves a
  * local functional to the Null implementation (AGENTS.md § Calculator Design,

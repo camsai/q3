@@ -25,6 +25,11 @@ on:
       - "q3.def"
       - ".github/workflows/container.yml"
       - ".github/actions/**"
+      # Both are copied into every image's /usr/share/licenses/q3/ (the
+      # Dockerfiles' COPY line), so a change to either must cut a release
+      # and rebuild the images just as a Dockerfile change does.
+      - "LICENSE.md"
+      - "THIRD_PARTY_NOTICES.md"
   pull_request:
     branches: ["**"]
     paths: *monitor_paths

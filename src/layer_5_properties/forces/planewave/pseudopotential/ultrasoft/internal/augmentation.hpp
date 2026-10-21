@@ -14,6 +14,11 @@
  * which is the local-potential force with V_loc → V_eff and the species form
  * factor → A_I(G).
  *
+ * Implements the third term of Eq. (43) of K. Laasonen, A. Pasquarello,
+ * R. Car, C. Lee & D. Vanderbilt, Phys. Rev. B 47, 10142 (1993), with ρ_ij
+ * their Eq. (38) and the position dependence carried by the phase factor of
+ * their Eq. (61).
+ *
  * **This must be built from the same Q_ij(G) the density uses.** It used to be
  * assembled from `interpolate_qfunc`, a radial-only table indexed by *beta
  * projector* pairs, while ρ_ij is indexed by lm-expanded *channels*: the

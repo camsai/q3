@@ -357,8 +357,9 @@ class UltrasoftPlanewaveBasis : public NormConservingPlanewaveBasis {
                 (angular_momentum + angular_momentum_i + angular_momentum_j) % 2 != 0)
                 continue;
 
-            Real qr_val = augmentation_q_table_.interpolate_qrad(
-                species_type_index, projector_pair_index, angular_momentum, g_norm);
+            Real augmentation_function_value =
+                augmentation_q_table_.interpolate_augmentation_function(
+                    species_type_index, projector_pair_index, angular_momentum, g_norm);
             int offset_in_shell = product_lm_index - angular_momentum * angular_momentum;
             int magnetic_projection = (offset_in_shell == 0)
                                           ? 0
@@ -366,7 +367,7 @@ class UltrasoftPlanewaveBasis : public NormConservingPlanewaveBasis {
                                                                         : -(offset_in_shell / 2));
             Real spherical_harmonic_value =
                 compute_real_spherical_harmonic(angular_momentum, magnetic_projection, g_cartesian);
-            Real integrand_contribution = qr_val * spherical_harmonic_value;
+            Real integrand_contribution = augmentation_function_value * spherical_harmonic_value;
 
             switch (angular_momentum % 4) {
                 case 0:
@@ -462,8 +463,11 @@ class UltrasoftPlanewaveBasis : public NormConservingPlanewaveBasis {
      * Pre-compute Q_ij(G) for all G-vectors and all channel pairs per species.
      *
      * For each species s with N_ch channels and each pair (i,j):
-     *   Q_ij(G) = Σ_{lm} gaunt(lm, lm_i, lm_j) * qrad(s, beta_pair, l, |G|)
+     *   Q_ij(G) = Σ_{lm} gaunt(lm, lm_i, lm_j) * Q_ij^l(s, |G|)
      *             * Ylm(Ĝ) * (-i)^l
+     *
+     * where Q_ij^l(s, |G|) is the radial Fourier transform of species s's
+     * augmentation function Q_ij in channel l (interpolate_augmentation_function).
      *
      * Stored as q_functions_g_[species][pair_linear_index][g_index]
      * where pair_linear_index = channel_i * n_channels + channel_j.
@@ -587,14 +591,16 @@ class UltrasoftPlanewaveBasis : public NormConservingPlanewaveBasis {
                     Real q_g_imag = 0.0;
 
                     for (const auto& term : pair.gaunt_terms) {
-                        Real qr_val =
-                            augmentation_q_table_.interpolate_qrad(species_type_index,
-                                                                   term.projector_pair_index,
-                                                                   term.angular_momentum,
-                                                                   g_magnitude);
+                        Real augmentation_function_value =
+                            augmentation_q_table_.interpolate_augmentation_function(
+                                species_type_index,
+                                term.projector_pair_index,
+                                term.angular_momentum,
+                                g_magnitude);
                         Real spherical_harmonic_value =
                             spherical_harmonics_table_.value(g_index, term.product_lm_index);
-                        Real integrand_contribution = qr_val * spherical_harmonic_value;
+                        Real integrand_contribution =
+                            augmentation_function_value * spherical_harmonic_value;
 
                         switch (term.angular_momentum % 4) {
                             case 0:

@@ -258,6 +258,11 @@ content-gated exports. What that means if you are contributing:
 -   **Do not push directly to the published tree.** Its history is a series of
     `sync:` commits, each a gated snapshot of the raw repository; a direct
     push would be overwritten by the next export.
+-   **The published tree's history is never rewritten after the public
+    release.** Every container image's source offer (`THIRD_PARTY_NOTICES.md`)
+    names a commit of it, and that offer has to hold for as long as the image
+    is distributed. A mistake in published history is corrected by a new
+    commit, never by a force-push.
 -   **The HARD RULES above apply to every contribution.** An automated gate
     enforces them on the way out, but a violation is far cheaper to avoid than
     to unwind.

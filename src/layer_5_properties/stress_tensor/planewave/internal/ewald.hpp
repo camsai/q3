@@ -6,6 +6,10 @@
  * Computes the Ewald (ion-ion electrostatic) contribution to the stress tensor
  * using the Ewald summation technique in both G-space and R-space.
  *
+ * Differentiates the Ewald summation of P. P. Ewald, Ann. Phys. 369, 253
+ * (1921), with respect to strain, in the stress formalism of O. H. Nielsen &
+ * R. M. Martin, Phys. Rev. B 32, 3780 (1985).
+ *
  * This is a purely planewave contribution, independent of pseudopotential type.
  */
 

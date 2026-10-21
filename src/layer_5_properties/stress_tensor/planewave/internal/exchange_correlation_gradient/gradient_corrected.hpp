@@ -4,6 +4,11 @@
  * GradientCorrectedExchangeCorrelationGradientStressCalculator — the GGA
  * ∇ρ⊗∇ρ stress term (Nielsen-Martin), unpolarized and LSDA.
  *
+ * The stress formalism is that of O. H. Nielsen & R. M. Martin, Phys. Rev. B
+ * 32, 3780 (1985), written for the local-density approximation; its
+ * gradient-corrected extension, which adds this term, is A. Dal Corso &
+ * R. Resta, Phys. Rev. B 50, 4327 (1994).
+ *
  * The numerical stream is the one the pre-decomposition
  * `requires_density_gradient()` branch produced -- same FFTs in the same
  * order, same accumulation loops -- so stress tensors are bit-identical to

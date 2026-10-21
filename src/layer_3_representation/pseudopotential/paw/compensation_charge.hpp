@@ -27,6 +27,14 @@
  * discrepancy from parity comparisons with codes that use it, rather than
  * leaving it to be explained later; the parity runs confirm the agreement.
  *
+ * In equation numbers: the shape is the two-Bessel form of Eq. (61) of
+ * G. Kresse & D. Joubert, Phys. Rev. B 59, 1758 (1999), normalized to unit
+ * moment as in their Eq. (62); the moments it is scaled by are their Eq. (26),
+ * and the charge it builds is their Eq. (27). The two wavenumbers here are
+ * taken from the zeros of j_L, with the coefficients fixing the unit moment
+ * and the zero slope; their Eq. (63) takes the wavenumbers from the zeros of
+ * j_L′ instead and uses the coefficients to make g_L vanish at the radius.
+ *
  * Everything here is r-weighted, matching the partial waves and the rest of
  * the one-center module: Q_ij^L(r) as stored includes the r² of the volume
  * element, so `∫ Q_ij^L(r) r^L dr` is the moment directly.

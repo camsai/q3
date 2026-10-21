@@ -6,6 +6,9 @@
  * Generates a uniform k-point grid with configurable dimensions, offsets,
  * and weights. Supports adding individual k-points for irreducible Brillouin
  * zone reduction.
+ *
+ * Implements the uniform meshes of H. J. Monkhorst & J. D. Pack, Phys. Rev. B
+ * 13, 5188 (1976).
  */
 
 #include <cmath>

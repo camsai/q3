@@ -15,6 +15,8 @@ namespace q3 {
 /**
  * Compute the Ewald ion-ion electrostatic energy using both
  * G-space and real-space sums with optimal convergence parameter.
+ *
+ * Implements the Ewald summation of P. P. Ewald, Ann. Phys. 369, 253 (1921).
  */
 inline Real compute_ewald(const Crystal& crystal_structure, const PlanewaveBasis& planewave_basis) {
     using namespace constants;

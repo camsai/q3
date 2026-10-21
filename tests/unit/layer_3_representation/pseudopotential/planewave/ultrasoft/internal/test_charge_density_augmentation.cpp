@@ -24,8 +24,8 @@ TEST(AugmentationQTable, DefaultConstructedInterpolationReturnsZero) {
     AugmentationQTable table;
 
     // Interpolation on an uninitialized table should return 0.0
-    EXPECT_DOUBLE_EQ(table.interpolate_qrad(0, 0, 0, 1.0), 0.0);
-    EXPECT_DOUBLE_EQ(table.interpolate_qrad_derivative(0, 0, 0, 1.0), 0.0);
+    EXPECT_DOUBLE_EQ(table.interpolate_augmentation_function(0, 0, 0, 1.0), 0.0);
+    EXPECT_DOUBLE_EQ(table.interpolate_augmentation_function_derivative(0, 0, 0, 1.0), 0.0);
     EXPECT_DOUBLE_EQ(table.interpolate_qfunc(0, 0, 1.0), 0.0);
 }
 
@@ -82,9 +82,9 @@ TEST(AugmentationQTable, AugmentationChargeSymmetryInProjectorIndices) {
                 for (int q_index = 1; q_index < number_of_q_points - 2; q_index += 20) {
                     Real q_value = q_index * q_spacing;
 
-                    Real value_ij = table.interpolate_qrad(
+                    Real value_ij = table.interpolate_augmentation_function(
                         0, projector_pair_index_ij, angular_momentum, q_value);
-                    Real value_ji = table.interpolate_qrad(
+                    Real value_ji = table.interpolate_augmentation_function(
                         0, projector_pair_index_ji, angular_momentum, q_value);
 
                     EXPECT_DOUBLE_EQ(value_ij, value_ji)
@@ -161,9 +161,9 @@ TEST(AugmentationQTable, DerivativeSymmetryInProjectorIndices) {
                 for (int q_index = 1; q_index < number_of_q_points - 2; q_index += 30) {
                     Real q_value = q_index * q_spacing;
 
-                    Real derivative_ij = table.interpolate_qrad_derivative(
+                    Real derivative_ij = table.interpolate_augmentation_function_derivative(
                         0, projector_pair_index_ij, angular_momentum, q_value);
-                    Real derivative_ji = table.interpolate_qrad_derivative(
+                    Real derivative_ji = table.interpolate_augmentation_function_derivative(
                         0, projector_pair_index_ji, angular_momentum, q_value);
 
                     EXPECT_DOUBLE_EQ(derivative_ij, derivative_ji)
@@ -208,7 +208,7 @@ TEST(AugmentationQTable, AugmentationChargesAreNonZeroAtFiniteQ) {
     for (int beta_index_i = 0; beta_index_i < number_of_projectors && !found_nonzero;
          beta_index_i++) {
         int projector_pair_index = beta_index_i * number_of_projectors + beta_index_i;
-        Real value = table.interpolate_qrad(0, projector_pair_index, 0, 0.5);
+        Real value = table.interpolate_augmentation_function(0, projector_pair_index, 0, 0.5);
         if (std::abs(value) > 1e-15) {
             found_nonzero = true;
         }
@@ -288,7 +288,7 @@ TEST(AugmentationQTable, FlatFunctionFallbackAppliesAtEveryAllowedAngularMomentu
      * must come from the flat function, not be silently dropped.
      */
     int off_diagonal_pair = 0 * 2 + 1;
-    Real off_diagonal_at_l2 = table.interpolate_qrad(0, off_diagonal_pair, 2, 0.5);
+    Real off_diagonal_at_l2 = table.interpolate_augmentation_function(0, off_diagonal_pair, 2, 0.5);
     EXPECT_GT(std::abs(off_diagonal_at_l2), 1e-10)
         << "s-d augmentation charge at its only allowed L (2) must not be zero "
         << "when the pseudopotential only provides the flat, un-decomposed function";
@@ -298,7 +298,7 @@ TEST(AugmentationQTable, FlatFunctionFallbackAppliesAtEveryAllowedAngularMomentu
      * must equally not be silently dropped.
      */
     int diagonal_pair = 1 * 2 + 1;
-    Real diagonal_at_l2 = table.interpolate_qrad(0, diagonal_pair, 2, 0.5);
+    Real diagonal_at_l2 = table.interpolate_augmentation_function(0, diagonal_pair, 2, 0.5);
     EXPECT_GT(std::abs(diagonal_at_l2), 1e-10)
         << "d-d augmentation charge at L=2 must not be zero when only the flat "
         << "function is available";

@@ -51,7 +51,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 CMAKE_LISTS_PATH = REPOSITORY_ROOT / "CMakeLists.txt"
 
 # Files from the repository root that every archive carries.
-TOP_LEVEL_DOCUMENTS = ("LICENSE.md", "README.md", "PRERELEASE-NOTICE.md")
+TOP_LEVEL_DOCUMENTS = ("LICENSE.md", "README.md", "PRERELEASE-NOTICE.md", "THIRD_PARTY_NOTICES.md")
 
 # License-file names, tried in order, inside a dependency's source tree.
 LICENSE_FILE_NAMES = ("LICENSE", "LICENSE.txt", "LICENSE.md", "LICENSE.MIT", "COPYING")
@@ -83,6 +83,10 @@ STATIC_DEPENDENCIES = (
     StaticDependency("yaml-cpp", "MIT", "github", "jbeder/yaml-cpp"),
     StaticDependency("spdlog", "MIT", "github", "gabime/spdlog"),
     StaticDependency("spglib", "BSD-3-Clause", "github", "spglib/spglib"),
+    # Header-only, compiled into every build: the FFTW build carries the
+    # PocketFFT grid too, so the binaries contain it whichever backend is
+    # selected. Pinned to a commit, so its "version" is that hash.
+    StaticDependency("pocketfft", "BSD-3-Clause", "github", "mreineck/pocketfft"),
     StaticDependency("Libxc", "MPL-2.0", "gitlab", "libxc/libxc", required=False),
 )
 
@@ -514,6 +518,11 @@ def write_install_notes(root: Path, platform_name: str, libraries: list[LinkedLi
         "Licenses: Q3 is Apache-2.0 (LICENSE.md). The libraries compiled into the",
         "executables carry their own licenses, in licenses/. sbom.cdx.json lists",
         "every component, statically and dynamically linked, with its version.",
+        "",
+        "FFTW (libfftw3) is licensed under the GPL-2.0-or-later. It is a runtime",
+        "dependency loaded from your system, not part of this archive; the",
+        "executables link it dynamically. THIRD_PARTY_NOTICES.md lists every",
+        "third-party component and its license.",
     ]
     (root / "INSTALL.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

@@ -195,6 +195,10 @@ assemble_total_stress_and_log(bool has_ultrasoft,
  * Compute the stress tensor from converged SCF.
  * Uses the Nielsen-Martin formalism.
  *
+ * The formalism is that of O. H. Nielsen & R. M. Martin, Phys. Rev. B 32, 3780
+ * (1985); its plane-wave expressions are in O. H. Nielsen & R. M. Martin,
+ * Phys. Rev. B 32, 3792 (1985).
+ *
  * This is the top-level public API that orchestrates all component calculators.
  * Extracts crystal, planewave_basis, kpoint_grid, and projector_overlap_coefficients
  * from the state. Returns (StressTensorResult, StressTensorContributions).

@@ -52,12 +52,13 @@ class AugmentationQTable : public AugmentationChargeTable {
     }
 
     /**
-     * Interpolate the L-resolved Q radial function at a given q value.
+     * Interpolate Q_ij^L(q), the radial Fourier transform of Q_ij in channel L,
+     * at a given q value.
      */
-    [[nodiscard]] Real interpolate_qrad(int species_type_index,
-                                        int projector_pair_index,
-                                        int angular_momentum,
-                                        Real q_value) const override {
+    [[nodiscard]] Real interpolate_augmentation_function(int species_type_index,
+                                                         int projector_pair_index,
+                                                         int angular_momentum,
+                                                         Real q_value) const override {
         if (species_type_index >= static_cast<int>(augmentation_q_radial_table_.size()) ||
             projector_pair_index >=
                 static_cast<int>(augmentation_q_radial_table_[species_type_index].size()) ||
@@ -78,12 +79,13 @@ class AugmentationQTable : public AugmentationChargeTable {
     }
 
     /**
-     * Interpolate the derivative dQ_rad/dq of the L-resolved Q radial function.
+     * Interpolate the derivative dQ_ij^L/dq of the radial Fourier transform of
+     * Q_ij in channel L.
      */
-    [[nodiscard]] Real interpolate_qrad_derivative(int species_type_index,
-                                                   int projector_pair_index,
-                                                   int angular_momentum,
-                                                   Real q_value) const override {
+    [[nodiscard]] Real interpolate_augmentation_function_derivative(int species_type_index,
+                                                                    int projector_pair_index,
+                                                                    int angular_momentum,
+                                                                    Real q_value) const override {
         if (species_type_index >= static_cast<int>(augmentation_q_radial_table_.size()) ||
             projector_pair_index >=
                 static_cast<int>(augmentation_q_radial_table_[species_type_index].size()) ||

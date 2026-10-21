@@ -199,7 +199,7 @@ inline std::vector<std::vector<Real>> compute_ultrasoft_effective_d_matrix(
                 struct GauntTerm {
                     int product_lm_index;
                     int angular_momentum;
-                    int projector_pair_index_for_qrad;
+                    int projector_pair_index_for_augmentation_function;
                     Real gaunt_coefficient_value;
                 };
                 std::vector<GauntTerm> valid_gaunt_terms;
@@ -237,14 +237,16 @@ inline std::vector<std::vector<Real>> compute_ultrasoft_effective_d_matrix(
                     Real q_g_imag = 0.0;
                     Real g_magnitude = g_vector_magnitudes[g_index];
                     for (const auto& term : valid_gaunt_terms) {
-                        Real qr_val = augmentation_q_table.interpolate_qrad(
-                            species_type_index,
-                            term.projector_pair_index_for_qrad,
-                            term.angular_momentum,
-                            g_magnitude);
+                        Real augmentation_function_value =
+                            augmentation_q_table.interpolate_augmentation_function(
+                                species_type_index,
+                                term.projector_pair_index_for_augmentation_function,
+                                term.angular_momentum,
+                                g_magnitude);
                         Real spherical_harmonic_value =
                             spherical_harmonics_table.value(g_index, term.product_lm_index);
-                        Real integrand_contribution = qr_val * spherical_harmonic_value;
+                        Real integrand_contribution =
+                            augmentation_function_value * spherical_harmonic_value;
                         switch (term.angular_momentum % 4) {
                             case 0:
                                 q_g_real += term.gaunt_coefficient_value * integrand_contribution;

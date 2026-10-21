@@ -18,6 +18,11 @@
  * them silently. So this is a decoration of the ultrasoft result, never a
  * replacement for it.
  *
+ * In equation numbers, the three pieces are the D_ij of Eq. (47) of
+ * G. Kresse & D. Joubert, Phys. Rev. B 59, 1758 (1999): the grid side is their
+ * D̂_ij, Eq. (44), and this file builds the Hartree and exchange-correlation
+ * part of D¹_ij − D̃¹_ij, Eqs. (45)–(46), whose kinetic part is in D⁰.
+ *
  * The construction is the derivative written out. The one-center energy depends
  * on ρ_ij only through the two densities, so ∂E/∂ρ_ij is that pair's own density
  * — φ_i φ_j on the all-electron side, φ̃_i φ̃_j + Q_ij on the pseudo side —

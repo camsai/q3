@@ -6,7 +6,9 @@
  *
  * A local functional resolves to the Null object (its whole XC stress is the
  * diagonal term the caller already added); a gradient-corrected functional
- * gets the Nielsen-Martin term. Mirrors
+ * gets the Nielsen-Martin term (O. H. Nielsen & R. M. Martin, Phys. Rev. B 32,
+ * 3780 (1985), extended to gradient corrections by A. Dal Corso & R. Resta,
+ * Phys. Rev. B 50, 4327 (1994)). Mirrors
  * create_exchange_correlation_potential_calculator() on the effective-potential
  * side, so the two consumers of `requires_density_gradient()` are both
  * factories.
