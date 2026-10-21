@@ -39,6 +39,11 @@ def test_the_regenerated_statistics_file_is_not_counted():
     assert not checker.is_excluded("FUNCTIONALITY.md")
 
 
+def test_an_addons_regenerated_statistics_file_is_not_counted():
+    assert checker.is_excluded("src/addons/alpha/STATISTICS.md")
+    assert not checker.is_excluded("src/addons/alpha/FUNCTIONALITY.md")
+
+
 def test_vendored_and_lock_files_are_not_counted():
     assert checker.is_excluded("schemas/esse/definitions/thing.json")
     assert checker.is_excluded("package-lock.json")

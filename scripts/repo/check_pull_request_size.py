@@ -49,6 +49,7 @@ DEFAULT_CEILING = 3000
 EXCLUDED_PATTERNS = (
     re.compile(r"^src/generated/"),
     re.compile(r"^STATISTICS\.md$"),
+    re.compile(r"^src/addons/[^/]+/STATISTICS\.md$"),
     re.compile(r"^schemas/esse/"),
     re.compile(r"^examples/data/"),
     re.compile(r"(^|/)(package-lock\.json|poetry\.lock|uv\.lock|Cargo\.lock)$"),

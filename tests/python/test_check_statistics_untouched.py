@@ -160,6 +160,33 @@ def test_the_range_ignores_what_the_base_branch_did_to_the_file(repository):
     assert run_range("main...feature") == 0, "the refresh commit on main is not the branch's doing"
 
 
+# ── Each add-on's own file ────────────────────────────────────────────────────
+
+
+def test_an_addons_statistics_file_alone_is_refused(repository):
+    """An add-on's STATISTICS.md is generated too, and held to the same rule."""
+    (repository / "src" / "addons" / "alpha").mkdir(parents=True)
+    (repository / "src" / "addons" / "alpha" / "STATISTICS.md").write_text("hand written\n")
+    git(repository, "add", "src/addons/alpha/STATISTICS.md")
+
+    assert run_staged() == 1
+
+
+def test_an_addons_file_may_move_with_the_generator_when_current(repository):
+    (repository / "src" / "addons" / "alpha").mkdir(parents=True)
+    (repository / "src" / "addons" / "alpha" / "reader.hpp").write_text("int alpha;\n")
+    generator = repository / "scripts" / "repo" / "generate_statistics.py"
+    generator.write_text(
+        generator.read_text().replace("| C++ standard | C++17 |", "| C++ standard | C++20 |")
+    )
+    subprocess.run(
+        [sys.executable, "scripts/repo/generate_statistics.py"], cwd=repository, check=True
+    )
+    git(repository, "add", "-A")
+
+    assert run_staged() == 0
+
+
 # ── The wiring ────────────────────────────────────────────────────────────────
 
 

@@ -3,21 +3,28 @@
 Codebase statistics generator for Q3.
 
 Counts source files, test cases, and lines, then writes STATISTICS.md at the
-repository root. STATISTICS.md is generated — do not edit it by hand.
+repository root for the core, and one STATISTICS.md per build-time add-on in
+that add-on's own directory, src/addons/<name>/. Each is generated -- do not
+edit them by hand.
 
 Usage:
-    # Regenerate STATISTICS.md (default):
+    # Regenerate every statistics file (default):
     python scripts/repo/generate_statistics.py
 
-    # Verify STATISTICS.md is up-to-date (exit 1 if stale), for CI:
+    # Verify every statistics file is up-to-date (exit 1 if any is stale), for CI:
     python scripts/repo/generate_statistics.py --check
 
-Counting rules:
+Counting rules, applied to the core (every path without an `addons` segment)
+and to each add-on (the paths under its `addons/<name>/`) separately:
   - Header files:        src/**/*.hpp
   - Translation units:   src/**/*.{cpp,cu,mm}
   - C++ test cases:      occurrences of TEST( and TEST_F( in tests/**/*.cpp
   - Python test cases:   functions matching ^def test_ in tests/<suite>/**/*.py
   - Lines of C++:        non-empty lines across src/**/*.{hpp,cpp,cu,mm}
+
+The core export and each add-on's export recount the tree they write, through
+write_core_statistics and write_addon_statistics, so a published copy always
+describes the tree it ships in.
 """
 
 import argparse
@@ -26,79 +33,135 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_PATH = PROJECT_ROOT / "STATISTICS.md"
+OUTPUT_NAME = "STATISTICS.md"
+ADDON_SEGMENT = "addons"
 
 CPP_TEST_PATTERN = re.compile(r"\bTEST(?:_F)?\s*\(")
 PYTHON_TEST_PATTERN = re.compile(r"^def\s+test_", re.MULTILINE)
+SOURCE_PATTERNS = ("src/**/*.cpp", "src/**/*.cu", "src/**/*.mm")
 
 
-def count_files(glob_pattern):
-    return sum(1 for _ in PROJECT_ROOT.glob(glob_pattern))
+def addon_of(relative_path):
+    """The add-on a path belongs to, the segment after `addons/`, or None for the core."""
+    directories = Path(relative_path).parts[:-1]
+    for index, directory in enumerate(directories[:-1]):
+        if directory == ADDON_SEGMENT:
+            return directories[index + 1]
+    return None
 
 
-def count_nonempty_lines(glob_patterns):
+def matching_files(root, pattern, addon):
+    """The files under ``root`` that match a glob and belong to ``addon`` (None: the core)."""
+    for path in root.glob(pattern):
+        if path.is_file() and addon_of(path.relative_to(root)) == addon:
+            yield path
+
+
+def count_files(root, patterns, addon):
+    return sum(1 for pattern in patterns for _ in matching_files(root, pattern, addon))
+
+
+def count_nonempty_lines(root, patterns, addon):
     total = 0
-    for pattern in glob_patterns:
-        for path in PROJECT_ROOT.glob(pattern):
+    for pattern in patterns:
+        for path in matching_files(root, pattern, addon):
             text = path.read_text(encoding="utf-8", errors="replace")
             total += sum(1 for line in text.splitlines() if line.strip())
     return total
 
 
-def count_cpp_tests(glob_pattern):
+def count_matches(root, pattern, addon, expression):
     total = 0
-    for path in PROJECT_ROOT.glob(glob_pattern):
+    for path in matching_files(root, pattern, addon):
         text = path.read_text(encoding="utf-8", errors="replace")
-        total += len(CPP_TEST_PATTERN.findall(text))
+        total += len(expression.findall(text))
     return total
 
 
-def count_python_tests(directory):
-    base = PROJECT_ROOT / directory
-    if not base.is_dir():
-        return 0
-    total = 0
-    for path in base.rglob("*.py"):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        total += len(PYTHON_TEST_PATTERN.findall(text))
-    return total
-
-
-def collect_metrics():
+def collect_metrics(root=PROJECT_ROOT, addon=None):
+    """The table's counts for the core (``addon`` None) or for one add-on."""
     return {
-        "Header files (`.hpp`)": count_files("src/**/*.hpp"),
-        "Translation units (`.cpp`/`.cu`/`.mm`)": count_files("src/**/*.cpp")
-        + count_files("src/**/*.cu")
-        + count_files("src/**/*.mm"),
+        "Header files (`.hpp`)": count_files(root, ["src/**/*.hpp"], addon),
+        "Translation units (`.cpp`/`.cu`/`.mm`)": count_files(root, SOURCE_PATTERNS, addon),
         "Lines of C++ (non-empty)": count_nonempty_lines(
-            ["src/**/*.hpp", "src/**/*.cpp", "src/**/*.cu", "src/**/*.mm"]
+            root, ["src/**/*.hpp", *SOURCE_PATTERNS], addon
         ),
-        "C++ unit/integration tests": count_cpp_tests("tests/**/*.cpp"),
-        "Python validation tests": count_python_tests("tests/validation"),
-        "Python regression tests": count_python_tests("tests/regression"),
+        "C++ unit/integration tests": count_matches(
+            root, "tests/**/*.cpp", addon, CPP_TEST_PATTERN
+        ),
+        "Python validation tests": count_matches(
+            root, "tests/validation/**/*.py", addon, PYTHON_TEST_PATTERN
+        ),
+        "Python regression tests": count_matches(
+            root, "tests/regression/**/*.py", addon, PYTHON_TEST_PATTERN
+        ),
     }
 
 
-def render(metrics):
+def render(metrics, addon=None):
+    if addon is None:
+        title = "# Q3 — Codebase Statistics"
+        scope = (
+            "> Counts the core only: each build-time add-on (paths with an `addons` "
+            "segment) has its own STATISTICS.md."
+        )
+        build_style = (
+            "| Build style | Header-heavy library + `q3`, `q3_mpi`, `q3_gpu_*`, "
+            "`q3_utility` executables |"
+        )
+    else:
+        title = f"# Q3 add-on `{addon}` — Codebase Statistics"
+        scope = (
+            f"> Counts this add-on only, its paths under `addons/{addon}/`; the core's "
+            "counts are in the root STATISTICS.md."
+        )
+        build_style = "| Build style | Built into the core's executables when present |"
     lines = [
-        "# Q3 — Codebase Statistics",
+        title,
         "",
         "> Generated by `scripts/repo/generate_statistics.py` — do not edit by hand.",
         "> Run `python scripts/repo/generate_statistics.py` to regenerate.",
+        scope,
         "",
         "| Metric | Value |",
         "| ------ | ----: |",
     ]
     for name, value in metrics.items():
         lines.append(f"| {name} | {value:,} |")
-    lines.extend(
-        [
-            "| C++ standard | C++17 |",
-            "| Build style | Header-heavy library + `q3`, `q3_mpi`, `q3_gpu_*`, `q3_utility` executables |",
-            "",
-        ]
-    )
+    lines.extend(["| C++ standard | C++17 |", build_style, ""])
     return "\n".join(lines)
+
+
+def addon_names(root=PROJECT_ROOT):
+    """The add-ons a tree holds: the directories under src/addons/."""
+    directory = root / "src" / ADDON_SEGMENT
+    if not directory.is_dir():
+        return []
+    return sorted(path.name for path in directory.iterdir() if path.is_dir())
+
+
+def addon_output_path(root, addon):
+    return root / "src" / ADDON_SEGMENT / addon / OUTPUT_NAME
+
+
+def expected_files(root=PROJECT_ROOT):
+    """Every statistics file a tree should hold, mapped to its content."""
+    files = {root / OUTPUT_NAME: render(collect_metrics(root))}
+    for addon in addon_names(root):
+        files[addon_output_path(root, addon)] = render(collect_metrics(root, addon), addon)
+    return files
+
+
+def write_core_statistics(root):
+    """Write the core's STATISTICS.md for the tree at ``root``, an export's included."""
+    (root / OUTPUT_NAME).write_text(render(collect_metrics(root)), encoding="utf-8")
+
+
+def write_addon_statistics(root, addon):
+    """Write ``addon``'s own STATISTICS.md for the tree at ``root``."""
+    addon_output_path(root, addon).write_text(
+        render(collect_metrics(root, addon), addon), encoding="utf-8"
+    )
 
 
 def main():
@@ -106,24 +169,31 @@ def main():
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Verify STATISTICS.md is up-to-date (exit 1 if stale)",
+        help="Verify every statistics file is up-to-date (exit 1 if any is stale)",
     )
     args = parser.parse_args()
 
-    content = render(collect_metrics())
+    files = expected_files()
 
     if args.check:
-        if not OUTPUT_PATH.exists() or OUTPUT_PATH.read_text(encoding="utf-8") != content:
+        stale = [
+            path
+            for path, content in files.items()
+            if not path.exists() or path.read_text(encoding="utf-8") != content
+        ]
+        if stale:
+            names = ", ".join(str(path.relative_to(PROJECT_ROOT)) for path in stale)
             print(
-                "STATISTICS.md is stale. Run 'python scripts/repo/generate_statistics.py'.",
+                f"Stale: {names}. Run 'python scripts/repo/generate_statistics.py'.",
                 file=sys.stderr,
             )
             sys.exit(1)
-        print("STATISTICS.md is up-to-date.")
+        print("Every statistics file is up-to-date.")
         return
 
-    OUTPUT_PATH.write_text(content, encoding="utf-8")
-    print(f"Wrote {OUTPUT_PATH.relative_to(PROJECT_ROOT)}")
+    for path, content in files.items():
+        path.write_text(content, encoding="utf-8")
+        print(f"Wrote {path.relative_to(PROJECT_ROOT)}")
 
 
 if __name__ == "__main__":

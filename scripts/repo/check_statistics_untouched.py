@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that a change does not carry STATISTICS.md.
+"""Check that a change does not carry STATISTICS.md, or an add-on's own copy.
 
 STATISTICS.md counts lines and test cases across the whole tree, so it moves
 with almost every commit that touches source. Carrying it in a pull request
@@ -23,6 +23,9 @@ Two modes, the same pair as scripts/repo/check_dco_signoff.py:
   .github/workflows/statistics-guard.yml, because a pre-commit hook only binds
   developers who installed it.
 
+Each build-time add-on has its own STATISTICS.md, in src/addons/<name>/, counting
+only its own paths, and the same holds for it.
+
 The one legitimate reason for STATISTICS.md to appear in a change is a change
 to the generator itself -- a new metric, a renamed row. Then both files move
 together, and this asks instead that the committed file match what the new
@@ -30,22 +33,30 @@ generator produces.
 """
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATISTICS_PATH = "STATISTICS.md"
+#: Each build-time add-on's own counts, beside its code.
+ADDON_STATISTICS_PATH = re.compile(r"^src/addons/[^/]+/STATISTICS\.md$")
 GENERATOR_PATH = "scripts/repo/generate_statistics.py"
 
-REFRESHED_AUTOMATICALLY = f"""\
-{STATISTICS_PATH} is generated, and since 2026-09-11 it is refreshed on `main`
-automatically rather than by contributors. Drop it from this change:
+REFRESHED_AUTOMATICALLY = """\
+Generated statistics, refreshed on `main` automatically since 2026-09-11 rather
+than by contributors: {paths}. Drop them from this change:
 
-    git restore --staged --worktree {STATISTICS_PATH}
+    git restore --staged --worktree {paths}
 
 The numbers on `main` will be correct one push after this merges. If you meant
-to change what is measured, stage {GENERATOR_PATH} along with it."""
+to change what is measured, stage {generator} along with them."""
+
+
+def is_generated(path):
+    """Whether a path is one of the generated statistics files."""
+    return path == STATISTICS_PATH or bool(ADDON_STATISTICS_PATH.match(path))
 
 
 def changed_files(staged, range_specifier):
@@ -60,7 +71,7 @@ def changed_files(staged, range_specifier):
 
 
 def generated_file_is_current():
-    """Whether the committed STATISTICS.md matches what the generator now writes."""
+    """Whether every committed statistics file matches what the generator now writes."""
     completed = subprocess.run(
         [sys.executable, GENERATOR_PATH, "--check"],
         cwd=PROJECT_ROOT,
@@ -74,17 +85,21 @@ def generated_file_is_current():
 def check(staged, range_specifier):
     """Exit status for one mode: 0 if the change may stand, 1 if it may not."""
     changed = changed_files(staged, range_specifier)
-    if STATISTICS_PATH not in changed:
+    generated = sorted(path for path in changed if is_generated(path))
+    if not generated:
         return 0
 
+    paths = " ".join(generated)
     if GENERATOR_PATH not in changed:
-        print(REFRESHED_AUTOMATICALLY, file=sys.stderr)
+        print(
+            REFRESHED_AUTOMATICALLY.format(paths=paths, generator=GENERATOR_PATH), file=sys.stderr
+        )
         return 1
 
     if not generated_file_is_current():
         print(
-            f"{GENERATOR_PATH} changed, so {STATISTICS_PATH} may move with it -- but the\n"
-            f"committed file is not what the new generator writes. Run:\n\n"
+            f"{GENERATOR_PATH} changed, so {paths} may move with it -- but the\n"
+            f"committed files are not what the new generator writes. Run:\n\n"
             f"    python3 {GENERATOR_PATH}\n",
             file=sys.stderr,
         )
