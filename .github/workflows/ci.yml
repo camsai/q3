@@ -553,12 +553,25 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
-      # The serial q3 is here for test_mpi_checkpoint.py: q3_mpi runs SCF only,
-      # so a serial non-self-consistent run restores what the pooled SCF wrote.
-      - name: Build q3_mpi, q3 and MPI unit tests
+      # An MPI tree builds one engine binary, q3, with q3_mpi as a link to it
+      # (#316); the q3_mpi target builds q3 and makes the link.
+      - name: Build q3_mpi and MPI unit tests
         run: |
           ccache -z
-          cmake --build build_mpi --target q3_mpi q3 q3_tests_mpi -j$(nproc)
+          cmake --build build_mpi --target q3_mpi q3_tests_mpi -j$(nproc)
+          ccache -s
+
+      # A serial q3 for test_mpi_checkpoint.py: q3_mpi runs SCF only, so a
+      # serial non-self-consistent run restores what the pooled SCF wrote. It
+      # no longer comes out of the MPI tree, so it gets a tree of its own; only
+      # the q3 target, and ccache is shared with the step above.
+      - name: Build the serial q3
+        run: |
+          cmake -S . -B build -DQ3_BUILD_TESTS=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build --target q3 -j$(nproc)
           ccache -s
 
       - name: Run MPI Unit Tests (1, 2, and 4 ranks)
@@ -574,7 +587,7 @@ jobs:
                  tests/validation/test_mpi_band_parallelism.py \
                  tests/validation/test_mpi_mean_field_export.py \
                  tests/validation/test_mpi_checkpoint.py \
-                 -v --q3-bin ./build_mpi/q3_mpi
+                 -v --q3-bin ./build_mpi/q3_mpi --q3-serial-bin ./build/q3
 
   publish:
     # Cuts the date-based tag (YYYY.M.D-N) and the GitHub release, then starts

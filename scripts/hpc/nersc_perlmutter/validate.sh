@@ -72,7 +72,9 @@ if [ "$VARIANT" = python ]; then
 fi
 
 # ------------------------------------------------------------ serial check ---
-if [ -x "$BUILD_DIR/q3" ]; then
+# A tree builds one engine binary, q3, and a parallel tree links its variant
+# name to it, so q3 is the serial build only when no such link is there.
+if [ -x "$BUILD_DIR/q3" ] && ! ls "$BUILD_DIR"/q3_mpi* "$BUILD_DIR"/q3_gpu* > /dev/null 2>&1; then
     mkdir -p "$WORK_DIR/serial"; cd "$WORK_DIR/serial"
     "$BUILD_DIR/q3" "$EXAMPLES/nc.yml" > run.log 2>&1 || true
     report "q3 nc.yml" "$(energy_of run.log)   (reference $REFERENCE_NC)"

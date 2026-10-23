@@ -71,10 +71,10 @@ COPY . /opt/q3-src
 RUN python3 -m venv /opt/q3-src/.venv \
     && /opt/q3-src/.venv/bin/pip install --no-cache-dir pyyaml jinja2 jsonref
 
-# Both binaries ship. q3_gpu_cuda is the point of the image, but the serial q3
-# is what the CPU/GPU energy parity check compares against, and having the two
-# in one image is what lets that comparison be run on the machine that
-# disagrees rather than reproduced elsewhere first.
+# One engine binary ships: the CUDA build, installed as q3 with q3_gpu_cuda as a
+# symlink to it, so the image is invoked like every other one (#316). The
+# serial reference the CPU/GPU parity check compares against is the plain
+# image, or a serial build tree beside the CUDA one, as cuda.yml does.
 # The commit this image was built from, stamped into q3 --version and every
 # results.json. .dockerignore drops .git/ from the build context (see there),
 # so the SHA has to be handed in; an empty value is the honest default and
@@ -113,8 +113,8 @@ LABEL org.opencontainers.image.title="Q3 (CUDA)" \
 ARG FFTW_UBUNTU_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 
-# OpenBLAS matters here for the CPU-side stages and for `q3`, the serial
-# binary this image also ships; the GPU path already goes through cuBLAS.
+# OpenBLAS matters here for the CPU-side stages; the GPU path already goes
+# through cuBLAS.
 #
 # The CUDA runtime image already carries cudart, cuBLAS, cuSOLVER and cuFFT,
 # which is the whole reason for basing on it rather than adding them here.
@@ -156,6 +156,6 @@ RUN printf '\n## This image\n\n-   Complete corresponding source: %s\n-   SHA-25
 LABEL q3.source-bundle.url="${Q3_SOURCE_BUNDLE_URL}" \
       q3.source-bundle.sha256="${Q3_SOURCE_BUNDLE_SHA256}"
 
-# The serial binary, as in the other images. The GPU one is reached by name:
-# `podman-hpc run --gpu <image> q3_gpu_cuda input.yml`.
+# q3 is the CUDA build here: `podman-hpc run --gpu <image> q3 input.yml`.
+# q3_gpu_cuda is a symlink to it, for scripts that still use that name.
 CMD ["q3"]

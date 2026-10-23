@@ -168,14 +168,16 @@ The plain tag is the serial `q3`, scaled only by `OMP_NUM_THREADS` within one
 node. Two further images carry the parallel executables, published under the
 same repository with a suffix:
 
-| Tag           | Adds          | Architectures |
-| ------------- | ------------- | ------------- |
-| `latest`      | —             | amd64, arm64  |
-| `latest-mpi`  | `q3_mpi`      | amd64, arm64  |
-| `latest-cuda` | `q3_gpu_cuda` | amd64         |
+| Tag           | `q3` is the  | Also named    | Architectures |
+| ------------- | ------------ | ------------- | ------------- |
+| `latest`      | serial build | —             | amd64, arm64  |
+| `latest-mpi`  | MPI build    | `q3_mpi`      | amd64, arm64  |
+| `latest-cuda` | CUDA build   | `q3_gpu_cuda` | amd64         |
 
-Each also carries the serial `q3`, so a `-mpi` or `-cuda` image is a superset
-and there is no reason to pull two. Date-based tags follow the same pattern,
+Every image carries one engine binary and runs it as `q3`, so a job script
+names the same executable whichever image it pulls; the variant name is a
+symlink to it. The MPI and CUDA builds run the self-consistent field only, so
+the other steps of a workflow still need the plain image. Date-based tags follow the same pattern,
 `YYYY.M.D-N-mpi` and `YYYY.M.D-N-cuda`.
 
 ### MPI
@@ -201,7 +203,7 @@ podman-hpc migrate ghcr.io/camsai/q3:latest-mpi
 #SBATCH --time 01:00:00
 
 srun -n 8 podman-hpc run --rm --mpi -v "$PWD:/work" -w /work \
-    -e OMP_NUM_THREADS=8 ghcr.io/camsai/q3:latest-mpi q3_mpi input.yml
+    -e OMP_NUM_THREADS=8 ghcr.io/camsai/q3:latest-mpi q3 input.yml
 ```
 
 Under Shifter the module does the swap and the invocation is shorter:
@@ -215,7 +217,7 @@ Under Shifter the module does the swap and the invocation is shorter:
 #SBATCH --time 01:00:00
 
 export OMP_NUM_THREADS=8
-srun -n 8 shifter q3_mpi input.yml
+srun -n 8 shifter q3 input.yml
 ```
 
 Ranks divide into k-point pools by default; `--pools` splits them differently,
@@ -232,13 +234,13 @@ rather than accuracy.
 
 ### GPU
 
-The `-cuda` image carries `q3_gpu_cuda`, compiled for the A100 and H100. It is
+In the `-cuda` image `q3` is the CUDA build (`q3_gpu_cuda`), compiled for the A100 and H100. It is
 amd64 only: the GPUs it targets sit in x86_64 nodes, and publishing an untested
 aarch64 copy under a shared tag would be worse than publishing none.
 
 ```bash
 srun -n 1 -G 1 podman-hpc run --rm --gpu -v "$PWD:/work" -w /work \
-    ghcr.io/camsai/q3:latest-cuda q3_gpu_cuda input.yml
+    ghcr.io/camsai/q3:latest-cuda q3 input.yml
 ```
 
 One rank and one GPU is not a simplification, it is the whole of what

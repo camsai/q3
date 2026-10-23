@@ -5,12 +5,13 @@
 #   scripts/hpc/nersc_perlmutter/build.sh <variant> [extra cmake args...]
 #   scripts/hpc/nersc_perlmutter/build.sh --list
 #
-# Variants:
+# Variants (each tree builds one engine binary, always named q3; the variant
+# name in parentheses is a symlink to it):
 #   cpu-serial     q3, q3_utility, q3_tests
-#   cpu-mpi        + q3_mpi, q3_tests_mpi
+#   cpu-mpi        q3 (q3_mpi), q3_utility, q3_tests, q3_tests_mpi
 #   cpu-mpi-scalapack  cpu-mpi plus the distributed subspace eigensolver
-#   gpu-cuda       + q3_gpu_cuda (NVIDIA A100, sm_80)
-#   cpu-mpi-cuda   MPI and CUDA in one tree
+#   gpu-cuda       q3 (q3_gpu_cuda; NVIDIA A100, sm_80), q3_utility, q3_tests
+#   cpu-mpi-cuda   q3 (q3_mpi_gpu_cuda), one CUDA device per MPI rank
 #   cpu-debug      Debug build type
 #   python         q3_core nanobind extension
 #
@@ -200,7 +201,11 @@ echo "== built OK ($(grep -ciE 'warning:' "$BUILD_LOG") warnings)"
 # `cmake --build` no more prunes the build tree than `cmake --install` prunes
 # the prefix.
 for candidate in "$BUILD_DIR"/q3*; do
-    [ -f "$candidate" ] && [ -x "$candidate" ] && echo "==   $(basename "$candidate")"
+    if [ -L "$candidate" ]; then
+        echo "==   $(basename "$candidate") -> $(readlink "$candidate")"
+    elif [ -f "$candidate" ] && [ -x "$candidate" ]; then
+        echo "==   $(basename "$candidate")"
+    fi
 done
 
 # Which libsci the wrapper actually linked, rather than which one it was asked

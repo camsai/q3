@@ -127,16 +127,22 @@ stops at the first non-finite value LibXC returns rather than converging to NaN.
 | Option                      | Default | Effect                                                             |
 | --------------------------- | ------- | ------------------------------------------------------------------ |
 | `Q3_BUILD_TESTS`            | `ON`    | Builds `q3_tests` (fetches GoogleTest)                             |
-| `Q3_WITH_MPI`               | `OFF`   | Builds `q3_mpi`                                                    |
+| `Q3_WITH_MPI`               | `OFF`   | `q3` is the MPI build, also named `q3_mpi`                         |
 | `Q3_WITH_OPENMP`            | `ON`    | Links an OpenMP runtime                                            |
 | `Q3_WITH_FFTW_THREADS`      | `ON`    | Threaded FFTs, driven by `OMP_NUM_THREADS` at run time             |
-| `Q3_WITH_GPU`               | `OFF`   | Builds `q3_gpu` (Apple Metal)                                      |
-| `Q3_WITH_CUDA`              | `OFF`   | Builds `q3_gpu_cuda` (NVIDIA)                                      |
-| `Q3_WITH_HIP`               | `OFF`   | Builds `q3_gpu_hip` (AMD)                                          |
-| `Q3_WITH_SYCL`              | `OFF`   | Builds `q3_gpu_sycl` (Intel)                                       |
+| `Q3_WITH_GPU`               | `OFF`   | `q3` is the Apple Metal build, also named `q3_gpu`                 |
+| `Q3_WITH_CUDA`              | `OFF`   | `q3` is the NVIDIA build, also named `q3_gpu_cuda`                 |
+| `Q3_WITH_HIP`               | `OFF`   | `q3` is the AMD build, also named `q3_gpu_hip`                     |
+| `Q3_WITH_SYCL`              | `OFF`   | `q3` is the Intel build, also named `q3_gpu_sycl`                  |
 | `Q3_ENABLE_PYTHON`          | `OFF`   | Builds the `q3_core` nanobind extension                            |
 | `Q3_COVERAGE`               | `OFF`   | Coverage instrumentation; also switches the default build type     |
 | `Q3_REQUIRE_SCHEMA_CODEGEN` | `OFF`   | Fail configuration when the generator's Python modules are missing |
+
+A build tree compiles one engine binary, always named `q3`; the options above
+choose which entry point it is, and the variant name is a symlink to it. At
+most one GPU option may be on, and `Q3_WITH_MPI` combines only with
+`Q3_WITH_CUDA`, which gives `q3_mpi_gpu_cuda`. A serial and a parallel binary
+come from two build trees.
 
 For CUDA, `CMAKE_CUDA_ARCHITECTURES` defaults to `80` (A100). Set it for other
 hardware — `90` for H100. `native` is not usable on a login node, which has no
@@ -157,8 +163,9 @@ or decide afterwards, which overrides it:
 cmake --install build --prefix $CFS/<project>/q3
 ```
 
-Either way you get `<prefix>/bin/q3` and `<prefix>/bin/q3-convert`, plus
-`q3_mpi` and any GPU binaries that were built. Add `<prefix>/bin` to `PATH`.
+Either way you get `<prefix>/bin/q3` and `<prefix>/bin/q3_utility`, plus the
+variant name (`q3_mpi`, `q3_gpu_cuda`, ...) as a relative symlink to `q3` when
+the tree is not the serial build. Add `<prefix>/bin` to `PATH`.
 
 Installed binaries record the directories of the libraries they were linked
 against, so they run without `LD_LIBRARY_PATH`. Libraries injected implicitly by
@@ -206,7 +213,7 @@ Run on a compute node, not the login node:
 
 ```bash
 salloc -N 1 -C cpu -q interactive -t 00:30:00 -A <account>
-srun -n 4 ./build/q3_mpi --pools 4 examples/total_energy--semiconductor--silicon/nc.yml
+srun -n 4 ./build/q3 --pools 4 examples/total_energy--semiconductor--silicon/nc.yml
 ```
 
 `--pools` should divide the rank count and not exceed the irreducible k-point

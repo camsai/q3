@@ -94,17 +94,30 @@ no two k-points here share a plane-wave set.
 
 
 @pytest.fixture(scope="module")
-def serial_q3_bin(q3_bin):
+def serial_q3_bin(pytestconfig, q3_bin):
     """
-    The serial `q3` CMake builds beside q3_mpi. Only it runs NSCF.
+    A serial `q3`, from a build tree of its own. Only it runs NSCF.
 
     `q3_bin` is q3_mpi here: conftest's `require_mpi_binary` skips this module
     otherwise, since four serial processes under mpirun would each write the
     whole checkpoint and pass every check below without exercising a pool.
+
+    The serial binary no longer sits beside it: a build tree compiles one q3,
+    and in an MPI tree that `q3` is q3_mpi under its plain name (#316). So it
+    comes from --q3-serial-bin, or the default serial tree, and is asked what
+    it is for the same reason `require_mpi_binary` asks.
     """
-    serial_binary = Path(q3_bin).resolve().parent / "q3"
+    serial_binary = Path(pytestconfig.getoption("--q3-serial-bin") or "./build/q3").resolve()
     if not serial_binary.is_file():
-        pytest.skip(f"serial q3 not found at {serial_binary} (build the q3 target)")
+        pytest.skip(
+            f"serial q3 not found at {serial_binary} (configure a tree without Q3_WITH_MPI, "
+            "build its q3 target, and pass --q3-serial-bin)"
+        )
+    identity = subprocess.run(
+        [str(serial_binary), "--version"], capture_output=True, text=True, timeout=60
+    )
+    if serial_binary == Path(q3_bin).resolve() or identity.stdout.startswith("q3_mpi"):
+        pytest.skip(f"{serial_binary} is the MPI binary, not a serial q3; pass --q3-serial-bin")
     return str(serial_binary)
 
 

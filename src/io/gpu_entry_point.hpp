@@ -205,6 +205,21 @@ inline int run_gpu_entry_point(int argc, char* argv[], const GPUEntryPointDescri
     int exit_code = 0;
     try {
         auto input = read_input(options, descriptor.binary_name);
+        /**
+         * Step 4 below runs the self-consistent field flavor whatever the
+         * input asks for, so an NSCF deck came back as an SCF under the
+         * NSCF's name -- the mistake q3_mpi and q3_mpi_gpu_cuda already
+         * refuse. It matters more now that a GPU image runs this binary as
+         * plain `q3` (#316), where a workflow cannot tell it from the serial
+         * build by name. Refuse before any device is touched.
+         */
+        if (input.calculation != "self_consistent_field") {
+            throw std::runtime_error(descriptor.binary_name +
+                                     " runs self_consistent_field only, but this input asks for '" +
+                                     input.calculation +
+                                     "'. Run this input with the serial q3 build, which supports "
+                                     "every flavor.");
+        }
         if (!input.hubbard.empty()) {
             log::error("DFT+U (hubbard) is not yet supported on GPU. Run on CPU instead.");
             return 1;

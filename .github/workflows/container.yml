@@ -9,8 +9,13 @@ name: Build Container Image
 # artifact only Apptainer could consume.
 #
 #   plain tag    serial q3, the default; amd64 + arm64
-#   -mpi         adds q3_mpi, built against a source MPICH; amd64 + arm64
-#   -cuda        adds q3_gpu_cuda; amd64 only, see Dockerfile.cuda for why
+#   -mpi         q3 is the MPI build (also q3_mpi), against a source MPICH;
+#                amd64 + arm64
+#   -cuda        q3 is the CUDA build (also q3_gpu_cuda); amd64 only, see
+#                Dockerfile.cuda for why
+#
+# Every image runs its engine as `q3` and carries one engine binary; the
+# variant name is a symlink to it (#316).
 #
 # Runs once per merge to main, transitively: ci.yml's publish job cuts the
 # date-based tag and release on every green main push, and the release event
@@ -371,7 +376,7 @@ jobs:
         # converges, it just takes all day.
         run: |
           docker run --rm q3-mpi:local sh -c \
-            'ldd /usr/local/bin/q3_mpi | tee /dev/stderr | grep -q openblas'
+            'ldd /usr/local/bin/q3 | tee /dev/stderr | grep -q openblas'
 
       - name: Check the image is this leg's architecture
         run: |
@@ -424,9 +429,10 @@ jobs:
           python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" \
             examples/total_energy--semiconductor--silicon/output/si_nc_results.json
 
-      - name: Check the serial binary still works in this image
-        # The MPI image ships q3 as well, so `podman-hpc run <image> q3 in.yml`
-        # behaves the same way it does with the plain image.
+      - name: Run q3 without a launcher
+        # q3 in this image is the MPI build (#316), so `podman-hpc run <image>
+        # q3 in.yml` with no launcher is a one-rank MPI run through MPICH's
+        # singleton init, and must give the plain image's answer.
         run: |
           sudo rm -rf examples/total_energy--semiconductor--silicon/output
           docker run --rm -v "$PWD/examples:/work" \
@@ -500,28 +506,20 @@ jobs:
 
       - name: Check what the image contains
         # No SCF here, on purpose: a hosted runner has no GPU and no driver, so
-        # q3_gpu_cuda cannot run. What is checkable without one is that the
-        # image is the right architecture, that the GPU binary was built and
-        # links (Dockerfile.cuda's ldd assertion already failed the build
-        # otherwise), and that the serial binary in the same image still runs.
-        # The GPU backend's own correctness is gated by the CPU/GPU energy
-        # parity test in cuda.yml, on the self-hosted GPU runner.
+        # q3 -- the CUDA build in this image (#316) -- cannot run an SCF. What
+        # is checkable without one is that the image is the right
+        # architecture, that the GPU binary was built and links
+        # (Dockerfile.cuda's ldd assertion already failed the build
+        # otherwise), that q3_gpu_cuda names it, and that it answers
+        # --version, which it does before touching a device. The image no
+        # longer carries a serial q3 to run an SCF on the CPU with; the GPU
+        # backend's own correctness is gated by the CPU/GPU energy parity test
+        # in cuda.yml, on the self-hosted GPU runner.
         run: |
           test "$(docker image inspect q3-cuda:local --format '{{.Architecture}}')" = "amd64"
-          docker run --rm q3-cuda:local sh -c 'test -x /usr/local/bin/q3_gpu_cuda'
+          docker run --rm q3-cuda:local sh -c 'test "$(readlink /usr/local/bin/q3_gpu_cuda)" = q3'
           docker run --rm q3-cuda:local sh -c 'ldd /usr/local/bin/q3 | grep -q openblas'
           docker run --rm q3-cuda:local q3 --version | tee /dev/stderr | grep -F "${{ github.sha }}"
-
-      - name: Run the serial SCF from the CUDA image
-        # The CPU path through the GPU image. It shares every library with the
-        # serial image except the base, so this is what catches the CUDA base
-        # image shipping a different LibXC or FFTW than Ubuntu does -- which
-        # would move the energy without failing anything else here.
-        run: |
-          docker run --rm -v "$PWD/examples:/work" \
-            -w /work/total_energy--semiconductor--silicon q3-cuda:local q3 nc.yml
-          python3 "$GITHUB_WORKSPACE/scripts/validation/check_scf_result.py" \
-            examples/total_energy--semiconductor--silicon/output/si_nc_results.json
 
       - name: Log in to GitHub Packages
         if: github.event_name == 'release' || github.event.inputs.publish == 'true'

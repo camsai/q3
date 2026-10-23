@@ -111,7 +111,7 @@ jobs:
         run: |
           source /opt/intel/oneapi/setvars.sh
           ccache -z
-          cmake --build build_sycl -j$(nproc) --target q3 q3_gpu_sycl
+          cmake --build build_sycl -j$(nproc) --target q3_gpu_sycl
           ccache -s
 
       - name: Validate SYCL Backend (Si FCC 2×2×2)

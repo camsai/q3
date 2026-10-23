@@ -145,13 +145,17 @@ The plain tag holds the **serial** `q3`, scaled within one node by
 processes, not a parallel calculation. Two suffixed tags carry the parallel
 executables ([§4.2](#42-parallel--gpu-builds)):
 
-| Tag           | Adds          | Architectures |
-| ------------- | ------------- | ------------- |
-| `latest`      | —             | amd64, arm64  |
-| `latest-mpi`  | `q3_mpi`      | amd64, arm64  |
-| `latest-cuda` | `q3_gpu_cuda` | amd64         |
+| Tag           | `q3` is the  | Also named    | Architectures |
+| ------------- | ------------ | ------------- | ------------- |
+| `latest`      | serial build | —             | amd64, arm64  |
+| `latest-mpi`  | MPI build    | `q3_mpi`      | amd64, arm64  |
+| `latest-cuda` | CUDA build   | `q3_gpu_cuda` | amd64         |
 
-Each is a superset of the plain image, so there is never a reason to pull two.
+Every image carries one engine binary and runs it as `q3`; the variant name is
+a symlink to it, for scripts that already use it. The MPI and CUDA builds run
+the self-consistent field only, so the other steps of a workflow (NSCF, band
+structure) still need the plain image.
+
 Running the parallel ones needs runtime flags that differ per container
 runtime, which [docs/podman_hpc_and_shifter.md](docs/podman_hpc_and_shifter.md)
 covers.
@@ -615,9 +619,14 @@ To hold a container fixed, pull a specific date-based tag rather than `latest`.
 
 ### 4.2 Parallel & GPU Builds
 
-Each parallel backend is an opt-in CMake flag producing its own executable:
+Each parallel backend is an opt-in CMake flag that selects which entry point a
+build tree compiles. A tree builds exactly one engine binary, always `q3`, and
+links the variant name to it in the build and install trees alike, so a
+downstream workflow names `q3` whatever the build. Configure one tree per
+variant; at most one GPU flag may be on, and MPI combines only with CUDA
+(`q3_mpi_gpu_cuda`).
 
-| CMake flag     | Executable    | Target hardware                                                            |
+| CMake flag     | Also named    | Target hardware                                                            |
 | -------------- | ------------- | -------------------------------------------------------------------------- |
 | `Q3_WITH_MPI`  | `q3_mpi`      | MPI k-point pools + band groups (needs MPI, FFTW3-MPI; ScaLAPACK optional) |
 | `Q3_WITH_GPU`  | `q3_gpu`      | Apple Silicon (Metal / Accelerate)                                         |
@@ -631,12 +640,12 @@ cmake -S . -B build_mpi -DQ3_WITH_MPI=ON && cmake --build build_mpi -j
 ```
 
 ```bash
-mpirun -np 4 ./build_mpi/q3_mpi --pools 4 examples/total_energy--semiconductor--silicon/nc.yml
+mpirun -np 4 ./build_mpi/q3 --pools 4 examples/total_energy--semiconductor--silicon/nc.yml
 ```
 
 ```bash
 # GPU run with mixed FP32/FP64 precision
-./build_cuda/q3_gpu_cuda --precision mixed examples/total_energy--semiconductor--silicon/nc.yml
+./build_cuda/q3 --precision mixed examples/total_energy--semiconductor--silicon/nc.yml
 ```
 
 See [FUNCTIONALITY.md](FUNCTIONALITY.md) §2 for per-backend validation status

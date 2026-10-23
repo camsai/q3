@@ -43,6 +43,12 @@ option(Q3_COVERAGE "Enable code coverage instrumentation (use with Debug build)"
 # Declared here (not at the MPI section) because Q3_WITH_MPI is consulted by the
 # FFTW3-MPI and core-library sections earlier in the file.
 option(Q3_WITH_MPI "Build with MPI support" OFF)
+# The GPU backends, for the same reason. At most one may be ON: a build tree
+# compiles one q3 binary (see the Main executable section).
+option(Q3_WITH_GPU "Build q3 with the Metal + Accelerate GPU backend (Apple Silicon)" OFF)
+option(Q3_WITH_CUDA "Build q3 with the CUDA GPU backend" OFF)
+option(Q3_WITH_HIP "Build q3 with the HIP/ROCm GPU backend" OFF)
+option(Q3_WITH_SYCL "Build q3 with the SYCL/oneAPI GPU backend" OFF)
 
 # A bare `cmake -S . -B build` otherwise produces an unoptimized binary with no
 # -O flag at all, which is a poor default for a code whose runtime is the point.
@@ -552,52 +558,75 @@ endif()
 # configuring, or keep the modules loaded at run time.
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
 
-# ---------- Main executables ----------
-add_executable(q3 src/main.cpp ${Q3_GPU_KERNEL_SOURCES})
-add_dependencies(q3 generate_schemas)
-target_link_libraries(q3 PRIVATE q3_cpp)
-
-# q3_utility: the utility binary -- subcommands that consume a finished run's
-# saved records rather than an input manifest. `interpolate` evaluates an
-# interpolation record along a k-path and on a DOS mesh; `convert` re-exports a
-# saved record (mean-field -> BerkeleyGW, interpolation -> Wannier90) or
-# imports Wannier90 files into one. One binary with subcommands, so no
-# science- or format-facing suffix ever sits beside the q3_mpi/q3_gpu*
-# infrastructure suffixes; serial by construction, since evaluating a saved
-# model is dense algebra on a few hundred orbitals.
-add_executable(q3_utility src/main_utility.cpp ${Q3_GPU_KERNEL_SOURCES})
-add_dependencies(q3_utility generate_schemas)
-target_link_libraries(q3_utility PRIVATE q3_cpp)
-target_compile_options(q3_utility PRIVATE -ffp-contract=fast -Wall -Wextra -Wno-unused-parameter -Wno-nan-infinity-disabled)
-
-if(Q3_WITH_MPI)
-    add_executable(q3_mpi src/main_mpi.cpp ${Q3_GPU_KERNEL_SOURCES})
-    add_dependencies(q3_mpi generate_schemas)
-    install(TARGETS q3_mpi DESTINATION bin)
-    target_link_libraries(q3_mpi PRIVATE q3_cpp)
+# ---------- Main executable ----------
+# One build tree compiles one engine binary, and it is always `q3` (#316).
+# Which entry point that binary is follows from the Q3_WITH_* options, and the
+# variant's own name -- q3_mpi, q3_gpu_cuda, q3_mpi_gpu_cuda, ... -- is a
+# symlink to it, in the build tree and in the install tree alike. So an image
+# or module built for MPI or for a GPU is invoked exactly like the plain one,
+# and a downstream workflow names `q3` without knowing which build it landed
+# on, while every script that already says `q3_mpi` keeps working.
+#
+# This replaces a cumulative build in which every variant tree also compiled
+# the serial q3 beside the variant binary. A tree that needs both -- the CPU/GPU
+# parity check, the MPI checkpoint test -- now configures two trees, which is
+# what separating the cases at the directory level means.
+#
+# The variant binaries run the self-consistent field flavor only (see
+# src/main_mpi.cpp and src/io/gpu_entry_point.hpp), and refuse any other input
+# with an error naming the serial build. That restriction is the runtime's,
+# not the packaging's, and is lifted there.
+set(Q3_GPU_BACKENDS_REQUESTED "")
+foreach(gpu_backend GPU CUDA HIP SYCL)
+    if(Q3_WITH_${gpu_backend})
+        list(APPEND Q3_GPU_BACKENDS_REQUESTED Q3_WITH_${gpu_backend})
     endif()
+endforeach()
+list(LENGTH Q3_GPU_BACKENDS_REQUESTED Q3_GPU_BACKEND_COUNT)
+string(REPLACE ";" " and " Q3_GPU_BACKENDS_REQUESTED_TEXT "${Q3_GPU_BACKENDS_REQUESTED}")
+if(Q3_GPU_BACKEND_COUNT GREATER 1)
+    message(FATAL_ERROR
+        "${Q3_GPU_BACKENDS_REQUESTED_TEXT} are ON together, but a build tree compiles one q3 binary. "
+        "Configure one tree per GPU backend.")
+endif()
+if(Q3_WITH_MPI AND (Q3_WITH_GPU OR Q3_WITH_HIP OR Q3_WITH_SYCL))
+    message(FATAL_ERROR
+        "Q3_WITH_MPI has no combined entry point with ${Q3_GPU_BACKENDS_REQUESTED_TEXT}; only CUDA has "
+        "one (q3_mpi_gpu_cuda). Configure the MPI and the GPU build as separate trees.")
+endif()
 
-# ---------- GPU executable (Metal backend for Apple Silicon) ----------
-option(Q3_WITH_GPU "Build GPU-accelerated executable" OFF)
+# The name the variant is reached by besides `q3`, and the source of its main().
+# Empty for the serial build, which has no other name.
+if(Q3_WITH_CUDA AND Q3_WITH_MPI)
+    set(Q3_VARIANT_NAME q3_mpi_gpu_cuda)
+elseif(Q3_WITH_CUDA)
+    set(Q3_VARIANT_NAME q3_gpu_cuda)
+elseif(Q3_WITH_HIP)
+    set(Q3_VARIANT_NAME q3_gpu_hip)
+elseif(Q3_WITH_SYCL)
+    set(Q3_VARIANT_NAME q3_gpu_sycl)
+elseif(Q3_WITH_GPU)
+    set(Q3_VARIANT_NAME q3_gpu)
+elseif(Q3_WITH_MPI)
+    set(Q3_VARIANT_NAME q3_mpi)
+else()
+    set(Q3_VARIANT_NAME "")
+endif()
+if(Q3_VARIANT_NAME)
+    string(REGEX REPLACE "^q3_" "src/main_" Q3_MAIN_SOURCE "${Q3_VARIANT_NAME}.cpp")
+else()
+    set(Q3_MAIN_SOURCE src/main.cpp)
+endif()
+
 if(Q3_WITH_GPU)
+    # Metal + Accelerate, for Apple Silicon.
     enable_language(OBJCXX)
-    add_executable(q3_gpu
-        src/main_gpu.cpp
+    set(Q3_BACKEND_SOURCES
         src/layer_0_core/execution/gpu/device/metal.mm
         src/layer_0_core/math/linear_algebra/gpu/blas/metal.mm
         src/layer_0_core/math/linear_algebra/gpu/lapack/metal.mm
         src/layer_3_representation/basis/planewave/internal/fft/gpu/metal.mm
-        ${Q3_GPU_KERNEL_SOURCES}
-    )
-    set_property(TARGET q3_gpu PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-    add_dependencies(q3_gpu generate_schemas)
-    install(TARGETS q3_gpu DESTINATION bin)
-    target_link_libraries(q3_gpu PRIVATE q3_cpp
-        "-framework Accelerate"
-        "-framework Metal"
-        "-framework MetalPerformanceShaders"
-        "-framework Foundation")
-    target_compile_options(q3_gpu PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-unused-parameter>)
+        ${Q3_GPU_KERNEL_SOURCES})
     # Enable ARC for Objective-C++ files
     set_source_files_properties(
         src/layer_0_core/execution/gpu/device/metal.mm
@@ -605,11 +634,12 @@ if(Q3_WITH_GPU)
         src/layer_0_core/math/linear_algebra/gpu/lapack/metal.mm
         src/layer_3_representation/basis/planewave/internal/fft/gpu/metal.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc")
-    message(STATUS "Building q3_gpu with Metal + Accelerate backend")
-endif()
-
-option(Q3_WITH_CUDA "Build CUDA GPU-accelerated executable" OFF)
-if(Q3_WITH_CUDA)
+    set(Q3_BACKEND_LIBRARIES
+        "-framework Accelerate"
+        "-framework Metal"
+        "-framework MetalPerformanceShaders"
+        "-framework Foundation")
+elseif(Q3_WITH_CUDA)
     # Login nodes usually have no GPU at configure time, so `native` is not an
     # option; 80 is the A100 the collaborators build for. CUDAARCHS or an explicit
     # -DCMAKE_CUDA_ARCHITECTURES both win over this.
@@ -619,119 +649,94 @@ if(Q3_WITH_CUDA)
     endif()
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
-
-    add_executable(q3_gpu_cuda
-        src/main_gpu_cuda.cpp
+    # With MPI as well this is q3_mpi_gpu_cuda: one CUDA device per MPI rank, so
+    # a single calculation can span more than one GPU. q3_gpu_cuda cannot -- it
+    # goes through run_gpu_entry_point(), which builds a serial execution
+    # policy -- so `srun -n 8 q3_gpu_cuda` is eight duplicate runs rather than
+    # one wider one.
+    set(Q3_BACKEND_SOURCES
         src/layer_0_core/execution/gpu/device/cuda.cpp
         src/layer_0_core/math/linear_algebra/gpu/blas/cuda.cpp
         src/layer_0_core/math/linear_algebra/gpu/lapack/cuda.cpp
         src/layer_3_representation/basis/planewave/internal/fft/gpu/cuda.cpp
-        src/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/gpu_kernels_cuda.cu
-    )
-    # The IPO probe covers only C and CXX; CUDA under CMP0069=NEW would
-    # hard-error here, and device LTO would additionally need separable
-    # compilation that Q3 does not use.
-    set_property(TARGET q3_gpu_cuda PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-    add_dependencies(q3_gpu_cuda generate_schemas)
-    install(TARGETS q3_gpu_cuda DESTINATION bin)
-    target_link_libraries(q3_gpu_cuda PRIVATE
-        q3_cpp
-        CUDA::cudart
-        CUDA::cublas
-        CUDA::cusolver
-        CUDA::cufft
-    )
-    target_compile_options(q3_gpu_cuda PRIVATE
-        -Wall -Wextra -Wno-unused-parameter)
-    message(STATUS "Building q3_gpu_cuda with CUDA backend")
-
-    # q3_mpi_gpu_cuda: one CUDA device per MPI rank, so a single calculation can
-    # span more than one GPU. q3_gpu_cuda cannot -- it goes through
-    # run_gpu_entry_point(), which builds a serial execution policy -- so
-    # `srun -n 8 q3_gpu_cuda` is eight duplicate runs rather than one wider one.
-    # Only built when MPI is also enabled, since it is the intersection.
-    if(Q3_WITH_MPI)
-        add_executable(q3_mpi_gpu_cuda
-            src/main_mpi_gpu_cuda.cpp
-            src/layer_0_core/execution/gpu/device/cuda.cpp
-            src/layer_0_core/math/linear_algebra/gpu/blas/cuda.cpp
-            src/layer_0_core/math/linear_algebra/gpu/lapack/cuda.cpp
-            src/layer_3_representation/basis/planewave/internal/fft/gpu/cuda.cpp
-            src/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/gpu_kernels_cuda.cu
-        )
-        set_property(TARGET q3_mpi_gpu_cuda PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-        add_dependencies(q3_mpi_gpu_cuda generate_schemas)
-        install(TARGETS q3_mpi_gpu_cuda DESTINATION bin)
-        target_link_libraries(q3_mpi_gpu_cuda PRIVATE
-            q3_cpp
-            CUDA::cudart
-            CUDA::cublas
-            CUDA::cusolver
-            CUDA::cufft
-        )
-        target_compile_options(q3_mpi_gpu_cuda PRIVATE
-            -Wall -Wextra -Wno-unused-parameter)
-        message(STATUS "Building q3_mpi_gpu_cuda: one CUDA device per MPI rank")
-    endif()
-endif()
-
-option(Q3_WITH_HIP "Build HIP/ROCm GPU-accelerated executable" OFF)
-if(Q3_WITH_HIP)
+        src/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/gpu_kernels_cuda.cu)
+    set(Q3_BACKEND_LIBRARIES CUDA::cudart CUDA::cublas CUDA::cusolver CUDA::cufft)
+elseif(Q3_WITH_HIP)
     # HIP is compiled with the standard C++ compiler + hip headers
     find_package(hip REQUIRED)
     find_package(hipblas REQUIRED)
     find_package(hipsolver REQUIRED)
     find_package(hipfft REQUIRED)
-
-    add_executable(q3_gpu_hip
-        src/main_gpu_hip.cpp
+    set(Q3_BACKEND_SOURCES
         src/layer_0_core/execution/gpu/device/hip.cpp
         src/layer_0_core/math/linear_algebra/gpu/blas/hip.cpp
         src/layer_0_core/math/linear_algebra/gpu/lapack/hip.cpp
         src/layer_3_representation/basis/planewave/internal/fft/gpu/hip.cpp
-        src/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/gpu_kernels_hip.cpp
-    )
-    set_property(TARGET q3_gpu_hip PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-    add_dependencies(q3_gpu_hip generate_schemas)
-    install(TARGETS q3_gpu_hip DESTINATION bin)
-    target_link_libraries(q3_gpu_hip PRIVATE
-        q3_cpp
-        hip::host
-        roc::hipblas
-        roc::hipsolver
-        hip::hipfft
-    )
-    target_compile_options(q3_gpu_hip PRIVATE
-        -Wall -Wextra -Wno-unused-parameter)
-    message(STATUS "Building q3_gpu_hip with HIP/ROCm backend")
-endif()
-
-option(Q3_WITH_SYCL "Build SYCL/oneAPI GPU-accelerated executable" OFF)
-if(Q3_WITH_SYCL)
+        src/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/gpu_kernels_hip.cpp)
+    set(Q3_BACKEND_LIBRARIES hip::host roc::hipblas roc::hipsolver hip::hipfft)
+elseif(Q3_WITH_SYCL)
     # SYCL compilation requires icpx (Intel oneAPI DPC++ compiler).
     # oneMKL provides BLAS, LAPACK, and DFT via MKL::MKL_SYCL.
     find_package(MKL REQUIRED)
-
-    add_executable(q3_gpu_sycl
-        src/main_gpu_sycl.cpp
+    set(Q3_BACKEND_SOURCES
         src/layer_0_core/execution/gpu/device/sycl.cpp
         src/layer_0_core/math/linear_algebra/gpu/blas/sycl.cpp
         src/layer_0_core/math/linear_algebra/gpu/lapack/sycl.cpp
         src/layer_3_representation/basis/planewave/internal/fft/gpu/sycl.cpp
-        src/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/gpu_kernels_sycl.cpp
-    )
-    set_property(TARGET q3_gpu_sycl PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
-    add_dependencies(q3_gpu_sycl generate_schemas)
-    install(TARGETS q3_gpu_sycl DESTINATION bin)
-    target_link_libraries(q3_gpu_sycl PRIVATE
-        q3_cpp
-        MKL::MKL_SYCL
-    )
-    target_compile_options(q3_gpu_sycl PRIVATE
-        -fsycl -Wall -Wextra -Wno-unused-parameter)
-    target_link_options(q3_gpu_sycl PRIVATE -fsycl)
-    message(STATUS "Building q3_gpu_sycl with SYCL/oneAPI backend")
+        src/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/gpu_kernels_sycl.cpp)
+    set(Q3_BACKEND_LIBRARIES MKL::MKL_SYCL)
+else()
+    set(Q3_BACKEND_SOURCES ${Q3_GPU_KERNEL_SOURCES})
+    set(Q3_BACKEND_LIBRARIES "")
 endif()
+
+add_executable(q3 ${Q3_MAIN_SOURCE} ${Q3_BACKEND_SOURCES})
+add_dependencies(q3 generate_schemas)
+target_link_libraries(q3 PRIVATE q3_cpp ${Q3_BACKEND_LIBRARIES})
+if(Q3_GPU_BACKEND_COUNT GREATER 0)
+    # The IPO probe covers only C and CXX; CUDA under CMP0069=NEW would
+    # hard-error here, and device LTO would additionally need separable
+    # compilation that Q3 does not use.
+    set_property(TARGET q3 PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+endif()
+if(Q3_WITH_GPU)
+    target_compile_options(q3 PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-unused-parameter>)
+elseif(Q3_WITH_SYCL)
+    target_compile_options(q3 PRIVATE -fsycl -Wall -Wextra -Wno-unused-parameter)
+    target_link_options(q3 PRIVATE -fsycl)
+elseif(Q3_GPU_BACKEND_COUNT GREATER 0)
+    target_compile_options(q3 PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+
+# The variant name, as a target and as a symlink beside q3. The target is what
+# keeps `cmake --build build --target q3_mpi` working; it runs on every build,
+# rather than as a POST_BUILD step of q3, so a tree that already holds an
+# up-to-date q3 -- or a stale q3_mpi binary from the cumulative layout -- still
+# ends up with the link.
+if(Q3_VARIANT_NAME)
+    add_custom_target(${Q3_VARIANT_NAME} ALL
+        COMMAND ${CMAKE_COMMAND} -E create_symlink q3 $<TARGET_FILE_DIR:q3>/${Q3_VARIANT_NAME}
+        COMMENT "Linking ${Q3_VARIANT_NAME} -> q3"
+        VERBATIM)
+    add_dependencies(${Q3_VARIANT_NAME} q3)
+    message(STATUS "Building q3 from ${Q3_MAIN_SOURCE}, also reachable as ${Q3_VARIANT_NAME}")
+else()
+    message(STATUS "Building q3 from ${Q3_MAIN_SOURCE} (serial)")
+endif()
+
+# q3_utility: the utility binary -- subcommands that consume a finished run's
+# saved records rather than an input manifest. `interpolate` evaluates an
+# interpolation record along a k-path and on a DOS mesh; `convert` re-exports a
+# saved record (mean-field -> BerkeleyGW, interpolation -> Wannier90) or
+# imports Wannier90 files into one. One binary with subcommands, so no
+# science- or format-facing suffix ever sits beside the q3_mpi/q3_gpu*
+# variant links; serial by construction, since evaluating a saved model is
+# dense algebra on a few hundred orbitals. It is a separate tool rather than a
+# variant of the engine, so every build tree has it.
+add_executable(q3_utility src/main_utility.cpp ${Q3_GPU_KERNEL_SOURCES})
+add_dependencies(q3_utility generate_schemas)
+target_link_libraries(q3_utility PRIVATE q3_cpp)
+target_compile_options(q3_utility PRIVATE -ffp-contract=fast -Wall -Wextra -Wno-unused-parameter -Wno-nan-infinity-disabled)
 
 # ---------- Tests (GoogleTest) ----------
 if(Q3_BUILD_TESTS)
@@ -1036,8 +1041,19 @@ q3_build_addons()
 # ---------- Install ----------
 # q3_utility ships wherever q3 does: the container image and any
 # `cmake --install` tree would otherwise lack the converter that turns a
-# saved mean-field record into BerkeleyGW (or future) formats.
+# saved mean-field record into BerkeleyGW (or future) formats. The variant
+# name is installed as a relative symlink to q3, so the install tree can be
+# copied or relocated -- a container's COPY of bin/ included -- and still
+# resolve it.
 install(TARGETS q3 q3_utility DESTINATION bin)
+if(Q3_VARIANT_NAME)
+    install(CODE "
+        set(variant_link \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/${Q3_VARIANT_NAME}\")
+        message(STATUS \"Installing: \${variant_link} -> q3\")
+        file(REMOVE \"\${variant_link}\")
+        file(CREATE_LINK q3 \"\${variant_link}\" SYMBOLIC)
+    ")
+endif()
 message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")
 
 # ---------- Python extension module (optional — nanobind) ----------

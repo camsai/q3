@@ -210,12 +210,12 @@ ENV PATH=/opt/mpich/bin:/usr/local/bin:$PATH \
     OMP_NUM_THREADS=1
 
 # A missing runtime library is a wrong copy above, and it must fail the build
-# rather than the user's first job on a compute node. `q3_mpi` itself is left
-# to the CI smoke test, which runs it under a launcher across several rank
-# counts: starting it here as a singleton would test MPICH's singleton-init
-# path rather than anything about this image.
+# rather than the user's first job on a compute node. q3 here is the MPI build
+# (q3_mpi is a link to it, #316), so it answers --version under the launcher,
+# on one rank; the SCF itself is left to the CI smoke test, which runs it
+# across several rank counts.
 RUN if ldd /usr/local/bin/* | grep 'not found'; then exit 1; fi \
-    && q3 --version > /dev/null \
+    && mpiexec -n 1 q3 --version > /dev/null \
     && mpiexec --version > /dev/null
 
 # Notices, license texts and the written offer, as in Dockerfile. FFTW's and
@@ -230,8 +230,8 @@ RUN printf '\n## This image\n\n-   Complete corresponding source: %s\n-   SHA-25
 LABEL q3.source-bundle.url="${Q3_SOURCE_BUNDLE_URL}" \
       q3.source-bundle.sha256="${Q3_SOURCE_BUNDLE_SHA256}"
 
-# The serial binary, so `podman-hpc run <image> q3 input.yml` behaves the same
-# way as with the plain image. Reach the parallel one by name, under the
-# launcher: `mpiexec -n 4 q3_mpi input.yml`, or `srun ... q3_mpi input.yml`
-# once the host MPI has been swapped in.
+# One engine binary, the MPI one, named q3 as in every other image (#316):
+# `mpiexec -n 4 q3 input.yml`, or `srun ... q3 input.yml` once the host MPI has
+# been swapped in. Without a launcher it runs as a single rank. q3_mpi is a
+# symlink to it, for scripts that still use that name.
 CMD ["q3"]

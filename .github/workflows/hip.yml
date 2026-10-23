@@ -103,7 +103,7 @@ jobs:
       - name: Build (HIP) — Compile Only
         run: |
           ccache -z
-          cmake --build build_hip -j$(nproc) --target q3 q3_gpu_hip
+          cmake --build build_hip -j$(nproc) --target q3_gpu_hip
           ccache -s
           echo "HIP backend compiled successfully (no GPU hardware to run)"
 

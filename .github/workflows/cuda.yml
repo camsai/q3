@@ -134,16 +134,28 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
-      - name: Build (CUDA)
+      # The serial reference the parity check and the benchmarks compare
+      # against. A build tree compiles one q3 (#316), and build_cuda's is the
+      # CUDA one, so the serial q3 comes from a tree of its own.
+      - name: Configure CMake (serial reference)
+        run: |
+          cmake -S . -B build_serial \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQ3_BUILD_TESTS=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build (CUDA and serial reference)
         run: |
           ccache -z
-          cmake --build build_cuda -j$(nproc) --target q3 q3_gpu_cuda
+          cmake --build build_cuda -j$(nproc) --target q3_gpu_cuda
+          cmake --build build_serial -j$(nproc) --target q3
           ccache -s
 
       - name: CPU↔GPU Energy Parity (blocker 15a)
         run: |
           pytest tests/validation/test_gpu_energy_parity.py -v \
-            --q3-bin ./build_cuda/q3 \
+            --q3-bin ./build_serial/q3 \
             --q3-gpu-bin ./build_cuda/q3_gpu_cuda
 
       - name: SSH Debug Session
@@ -156,7 +168,7 @@ jobs:
       - name: Benchmark CUDA vs Serial (Si FCC 2×2×2)
         run: |
           echo "=== Serial baseline ==="
-          ./build_cuda/q3 examples/total_energy--semiconductor--silicon/nc.yml
+          ./build_serial/q3 examples/total_energy--semiconductor--silicon/nc.yml
 
           echo ""
           echo "=== CUDA GPU FP64 ==="
@@ -170,7 +182,7 @@ jobs:
         continue-on-error: true
         run: |
           echo "=== Serial baseline (Cu 3×3×3, 3 SCF iters) ==="
-          ./build_cuda/q3 examples/total_energy--metal--copper/nc_3x3x3_bench.yml
+          ./build_serial/q3 examples/total_energy--metal--copper/nc_3x3x3_bench.yml
 
           echo ""
           echo "=== CUDA GPU FP64 (Cu 3×3×3, 3 SCF iters) ==="
@@ -186,5 +198,5 @@ jobs:
         run: |
           pytest tests/validation/ -v \
             --ignore=tests/validation/test_gpu_energy_parity.py \
-            --q3-bin ./build_cuda/q3 \
+            --q3-bin ./build_serial/q3 \
             --q3-gpu-bin ./build_cuda/q3_gpu_cuda

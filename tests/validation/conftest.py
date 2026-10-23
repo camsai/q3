@@ -13,10 +13,11 @@ def q3_bin(pytestconfig):
 
     The --q3-bin option itself is registered in the root tests/conftest.py.
 
-    Note the default names `q3_mpi`, not the `q3` beside it: an MPI build tree
-    holds both, and only one of them is the MPI entry point. Whether the binary
-    actually is that one is `require_mpi_binary`'s question, not this fixture's
-    -- see its docstring for why the skips live there.
+    The default names `q3_mpi`, the link an MPI build tree puts beside its one
+    `q3` (#316), so it fails to resolve in a serial tree rather than quietly
+    naming the serial binary. Whether the binary actually is the MPI entry
+    point is `require_mpi_binary`'s question, not this fixture's -- see its
+    docstring for why the skips live there.
     """
     binary_option = pytestconfig.getoption("--q3-bin") or "./build_mpi/q3_mpi"
     binary = Path(binary_option).resolve()
@@ -66,12 +67,13 @@ def _is_mpi_binary(binary_path):
     down, and a third afterwards.
 
     The third is why this asks the binary what it is rather than what it links
-    against. An MPI build tree holds `q3` and `q3_mpi` side by side, both built
-    from a library compiled with Q3_WITH_MPI, so both link MPI -- but only
-    `q3_mpi` is `src/main_mpi.cpp`. Inspecting the linkage passed the serial
-    one straight through, and the fixture default said `build_mpi/q3`, so the
-    easy mistake was also the documented one. `--version` prints the
-    executable's own name and settles it.
+    against. An MPI build tree used to hold a serial `q3` and `q3_mpi` side by
+    side, both built from a library compiled with Q3_WITH_MPI, so both linked
+    MPI -- but only `q3_mpi` was `src/main_mpi.cpp`. Inspecting the linkage
+    passed the serial one straight through. A tree now builds one binary, and
+    in an MPI tree `q3` *is* the MPI entry point (#316), but a serial binary
+    can still be handed in by path. `--version` prints the entry point's own
+    name, whatever the file is called, and settles it.
 
     Falls back to running the test when the binary will not answer, rather than
     skipping silently: a missed check is better than a missed test.

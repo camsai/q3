@@ -34,6 +34,12 @@ def pytest_addoption(parser):
         help="Path to the q3 GPU binary (default: auto-detect in build*/)",
     )
     parser.addoption(
+        "--q3-serial-bin",
+        default=None,
+        help="Path to a serial q3 binary, for tests that pair it with an MPI build "
+        "(default: ./build/q3)",
+    )
+    parser.addoption(
         "--tier2",
         action="store_true",
         default=False,
