@@ -47,6 +47,20 @@ TEST(Provenance, RecordsTheEngineIdentity) {
     EXPECT_EQ(provenance["generator"]["engine_commit"], std::string(commit));
 }
 
+/**
+ * The BLAS/LAPACK the build linked travels with every result: a run's speed can hinge on
+ * it, and a slow run reported from another machine said nothing about it.
+ */
+TEST(Provenance, RecordsTheLinearAlgebraLibrariesTheBuildLinked) {
+    const nlohmann::json provenance = build_provenance_json(make_silicon_input());
+
+    ASSERT_TRUE(provenance["generator"].contains("linear_algebra_libraries"));
+    EXPECT_EQ(provenance["generator"]["linear_algebra_libraries"],
+              std::string(linear_algebra_libraries));
+    EXPECT_FALSE(std::string(linear_algebra_libraries).empty())
+        << "CMake passes the LAPACK libraries it found; an empty string means it did not";
+}
+
 /// The numerics that were asked for, in Q3's own units, named so no reader can mistake them.
 TEST(Provenance, EchoesTheRequestedModelAndMethod) {
     const nlohmann::json provenance = build_provenance_json(make_silicon_input());

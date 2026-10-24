@@ -23,6 +23,7 @@
 
 #include "io/json_file.hpp"
 #include "io/logger.hpp"
+#include "layer_0_core/execution/threading.hpp"
 #include "layer_0_core/profiling/counters.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_2_quantum_system/derived/magnetization.hpp"
@@ -97,6 +98,12 @@ struct FlavorResult {
     int number_of_kpoint_pools = 1;
     int band_group_size = 1;
     bool reciprocal_space_vectors_are_distributed = false;
+    /**
+     * OpenMP threads each process may use (OMP_NUM_THREADS), 1 without OpenMP.
+     * A single-process run's speed depends on it as much as an MPI run's does
+     * on its rank count, and a result used to leave it out.
+     */
+    int number_of_threads_per_process = execution::threading::maximum_threads();
     /**
      * Largest peak resident set over the ranks, in bytes.
      *
@@ -384,6 +391,7 @@ struct FlavorResult {
     [[nodiscard]] nlohmann::json execution_json() const {
         return {
             {"number_of_processes", number_of_processes},
+            {"number_of_threads_per_process", number_of_threads_per_process},
             {"number_of_kpoint_pools", number_of_kpoint_pools},
             {"band_group_size", band_group_size},
             {"reciprocal_space_vectors_are_distributed", reciprocal_space_vectors_are_distributed},

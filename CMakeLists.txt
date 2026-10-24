@@ -379,6 +379,12 @@ endif()
 if(Q3_FFT_BACKEND STREQUAL "fftw")
     target_link_libraries(q3_cpp INTERFACE ${FFTW3_LIB})
 endif()
+# The BLAS/LAPACK this build links, recorded in every result's provenance: a run's speed
+# can hinge on it -- a projector-overlap GEMM measured at single-core speed on one
+# cluster -- and nothing in a result said which library had been linked.
+string(REPLACE ";" " " Q3_LINEAR_ALGEBRA_LIBRARIES "${LAPACK_LIBRARIES}")
+target_compile_definitions(q3_cpp INTERFACE
+    "Q3_LINEAR_ALGEBRA_LIBRARIES=\"${Q3_LINEAR_ALGEBRA_LIBRARIES}\"")
 target_link_libraries(q3_cpp INTERFACE ${LAPACK_LIBRARIES}
     nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp spdlog::spdlog_header_only
     ${Q3_LIBXC_TARGET} Spglib::symspg)

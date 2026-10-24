@@ -862,9 +862,10 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
         timing.hamiltonian_nonlocal_time_ms +=
             std::chrono::duration<double, std::milli>(hpsi_timer_end - hpsi_timer_after_fft)
                 .count();
-        timing.hamiltonian_allreduce_time_ms += std::chrono::duration<double, std::milli>(
-                                                    hpsi_timer_after_overlap - hpsi_timer_after_fft)
-                                                    .count();
+        timing.hamiltonian_projector_overlap_time_ms +=
+            std::chrono::duration<double, std::milli>(hpsi_timer_after_overlap -
+                                                      hpsi_timer_after_fft)
+                .count();
     }
 
     // ─── Smooth potential computation ───────────────────────────────

@@ -8,9 +8,9 @@
 | ------ | ----: |
 | Header files (`.hpp`) | 461 |
 | Translation units (`.cpp`/`.cu`/`.mm`) | 29 |
-| Lines of C++ (non-empty) | 82,353 |
-| C++ unit/integration tests | 1,637 |
-| Python validation tests | 218 |
+| Lines of C++ (non-empty) | 82,386 |
+| C++ unit/integration tests | 1,641 |
+| Python validation tests | 219 |
 | Python regression tests | 32 |
 | C++ standard | C++17 |
 | Build style | Header-heavy library + `q3`, `q3_mpi`, `q3_gpu_*`, `q3_utility` executables |

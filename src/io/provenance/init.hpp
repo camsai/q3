@@ -108,6 +108,7 @@ class QuantumSystemProvenanceRecord {
         generator["engine_name"] = "q3";
         generator["engine_version"] = version;
         generator["engine_commit"] = commit;
+        generator["linear_algebra_libraries"] = linear_algebra_libraries;
         /**
          * The build-time add-ons compiled in, since a result can depend on one;
          * an empty list for a core-only build, so absence is stated rather

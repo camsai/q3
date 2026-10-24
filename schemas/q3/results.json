@@ -83,6 +83,11 @@
             "additionalProperties": false,
             "properties": {
                 "number_of_processes": { "type": "integer", "minimum": 1 },
+                "number_of_threads_per_process": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "OpenMP threads each process may use (OMP_NUM_THREADS); 1 without OpenMP. Absent from results written before it was recorded."
+                },
                 "number_of_kpoint_pools": { "type": "integer", "minimum": 1 },
                 "band_group_size": { "type": "integer", "minimum": 1 },
                 "reciprocal_space_vectors_are_distributed": { "type": "boolean" },

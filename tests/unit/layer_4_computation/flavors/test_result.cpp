@@ -164,6 +164,20 @@ TEST(FlavorResultExecution, SerializersIncludeActualTopology) {
     EXPECT_EQ(serialized["execution"]["reciprocal_space_vectors_are_distributed"], true);
 }
 
+/**
+ * A single-process run's speed depends on its thread count as much as an MPI run's
+ * does on its ranks; the default is what OMP_NUM_THREADS gives this process.
+ */
+TEST(FlavorResultExecution, RecordsTheThreadsEachProcessMayUse) {
+    FlavorResult result;
+    EXPECT_EQ(result.number_of_threads_per_process, execution::threading::maximum_threads());
+    result.number_of_threads_per_process = 6;
+
+    const nlohmann::json serialized = nlohmann::json::parse(result.to_json_string());
+
+    EXPECT_EQ(serialized["execution"]["number_of_threads_per_process"], 6);
+}
+
 TEST(FlavorResultStress, SerializersIncludeFullContributionTensors) {
     FlavorResult result;
     Real ewald_stress[3][3] = {

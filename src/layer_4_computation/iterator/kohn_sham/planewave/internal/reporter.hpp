@@ -20,8 +20,10 @@
 #include <vector>
 
 #include "io/logger.hpp"
+#include "layer_0_core/execution/threading.hpp"
 #include "layer_0_core/math/tolerances.hpp"
 #include "layer_0_core/types/constants.hpp"
+#include "layer_0_core/version.hpp"
 #include "layer_1_structure/reciprocal_space/kpoint.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/internal/memory_estimate.hpp"
 #include "layer_4_computation/state/internal/energies/kohn_sham/planewave/init.hpp"
@@ -246,6 +248,9 @@ class PlanewaveKohnShamSCFReporter {
                 log::info("     G-vector distribution     = replicated (one rank per pool)");
             }
         }
+        log::info("     threads per process       = {}", execution::threading::maximum_threads());
+        log::info("     linear algebra            = {}",
+                  *linear_algebra_libraries != '\0' ? linear_algebra_libraries : "(not recorded)");
         log::info("");
         log::info("     XC functional             = {}", summary.xc_functional_name);
         log::info("     diagonalization           = {}", summary.diagonalizer_name);

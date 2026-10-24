@@ -48,7 +48,8 @@ struct ProfilingCounters {
         double hamiltonian_fft_time_ms = 0;
         double hamiltonian_kinetic_time_ms = 0;
         double hamiltonian_nonlocal_time_ms = 0;
-        double hamiltonian_allreduce_time_ms = 0;
+        /// The projector overlaps <beta|psi> of the nonlocal term, a part of nonlocal above.
+        double hamiltonian_projector_overlap_time_ms = 0;
 
         void print_summary() const {
             log::debug("     Davidson timing breakdown:");
@@ -61,8 +62,8 @@ struct ProfilingCounters {
             log::debug("         fft:                    {:8.1f} ms", hamiltonian_fft_time_ms);
             log::debug("         kinetic:                {:8.1f} ms", hamiltonian_kinetic_time_ms);
             log::debug("         nonlocal:               {:8.1f} ms", hamiltonian_nonlocal_time_ms);
-            log::debug("         allreduce:              {:8.1f} ms",
-                       hamiltonian_allreduce_time_ms);
+            log::debug("           projector overlap:    {:8.1f} ms",
+                       hamiltonian_projector_overlap_time_ms);
             log::debug("       subspace_update:          {:8.1f} ms", subspace_update_time_ms);
             log::debug("       diagonalize:              {:8.1f} ms", diagonalize_time_ms);
             log::debug("       collapse:                 {:8.1f} ms", collapse_time_ms);
@@ -100,7 +101,7 @@ struct ProfilingCounters {
                     {"hamiltonian_fft", hamiltonian_fft_time_ms},
                     {"hamiltonian_kinetic", hamiltonian_kinetic_time_ms},
                     {"hamiltonian_nonlocal", hamiltonian_nonlocal_time_ms},
-                    {"hamiltonian_allreduce", hamiltonian_allreduce_time_ms},
+                    {"hamiltonian_projector_overlap", hamiltonian_projector_overlap_time_ms},
                     {"subspace_update", subspace_update_time_ms},
                     {"diagonalize", diagonalize_time_ms},
                     {"collapse", collapse_time_ms},

@@ -321,6 +321,16 @@ class QEInputParser : public InputParser {
          * InputData::use_exact_wavefunction_grid.
          */
         data.use_exact_wavefunction_grid = true;
+        /**
+         * pw.x mixes with mixing_mode = 'plain' unless the deck says otherwise,
+         * and 'plain' is Broyden with no preconditioning. Q3's own default
+         * ("default") adds Kerker whenever smearing is on, which is a different
+         * mixer: on a metallic slab it damps exactly the long-wavelength charge
+         * that converges slowest, and a Ni(111) slab that pw.x converges in 24
+         * iterations took Q3 85. A deck that names `TF` or `local-TF` still gets
+         * its preconditioner below.
+         */
+        data.mixing_preconditioning = "none";
         /// Raw 1-based starting_ns_eigenvalue (m, ispin, ityp, f), resolved to symbols post-parse.
         std::vector<RawStartingNsEigenvalue> raw_starting_ns_eigenvalues;
         std::ifstream input_file(filename);
@@ -900,7 +910,8 @@ class QEInputParser : public InputParser {
                      * `plain` is QE's *default* and appears in most real
                      * inputs; storing it verbatim meant Q3 died in the mixer
                      * factory with "Unknown mixer mode: 'plain'" on files QE
-                     * runs without comment.
+                     * runs without comment. It keeps the unpreconditioned
+                     * default set at the top of parse().
                      *
                      * `TF`/`local-TF` are Thomas-Fermi preconditioners on the
                      * same Broyden mixing, and Q3 now has both: `TF` is the

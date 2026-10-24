@@ -31,4 +31,11 @@ inline constexpr const char* commit = Q3_GIT_COMMIT;
 inline constexpr const char* commit = "";
 #endif
 
+/// The BLAS/LAPACK libraries this build links, as CMake found them; empty if unknown.
+#ifdef Q3_LINEAR_ALGEBRA_LIBRARIES
+inline constexpr const char* linear_algebra_libraries = Q3_LINEAR_ALGEBRA_LIBRARIES;
+#else
+inline constexpr const char* linear_algebra_libraries = "";
+#endif
+
 } // namespace q3

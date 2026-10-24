@@ -1653,3 +1653,30 @@ TEST(QEParserNamelistLayout, AmpersandEndStillClosesTheNamelist) {
     input.replace(input.find(terminator), terminator.size(), "  conv_thr = 1e-8\n&END\n");
     EXPECT_NEAR(parse_text(input).convergence_threshold, 1e-8, 1e-20);
 }
+
+/**
+ * pw.x's mixing_mode = 'plain', written or left as pw.x's default, is Broyden with no
+ * preconditioning. The reader used to leave the preconditioner at Q3's own "default",
+ * which turns Kerker on whenever smearing is on, so a metallic QE deck ran a different
+ * mixer from pw.x's: on a Ni(111) slab, 85 SCF iterations against pw.x's 24.
+ */
+TEST(QEParserMixing, PlainMixingIsUnpreconditionedEvenUnderSmearing) {
+    const std::string smearing = "  occupations = 'smearing'\n  degauss = 0.01\n";
+    InputData left_to_default = parse_text(silicon_input_with("", smearing));
+    EXPECT_EQ(left_to_default.mixing_mode, "broyden");
+    EXPECT_EQ(left_to_default.mixing_preconditioning, "none");
+
+    InputData written = parse_text(silicon_input_with("", smearing, "  mixing_mode = 'plain'\n"));
+    EXPECT_EQ(written.mixing_mode, "broyden");
+    EXPECT_EQ(written.mixing_preconditioning, "none");
+}
+
+TEST(QEParserMixing, ThomasFermiModesKeepTheirPreconditioners) {
+    InputData average = parse_text(silicon_input_with("", "", "  mixing_mode = 'TF'\n"));
+    EXPECT_EQ(average.mixing_mode, "broyden");
+    EXPECT_EQ(average.mixing_preconditioning, "kerker");
+
+    InputData local = parse_text(silicon_input_with("", "", "  mixing_mode = 'local-TF'\n"));
+    EXPECT_EQ(local.mixing_mode, "broyden");
+    EXPECT_EQ(local.mixing_preconditioning, "local-tf");
+}

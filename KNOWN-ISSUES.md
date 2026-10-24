@@ -662,6 +662,52 @@ runs with it excluded.
 
 ## Resolved
 
+### A result did not say how many threads or which BLAS produced it, and one timer was misnamed (resolved 2026-10-23)
+
+**Affected:** every run's log and `results.json`, when a timing is compared across machines.
+
+A reported single-process run spent 9,620 s in the timer `hamiltonian_allreduce`. That
+timer has never timed a reduction. It spans the projector overlaps ⟨β|ψ⟩ of the nonlocal
+term, part of `hamiltonian_nonlocal`, and so it read as communication in a run with none.
+The same overlaps ran about 30× slower per flop than the back-projection of the same size
+in that run. With OpenBLAS 0.3.29 (OpenMP) the two run at the same speed on 1–8 threads
+here, and with Accelerate the overlap is about 2× slower. What differed on that machine
+could not be told, because neither the log nor `results.json` recorded the thread count
+or the BLAS library.
+
+**Fix.** The timer is `hamiltonian_projector_overlap`, in the counters, `results.json` and
+the benchmark baselines, which measured the same region under the old name. `execution`
+records `number_of_threads_per_process`, an optional key in `schemas/q3/results.json` so
+older results still validate. `provenance.generator.linear_algebra_libraries` records the
+BLAS/LAPACK CMake linked, and the run header prints both. Unit tests cover the two new
+records.
+
+### A QE deck's plain mixing ran with Kerker preconditioning, so metallic slabs converged slowly (resolved 2026-10-23)
+
+**Affected:** every QE-format deck with smearing whose `mixing_mode` is `plain`, written or
+left at pw.x's default. Reported on a 64-atom Ni(111) slab with four CO molecules, ultrasoft datasets and LSDA: Q3 took 219 SCF iterations where pw.x took 103,
+most of the 3× in wall time between the two runs.
+
+pw.x's `plain` is Broyden mixing with no preconditioning. The reader mapped it to
+Broyden but left the preconditioner at Q3's own `default`, which switches Kerker on
+whenever smearing is on, so the deck ran a different mixer from pw.x's. Kerker scales each
+residual component by G²/(G² + q0²), damping the long-wavelength charge. In a slab that is
+the charge sloshing across the vacuum, the slowest mode to converge. Both codes reach the
+same density: before and after agree to 1e-7 Ry on both slabs below, at thresholds of
+1e-8 and 7e-8 Ry.
+
+| Ultrasoft slab, QE-format deck, plain mixing, β = 0.1 | pw.x 7.6 | Before | After |
+| ----------------------------------------------------- | -------- | ------ | ----- |
+| Ni(111), 4 layers, LSDA, 15 Å vacuum                  | 24       | 85     | 22    |
+| Cu(111), 4 layers, 15 Å vacuum (committed Cu dataset) | 22       | 46     | 27    |
+
+**Fix.** The reader sets the preconditioner to `none` for a QE deck, as pw.x mixes, and
+`TF` and `local-TF` still map to `kerker` and `local-tf`. A YAML deck keeps
+`mixing.preconditioning: default`, which resolves by smearing as before.
+`tests/unit/io/input/parser/test_qe.cpp` pins the four spellings, and
+`tests/validation/test_qe_plain_mixing_slab.py` runs the Cu slab against a bound of 36
+iterations. Both fail on the old reader.
+
 ### A smeared metal kept half a micro-electron too many (resolved 2026-10-20)
 
 **Affected:** every run with smearing on a metal since 2026-08-18. The Fermi energy sat

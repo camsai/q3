@@ -23,7 +23,7 @@
                     "minimum_ms": 33.919,
                     "relative_spread": 0.0943
                 },
-                "hamiltonian_allreduce": {
+                "hamiltonian_projector_overlap": {
                     "maximum_ms": 302.966,
                     "median_ms": 283.842,
                     "minimum_ms": 264.719,
@@ -117,7 +117,7 @@
                     "minimum_ms": 2.042,
                     "relative_spread": 0.01026
                 },
-                "hamiltonian_allreduce": {
+                "hamiltonian_projector_overlap": {
                     "maximum_ms": 40.821,
                     "median_ms": 38.969,
                     "minimum_ms": 37.117,
@@ -211,7 +211,7 @@
                     "minimum_ms": 3.332,
                     "relative_spread": 0.06854
                 },
-                "hamiltonian_allreduce": {
+                "hamiltonian_projector_overlap": {
                     "maximum_ms": 17.532,
                     "median_ms": 17.462,
                     "minimum_ms": 17.392,
