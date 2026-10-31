@@ -25,7 +25,7 @@ from pathlib import Path
 
 import yaml
 
-from q3.binary import run_q3
+from q3.binary import ExecutionPolicy, run_q3
 from q3.io.output_writer import extract_dos
 
 
@@ -37,6 +37,7 @@ def run_dos_workflow(
     energy_max_ry: float | None = None,
     energy_steps: int | None = None,
     q3_binary: str | Path | None = None,
+    execution_policy: ExecutionPolicy | None = None,
     skip_scf: bool = False,
     scf_results: dict | None = None,
     capture_output: bool = True,
@@ -76,6 +77,11 @@ def run_dos_workflow(
         else 1000.
     q3_binary:
         Path to the ``q3`` binary.  Auto-detected when ``None``.
+    execution_policy:
+        The execution policy every engine run of the workflow starts the
+        binary with: ranks, k-point pools, the launcher (see
+        :class:`q3.binary.ExecutionPolicy`).  ``None`` runs one process with
+        the binary's defaults.
     skip_scf:
         When ``True``, skip the SCF run and use *scf_results* directly.
     scf_results:
@@ -138,6 +144,7 @@ def run_dos_workflow(
             results = run_q3(
                 effective_input_path,
                 q3_binary=q3_binary,
+                execution_policy=execution_policy,
                 capture_output=capture_output,
             )
         finally:

@@ -138,7 +138,7 @@ COPY . /opt/q3-src
 # for CMakeLists.txt to find it, and it must exist before `cmake --build`,
 # which is when the schema-to-C++ generator runs.
 RUN python3 -m venv /opt/q3-src/.venv \
-    && /opt/q3-src/.venv/bin/pip install --no-cache-dir pyyaml jinja2 jsonref
+    && /opt/q3-src/.venv/bin/pip install --no-cache-dir ".[build]"
 
 # FFTW_ROOT is read by CMakeLists.txt's own hint list, which is how the
 # source-built FFTW is found ahead of anything else. find_package(MPI) picks

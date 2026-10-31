@@ -56,6 +56,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from q3.io.results.classes import Results
+
+from helpers import atomic_forces, energy_contribution
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 SILICON_MATERIAL = REPOSITORY / "examples" / "data" / "materials" / "silicon.json"
@@ -83,6 +86,7 @@ FIRST_CELL_VECTOR_BOHR = (
     0.0,
     +0.5 * SILICON_PRIMITIVE_A_ANGSTROM * math.sqrt(2.0) / BOHR_TO_ANGSTROM,
 )
+
 """
 a1 of ``silicon.json``, in bohr, read from the same two rules Q3 applies to it.
 
@@ -215,8 +219,8 @@ def run_q3(q3_bin, directory, dataset, gamma_only, displacement, hubbard=True):
         timeout=3600,
     )
     assert completed.returncode == 0, completed.stdout[-3000:]
-    results = json.loads((directory / "out" / "si_results.json").read_text())
-    assert results["converged"], (
+    results = Results.read(directory / "out" / "si_results.json")
+    assert results.runtime_log.converged, (
         "the run did not converge, and an unconverged run reports no forces at all"
     )
     assert ("half-sphere" in completed.stdout) == gamma_only, (
@@ -226,11 +230,11 @@ def run_q3(q3_bin, directory, dataset, gamma_only, displacement, hubbard=True):
 
 
 def hubbard_manifold_traces(output):
-    """Per-atom Hubbard occupation-matrix trace Tr[n]; genuinely stdout-only.
+    """Per-atom Hubbard occupation-matrix trace Tr[n], as the reporter prints it.
 
-    FlavorResult has no field for this today (it's a per-atom SCF diagnostic
-    printed by the reporter, not part of results.json) -- a real, documented
-    gap, not an oversight.
+    Read from stdout, the per-atom SCF diagnostic this check was written
+    against; results.json's properties.hubbard_occupations carries the same
+    traces per manifold.
     """
     matches = re.findall(r"DFT\+U: atom (\d+) Tr\[n\] = ([\d.]+)", output)
     assert matches, "no Tr[n] diagnostic in Q3 output"
@@ -263,8 +267,8 @@ def energy_pair(request, q3_bin, tmp_path_factory):
 
 def test_gamma_only_hubbard_energy_matches_the_full_sphere(energy_pair):
     dataset, (_, gamma_results), (_, full_sphere_results) = energy_pair
-    gamma = gamma_results["total_energy_ry"]
-    full_sphere = full_sphere_results["total_energy_ry"]
+    gamma = gamma_results.properties.total_energy.value
+    full_sphere = full_sphere_results.properties.total_energy.value
     print(f"\n  {dataset}: E(gamma) = {gamma:.9f}  E(full sphere) = {full_sphere:.9f} Ry")
     assert abs(gamma - full_sphere) < ENERGY_TOLERANCE_RYDBERG, (
         f"the Gamma-only DFT+U total energy differs from the same single k-point over the "
@@ -287,8 +291,8 @@ def test_gamma_only_hubbard_energy_and_occupations_match_the_full_sphere(energy_
     and stays stdout-based -- see hubbard_manifold_traces()'s docstring.
     """
     dataset, (gamma_stdout, gamma_results), (full_sphere_stdout, full_sphere_results) = energy_pair
-    gamma = gamma_results["hubbard_energy_ry"]
-    full_sphere = full_sphere_results["hubbard_energy_ry"]
+    gamma = energy_contribution(gamma_results, "hubbard")
+    full_sphere = energy_contribution(full_sphere_results, "hubbard")
     gamma_traces = hubbard_manifold_traces(gamma_stdout)
     full_sphere_traces = hubbard_manifold_traces(full_sphere_stdout)
     print(
@@ -315,7 +319,7 @@ def test_the_gamma_only_run_carries_a_hubbard_energy_at_all(energy_pair):
     SCF setup: DFT+U with a Gamma-only basis raised rather than ran.
     """
     dataset, (_, gamma_results), _ = energy_pair
-    energy = gamma_results["hubbard_energy_ry"]
+    energy = energy_contribution(gamma_results, "hubbard")
     print(f"\n  {dataset}: E_U = {energy:.9f} Ry")
     assert energy > 1.0e-3, f"the Gamma-only DFT+U energy is {energy:.3e} Ry, effectively zero"
 
@@ -346,11 +350,11 @@ def test_gamma_only_hubbard_force_is_the_gradient_of_q3s_own_energy(force_triple
     _, baseline_results = outputs["baseline"]
     _, plus_results = outputs["plus"]
     _, minus_results = outputs["minus"]
-    force = baseline_results["forces_ry_per_bohr"][1]
+    force = atomic_forces(baseline_results)[1]
     analytic = sum(force[index] * unit_axis[index] for index in range(3))
-    numerical = -(plus_results["total_energy_ry"] - minus_results["total_energy_ry"]) / (
-        2.0 * step_bohr
-    )
+    numerical = -(
+        plus_results.properties.total_energy.value - minus_results.properties.total_energy.value
+    ) / (2.0 * step_bohr)
 
     assert abs(numerical) > 1e-3, "the displacement is not producing a resolvable force"
     ratio = analytic / numerical

@@ -26,6 +26,7 @@ from ase.constraints import FixSymmetry
 from ase.optimize import BFGS
 from mat3ra.code.constants import Coefficients as _Coefficients
 
+from q3.binary import ExecutionPolicy
 from q3.calculators.ase_calculator import Q3ASECalculator
 from q3.structure.ase_atoms import material_json_to_ase_atoms
 
@@ -55,7 +56,7 @@ def read_relaxation_input(
         control = config.get("control", {})
     else:
         atoms, results = calculator.run_input_as_written()
-        relaxation = results.get("provenance", {}).get("relaxation", {})
+        relaxation = (results.provenance or {}).get("relaxation", {})
         control = {
             "relax_force_threshold": relaxation.get("force_threshold_ry_per_bohr"),
             "relax_max_steps": relaxation.get("maximum_steps"),
@@ -82,7 +83,7 @@ def run_relax_workflow(
     use_symmetry: bool = True,
     mode: str = "auto",
     q3_binary: str | Path | None = None,
-    launcher: str | list[str] = (),
+    execution_policy: ExecutionPolicy | None = None,
     trajectory_path: str | Path | None = None,
     workdir: str | Path | None = None,
     capture_output: bool = True,
@@ -133,8 +134,9 @@ def run_relax_workflow(
         Execution mode for the calculator ('auto', 'subprocess', or 'bindings').
     q3_binary:
         Path to the binary each step runs: ``q3``, ``q3_mpi`` or a GPU binary.
-    launcher:
-        Command each step runs the binary under, e.g. ``"srun -n 64"``.
+    execution_policy:
+        The execution policy every step starts the binary with: ranks,
+        k-point pools, the launcher (see :class:`q3.binary.ExecutionPolicy`).
     trajectory_path:
         Where to write the ASE ``.traj`` trajectory file.  Defaults to
         ``relax.traj`` in the current directory.
@@ -168,7 +170,7 @@ def run_relax_workflow(
         scf_input_path,
         mode=mode,
         q3_binary=q3_binary,
-        launcher=launcher,
+        execution_policy=execution_policy,
         workdir=workdir,
         capture_output=capture_output,
     )

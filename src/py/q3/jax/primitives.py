@@ -92,9 +92,12 @@ def _run_scf_with_forces(
         forces_ry_per_bohr: list of [fx, fy, fz] per atom
     """
     results = run_scf(scf_input_path, q3_binary=q3_binary)
-    energy = float(results.get("total_energy_ry", 0.0))
-    forces = results.get("forces_ry_per_bohr", [])
-    return energy, forces
+    energy = results.properties.total_energy
+    forces = results.properties.atomic_forces
+    return (
+        float(energy.value) if energy is not None else 0.0,
+        [atom.value for atom in forces.values] if forces is not None else [],
+    )
 
 
 # ---------------------------------------------------------------------------

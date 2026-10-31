@@ -17,7 +17,7 @@ The landscape of plane-wave DFT codes is dominated by a handful of mature projec
 -   **Open-source Fortran codes** — decades of development, hundreds of thousands of lines of code
 -   **Proprietary Fortran codes** — decades of development, restricted source access
 
-These are mature, battle-tested, and widely used. They are also largely written in Fortran 90/2003, carry decades of accumulated technical debt, and present significant barriers to modification, extension, and integration with modern software ecosystems.
+These are mature, battle-tested, and widely used, and Q3's own validation rests on one of them, Quantum ESPRESSO. They are largely written in Fortran 90/2003 and were designed as standalone applications, before AI coding agents and today's data platforms existed.
 
 Q3 exists because the materials simulation field needs a **clean, modern, extensible** DFT engine that can serve as the computational core of a larger platform — not as a standalone monolithic application.
 
@@ -30,22 +30,22 @@ Q3 is written from scratch in C++17 with no legacy code. Every design decision r
 -   **No abbreviations** — `number_of_plane_waves` not `npw`, `pseudopotential_set` not `ppset`. The codebase is self-documenting.
 -   **Strategy/Factory patterns** — XC functionals, mixers, diagonalizers, and smearing schemes are interchangeable via clean interfaces.
 -   **Layered architecture** — physics layers 0–5 separate structure, representation, computation, and properties; IO is a vertical slice.
--   **No global state** — unlike legacy Fortran codes (which rely heavily on modules as global singletons), Q3 passes data through explicit object state.
+-   **No global state** — Q3 passes data through explicit object state rather than module-level singletons.
 -   **RAII and modern memory management** — `std::unique_ptr`, `std::vector`, move semantics throughout.
 
-For comparison: a mature Fortran plane-wave code's core solver alone is ~150,000 lines across ~300 files, with interdependencies that make isolated testing or modification extremely difficult. Q3 achieves validated core SCF + forces + stress functionality — plus MPI and four GPU backends — in ~55,000 lines with clear module boundaries.
+For comparison: a mature Fortran plane-wave code's core solver alone is ~150,000 lines across ~300 files, the accumulation of decades of capability. Q3 achieves validated core SCF + forces + stress functionality — plus MPI and four GPU backends — in ~55,000 lines with clear module boundaries.
 
 #### 2. ESSE-Oriented Data Model
 
 Q3's input and output are designed around [ESSE](https://github.com/Exabyte-io/esse):
 
--   **YAML input** — human-readable manifests aligned with ESSE examples, with a legacy namelist format as an alternative.
+-   **YAML input** — human-readable manifests aligned with ESSE examples, with Quantum ESPRESSO's pw.x namelist format as an alternative.
 -   **Structured JSON output** — energies, eigenvalues, forces, and stress written as machine-readable JSON alongside binary checkpoints compatible with established codes.
 -   **Schema codegen** — a Python generator (`scripts/repo/generate_cpp_from_schemas.py`) produces C++ types under `src/generated/` from ESSE and Q3 JSON schemas.
 
 Full schema validation and complete ESSE property coverage are still in progress. See [FUNCTIONALITY.md](FUNCTIONALITY.md) §3.1 for the current I/O inventory.
 
-Established Fortran codes output plain text that must be parsed by fragile regex-based scripts. Q3's direction is to eliminate that class of problem through structured data from the start.
+Q3 writes structured data from the start, so downstream tools read results rather than parse text output.
 
 #### 3. Validated Against Established Codes
 
@@ -67,7 +67,7 @@ Q3 supports norm-conserving and ultrasoft pseudopotentials within a single inher
 -   **UPF v1 and v2** readers, compatible with standard pseudopotential libraries
 -   **PAW computed end-to-end** from UPF v2 datasets, including spin polarization, forces and stress; UPF v1 PAW is still rejected at read time
 
-In legacy codes, these formalisms evolved over decades as separate code paths with significant duplication. In Q3, NC and US are integrated from the start with parallel class hierarchies (basis, quantum system, SCF iterator, forces, stress).
+In Q3, NC and US are integrated from the start with parallel class hierarchies (basis, quantum system, SCF iterator, forces, stress).
 
 #### 5. Designed for AI-Assisted Development
 
@@ -89,7 +89,7 @@ The entire Q3 source tree is ~55,000 lines of C++ in ~321 header files plus 28 t
 | ABINIT           | Fortran  |      ~100,000       |   ~800,000+   |
 | GPAW             | Python/C |       ~50,000       |   ~100,000+   |
 
-This compactness reflects a focused scope: ground-state SCF, forces, stress, band structure, DOS, and geometry relaxation for NC/US/PAW — not the full feature surface of a 30+-year-old monolith. Advanced functionals (meta-GGA, hybrids) are on the roadmap, not yet shipped.
+This compactness reflects a focused scope: ground-state SCF, forces, stress, band structure, DOS, and geometry relaxation for NC/US/PAW — not the full feature surface of codes developed over three decades. Advanced functionals (meta-GGA, hybrids) are on the roadmap, not yet shipped.
 
 ---
 

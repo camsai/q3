@@ -59,12 +59,13 @@ COPY . /opt/q3-src
 
 # Set up the Python environment BEFORE configuring/building: CMake's
 # schema-generation step (generate_cpp_from_schemas.py, needs jsonref + jinja2
-# + pyyaml) runs during `cmake --build`, not after it. The venv must live at
+# + pyyaml, and mat3ra-esse for ESSE's schemas) runs during `cmake --build`,
+# not after it. The venv must live at
 # exactly ${CMAKE_SOURCE_DIR}/.venv for CMakeLists.txt to auto-detect and use
 # it (see the Q3_PYTHON / Python_EXECUTABLE checks); any other path silently
 # falls back to the system python3, which lacks these packages.
 RUN python3 -m venv /opt/q3-src/.venv \
-    && /opt/q3-src/.venv/bin/pip install --no-cache-dir pyyaml jinja2 jsonref
+    && /opt/q3-src/.venv/bin/pip install --no-cache-dir ".[build]"
 
 # The commit this image was built from, stamped into q3 --version and every
 # results.json. .dockerignore drops .git/ from the build context (see there),

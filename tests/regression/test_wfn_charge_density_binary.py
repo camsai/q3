@@ -8,11 +8,10 @@ Uses config overlays on the canonical examples to avoid duplicating
 input files. All outputs go to temporary directories.
 """
 
-import json
-
 import numpy as np
 import pytest
 from binary_readers import read_charge_density, read_wavefunction
+from q3.io.results.classes import Results
 
 from helpers import (
     EXAMPLES_DIRECTORY,
@@ -102,7 +101,7 @@ def wavefunction(gamma_binary_output):
 @pytest.fixture(scope="session")
 def results_json(gamma_binary_output):
     """Load JSON results once and share across tests."""
-    return json.loads(gamma_binary_output["results_json_path"].read_text())
+    return Results.read(gamma_binary_output["results_json_path"])
 
 
 @pytest.fixture(scope="session")
@@ -202,7 +201,9 @@ def test_non_gamma_wavefunction_header_uses_packed_offsets(non_gamma_wavefunctio
 
 def test_wavefunction_band_count_matches_json(wavefunction, results_json):
     """Number of bands in binary should match JSON eigenvalue count."""
-    number_of_eigenvalues = len(results_json["eigenvalues_ry"][0][0])
+    number_of_eigenvalues = len(
+        results_json.properties.eigenvalues_at_kpoints.values[0].eigenvalues[0].energies
+    )
     assert wavefunction["number_of_bands"] == number_of_eigenvalues, (
         f"Binary has {wavefunction['number_of_bands']} bands, "
         f"JSON has {number_of_eigenvalues} eigenvalues"

@@ -68,8 +68,8 @@ def test_unnamed_functional_reproduces_the_pseudopotentials_functional(
     named_pbe_results, unnamed_results
 ):
     """No functional in the input gives the PBE energy, not the LDA one."""
-    named = float(named_pbe_results["total_energy_ry"])
-    unnamed = float(unnamed_results["total_energy_ry"])
+    named = float(named_pbe_results.properties.total_energy.value)
+    unnamed = float(unnamed_results.properties.total_energy.value)
     difference = abs(unnamed - named)
     assert difference < SAME_CALCULATION_TOLERANCE_RYDBERG, (
         f"An input naming no functional did not run its pseudopotentials' functional:\n"
@@ -85,7 +85,7 @@ def test_provenance_names_the_functional_that_ran(unnamed_results, named_pbe_res
     It records it as ``pbe``, the spelling every reader's name is lower-cased to,
     and the same whether the deck named it or the dataset supplied it.
     """
-    recorded = unnamed_results["provenance"]["model"]["exchange_correlation_functional"]
-    named = named_pbe_results["provenance"]["model"]["exchange_correlation_functional"]
+    recorded = unnamed_results.provenance["model"]["exchange_correlation_functional"]
+    named = named_pbe_results.provenance["model"]["exchange_correlation_functional"]
     assert recorded == "pbe", f"provenance records {recorded!r}, expected 'pbe'"
     assert named == recorded, f"a named functional is recorded as {named!r}, not {recorded!r}"

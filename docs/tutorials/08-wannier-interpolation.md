@@ -259,13 +259,17 @@ So evaluating _at the mesh points_ — which is exactly what §3 just did — mu
 return the DFT eigenvalues to machine precision. Not approximately. Exactly.
 
 ```python
-import json
 import numpy as np
+from q3.io.interpolation.results.classes import InterpolationResults
+from q3.io.results.classes import eigenvalue_arrays
 
 RYDBERG_TO_EV = 13.605693122994
-results = json.load(open("wannier_output/si_interpolation_results.json"))
-# eigenvalues_ry is [k-point][spin][band], like every Q3 results file; one spin here.
-interpolated = np.array(results["eigenvalues_ry"])[:, 0, :] * RYDBERG_TO_EV
+results = InterpolationResults.read("wannier_output/si_interpolation_results.json")
+# Listed per k-point like every Q3 results file; read as [k-point][spin][band], one spin here.
+interpolated = (
+    np.array(eigenvalue_arrays(results.properties.eigenvalues_at_kpoints)[0])[:, 0, :]
+    * RYDBERG_TO_EV
+)
 
 reference = np.zeros_like(interpolated)
 for line in open("wannier_output/si.eig"):       # band, kpoint, energy in eV
@@ -328,8 +332,8 @@ evaluated a density of states on a 24x24x24 mesh
 Results written to: wannier_output/si_bands.json
 ```
 
-The eigenvalues land in `wannier_output/si_bands.json` under `eigenvalues_ry`,
-one row per k-point. In eV, at the three high-symmetry points:
+The eigenvalues land in `wannier_output/si_bands.json` under `properties.eigenvalues_at_kpoints`,
+one entry per k-point. In eV, at the three high-symmetry points:
 
 | Point | Interpolated valence eigenvalues (eV) |
 | ----- | ------------------------------------- |
@@ -357,9 +361,9 @@ applies:
 import json
 import numpy as np
 
-dos = json.load(open("wannier_output/si_bands.json"))["density_of_states"]
-energies = np.array(dos["energies_ry"])
-density = np.array(dos["dos"])
+# ESSE's density_of_states record: energies (Ry) on x, one series of states on y.
+dos = json.load(open("wannier_output/si_bands.json"))["properties"]["density_of_states"]
+energies, density = np.array(dos["xDataArray"]), np.array(dos["yDataSeries"][0])
 print(f"integral = {np.trapezoid(density, energies):.4f}")
 ```
 
@@ -509,8 +513,8 @@ yourself:
     matters most — on undistorted silicon the automatic recipe gives 826 / 110 /
     12.6 meV at 4×4×4 / 6×6×6 / 8×8×8, against at most 1.4× from the gauge — so
     it is the rule the protocol applies first.
--   **The quality report.** `q3_utility interpolate` writes `interpolation.quality`
-    beside `spread`: one spread Ω_n per Wannier function and their variance (the
+-   **The quality report.** `q3_utility interpolate` writes `quality`
+    beside `construction`: one spread Ω_n per Wannier function and their variance (the
     published no-reference criterion), the distance of every centre to the
     nearest atom and bond midpoint, and how far H(R) has decayed by the edge of
     its Wigner-Seitz domain — the largest term on the outermost shell against
@@ -526,7 +530,7 @@ yourself:
     the system is a metal (a band crossing E_F) is decided and reported, and a
     state inside the window that the trial orbitals cannot represent is never
     frozen — freezing it makes the gauge singular — but reported under
-    `interpolation.disentanglement`. Copper's example shows that, and what its
+    `construction.disentanglement`. Copper's example shows that, and what its
     4p-less dataset costs.
 -   **The retry ladder.** `q3.workflows.wannier.run_automatic_wannier_workflow`
     runs the whole chain from an SCF manifest with nothing else said: the mesh,

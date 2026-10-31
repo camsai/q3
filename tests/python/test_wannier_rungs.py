@@ -7,9 +7,9 @@ on is a new value rather than the old one changed.
 """
 
 import pytest
-from q3.io.interpolation_results import InterpolationResults, LadderAttempt
+from q3.io.interpolation.results.classes import InterpolationResults, LadderAttempt
 from q3.io.interpolation_settings import EvaluationSettings
-from q3.workflows.band_distance import eigenvalues_electronvolt
+from q3.workflows.band_distance import eigenvalues_ev
 from q3.workflows.wannier.accept_gate import AcceptGate
 from q3.workflows.wannier.attempt_status import AttemptStatus
 from q3.workflows.wannier.diagnostic import Diagnostic
@@ -150,7 +150,7 @@ def test_a_demand_the_localiser_refuses_ends_the_ladder():
 
 def test_the_unrepresentable_window_rung_freezes_the_occupied_manifold_when_it_helps():
     unrepresentable = {
-        "interpolation": {
+        "construction": {
             "disentanglement": {
                 "frozen_window_automatic": True,
                 "metallic": True,
@@ -192,7 +192,7 @@ def test_the_window_rung_lowers_on_the_classifiers_code_and_on_nothing_else():
 
 
 def test_the_window_rung_widens_a_converged_model_and_keeps_only_what_improves():
-    judged = {"interpolation": {"disentanglement": {"frozen_window_above_fermi_ev": 2.0}}}
+    judged = {"construction": {"disentanglement": {"frozen_window_above_fermi_ev": 2.0}}}
     state = _state("retry", converged=True, results=judged, eta_ev=0.020)
     evaluation = ScriptedEvaluation(
         [
@@ -236,19 +236,25 @@ def test_the_thresholds_rung_walks_the_published_grid_skipping_what_was_tried():
 def test_the_gate_judges_the_gauge_before_the_distance():
     gate = AcceptGate(eta_ev=0.010, eta_maximum_ev=0.100, energy_offset_ev=2.0, smearing_ev=0.1)
     document = {
-        "eigenvalues_ry": [[[-0.5, 0.25]]],
-        "interpolation": {"spread": {"localized": True, "localization_converged": True}},
+        "properties": {
+            "eigenvalues_at_kpoints": {
+                "name": "eigenvalues_at_kpoints",
+                "units": "Ry",
+                "values": [{"eigenvalues": [{"energies": [-0.5, 0.25]}]}],
+            }
+        },
+        "construction": {"spread": {"localized": True, "localization_converged": True}},
     }
-    reference = eigenvalues_electronvolt(document)
+    reference = eigenvalues_ev(_model(document))
     verdict = gate.judge(_model(document), reference, 0.0)
     assert verdict.status is AttemptStatus.ACCEPT and "gauge stationary" in verdict.reason
 
-    document["interpolation"]["spread"]["localization_converged"] = False
+    document["construction"]["spread"]["localization_converged"] = False
     verdict = gate.judge(_model(document), reference, 0.0)
     assert verdict.status is AttemptStatus.RETRY and "stalled" in verdict.reason
     assert (verdict.localized, verdict.localization_converged) == (True, False)
 
-    document["interpolation"]["spread"]["localized"] = False
+    document["construction"]["spread"]["localized"] = False
     verdict = gate.judge(_model(document), reference, 0.0)
     assert verdict.status is AttemptStatus.RETRY and "not localised" in verdict.reason
 

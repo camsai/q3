@@ -40,7 +40,7 @@ The frozen window is **not** in the manifest, so the run resolves it itself
 (`frozen_window_above_fermi_ev: auto`, the default): one band crosses the Fermi
 level, so copper is a metal and gets the published E_F + 2 eV. The log then
 says two more things, and both are in the results file under
-`interpolation.disentanglement` and `interpolation.quality`. Band 10, the
+`construction.disentanglement` and `quality`. Band 10, the
 free-electron-like sp band, lies inside that window at 7 of the 64 k-points
 with a projectability below the minimum, and is **excluded from the freeze**
 there: this dataset has no 4p shell, so nothing in the trial set can represent

@@ -1,0 +1,60 @@
+{
+    "$id": "q3/interpolation/results/quality/ladder",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Interpolation results ladder attempt",
+    "type": "object",
+    "required": [
+        "rung",
+        "grid",
+        "settings",
+        "status",
+        "reason",
+        "eta_ev",
+        "eta_maximum_ev",
+        "localized",
+        "localization_converged"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "rung": {
+            "type": "string",
+            "description": "The rung of the ladder that made the attempt: \"default\", \"unconverged\", \"stalled\", \"window\", \"thresholds\" or \"mesh\"."
+        },
+        "grid": {
+            "type": "array",
+            "items": {
+                "type": "integer"
+            },
+            "description": "The k-mesh of the record the attempt evaluated."
+        },
+        "settings": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The control.interpolation keys the attempt changed from the defaults, as it wrote them; for the mesh rung, the spacing it recaptured at (kpoint_spacing_inverse_angstrom)."
+        },
+        "status": {
+            "type": "string",
+            "description": "What became of the attempt: \"accept\" or \"retry\" for an evaluation the gate judged, \"error:<route>\" for one that raised (the route is \"unconverged\", \"localization\", \"infeasible\" or \"unknown\", from the engine's diagnostic code), and \"recapture\" for the mesh rung, which evaluates nothing."
+        },
+        "reason": {
+            "type": "string",
+            "description": "Why, in words: the gate's verdict or the engine's own error line."
+        },
+        "eta_ev": {
+            "type": ["number", "null"],
+            "description": "The band distance of the attempt, in electronvolts; null when the evaluation raised."
+        },
+        "eta_maximum_ev": {
+            "type": ["number", "null"],
+            "description": "The largest pointwise band difference of the attempt, in electronvolts; null when the evaluation raised."
+        },
+        "localized": {
+            "type": ["boolean", "null"],
+            "description": "Whether the attempt's gauge was localised; null when the evaluation raised."
+        },
+        "localization_converged": {
+            "type": ["boolean", "null"],
+            "description": "Whether that localisation converged; null when the evaluation raised or did not localise."
+        }
+    }
+}

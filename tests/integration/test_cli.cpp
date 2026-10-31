@@ -102,17 +102,25 @@ TEST(CLISmokeTest, RunSiNCExampleProducesResults) {
     ASSERT_NO_THROW(results = nlohmann::json::parse(file_stream))
         << "Results file is not valid JSON";
 
-    ASSERT_TRUE(results.contains("total_energy_ry"))
-        << "Results JSON must contain 'total_energy_ry' field";
+    // The total energy is the ESSE total_energy record under "properties".
+    const nlohmann::json* total_energy = nullptr;
+    for (const auto& property : results["properties"]["records"]) {
+        if (property["name"] == "total_energy") {
+            total_energy = &property;
+        }
+    }
+    ASSERT_NE(total_energy, nullptr) << "Results JSON must list a 'total_energy' property";
+    EXPECT_EQ((*total_energy)["units"], "Ry");
 
-    double total_energy_value = results["total_energy_ry"].get<double>();
-    EXPECT_TRUE(std::isfinite(total_energy_value)) << "total_energy_ry must be a finite number";
+    double total_energy_value = (*total_energy)["value"].get<double>();
+    EXPECT_TRUE(std::isfinite(total_energy_value)) << "total_energy must be a finite number";
 
     // Sanity: total energy for Si should be negative
     EXPECT_LT(total_energy_value, 0.0) << "Total energy for Si should be negative (bound system)";
 
-    ASSERT_TRUE(results.contains("converged")) << "Results JSON must contain 'converged' field";
-    ASSERT_TRUE(results["converged"].get<bool>()) << "Si NC SCF should converge";
+    ASSERT_TRUE(results["runtime_log"].contains("converged"))
+        << "Results JSON must contain a runtime_log.converged field";
+    ASSERT_TRUE(results["runtime_log"]["converged"].get<bool>()) << "Si NC SCF should converge";
 
     // Clean up temporary directory
     std::filesystem::remove_all(temporary_directory);

@@ -27,7 +27,14 @@ Run:
 
 import pytest
 
-from helpers import EXAMPLES_DIRECTORY, apply_config_overlay, load_results_json, run_q3
+from helpers import (
+    EXAMPLES_DIRECTORY,
+    apply_config_overlay,
+    eigenvalues_ry,
+    kpoint_weights,
+    load_results_json,
+    run_q3,
+)
 
 RYDBERG_IN_ELECTRONVOLTS = 13.605693122994
 
@@ -97,11 +104,11 @@ def gamma_bands_in_electronvolts(results):
     Asserted rather than assumed: Gamma is a star of one, so its weight is the
     unreduced 2/8 whether or not the mesh was reduced.
     """
-    weights = results["kpoint_weights"]
+    weights = kpoint_weights(results)
     assert weights[0] == pytest.approx(0.25), (
         f"first k-point has weight {weights[0]}, so it is not the unreduced Gamma"
     )
-    bands = results["eigenvalues_ry"][0]
+    bands = eigenvalues_ry(results)[0]
     if bands and isinstance(bands[0], list):
         bands = bands[0]
     return [value * RYDBERG_IN_ELECTRONVOLTS for value in bands]
@@ -110,8 +117,8 @@ def gamma_bands_in_electronvolts(results):
 @pytest.mark.parametrize("case", list(CASES))
 def test_the_wedge_reproduces_the_full_meshs_total_energy(q3_command, tmp_path_factory, case):
     results = run_pair(q3_command, tmp_path_factory, case)
-    wedge_energy = float(results["wedge"]["total_energy_ry"])
-    full_energy = float(results["full"]["total_energy_ry"])
+    wedge_energy = float(results["wedge"].properties.total_energy.value)
+    full_energy = float(results["full"].properties.total_energy.value)
     assert wedge_energy == pytest.approx(full_energy, abs=WEDGE_ENERGY_TOLERANCE_RYDBERG), (
         f"{case}: wedge {wedge_energy:.10f} Ry vs full mesh {full_energy:.10f} Ry "
         f"({(wedge_energy - full_energy) * 1e3:+.4f} mRy)"

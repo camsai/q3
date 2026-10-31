@@ -13,14 +13,14 @@
 
 #include "io/input/data.hpp"
 #include "io/input/parser/input_format_registry.hpp"
-#include "layer_4_computation/flavors/result.hpp"
+#include "io/output/results.hpp"
 
 namespace q3 {
 
 /// Write the companion outputs of the format `input` was read from, if it has any.
-inline void write_companion_outputs(const InputData& input, const FlavorResult& result) {
+inline void write_companion_outputs(const InputData& input, const generated::Results& results) {
     if (const InputFormat* format = input_format_registry().find(input.source_format))
-        format->write_companion_outputs(input, result);
+        format->write_companion_outputs(input, results);
 }
 
 } // namespace q3

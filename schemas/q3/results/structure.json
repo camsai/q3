@@ -1,0 +1,18 @@
+{
+    "$id": "q3/results/structure",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "structure",
+    "description": "The structure the run used.",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "material": {
+            "description": "The structure the run used, in the engine's own Cartesian frame: ESSE lattice (vectors in angstrom) and basis (crystal coordinates; basis.constraints true where a Cartesian component may move, as mat3ra-made writes them). q3.workflows starts a relaxation from it.",
+            "allOf": [
+                {
+                    "$ref": "../../esse/material.json"
+                }
+            ]
+        }
+    }
+}

@@ -25,8 +25,7 @@
 Q3 is a self-contained, from-scratch plane-wave density functional theory (DFT)
 engine. It computes the ground-state electronic structure of periodic
 crystals — total energies, forces, stress, and band structures — and it does so
-in modern, readable C++ with a Python layer on top, rather than in the
-accumulated Fortran of the codes that came before it.
+in modern, readable C++ with a Python layer on top.
 
 | If you want to…                       | Go here                                                                                                        |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -40,7 +39,7 @@ accumulated Fortran of the codes that came before it.
 ## Contents
 
 -   [1. Introduction](#1-introduction) — [what Q3 does](#11-what-q3-does), [highlights](#12-key-highlights), [details](#13-in-more-detail)
--   [2. Getting Started](#2-getting-started) — [container](#21-run-via-container), [build](#22-build-from-source), [first run](#23-run-your-first-calculation), [legacy namelists](#24-run-a-legacy-namelist-input), [Python](#25-install-the-python-package), [release archives](#26-download-a-release-archive)
+-   [2. Getting Started](#2-getting-started) — [container](#21-run-via-container), [build](#22-build-from-source), [first run](#23-run-your-first-calculation), [pw.x namelists](#24-run-a-pwx-namelist-input), [Python](#25-install-the-python-package), [release archives](#26-download-a-release-archive)
 -   [3. Workflows](#3-workflows) — [band structure](#31-band-structure-cli), [relaxation](#34-geometry-relaxation), [variable cell](#35-variable-cell-relaxation), [phonons](#36-γ-point-phonons)
 -   [4. Development](#4-development) — [branches](#41-branches), [MPI & GPU builds](#42-parallel--gpu-builds), [testing](#43-testing), [architecture](#44-architecture--directory-layout), [contributing](#45-contributing)
 -   [5. Documentation](#5-documentation)
@@ -75,8 +74,8 @@ plane-wave pseudopotential method. Three ideas carry the whole calculation:
 You supply a crystal structure, an exchange-correlation functional, cutoffs, a
 k-point grid, and pseudopotential files. Q3 returns structured JSON — total
 energy, forces, stress, eigenvalues — plus binary checkpoints you can restart
-from. Inputs come either as a Q3 YAML manifest or as an unmodified legacy-namelist
-input ([§2.4](#24-run-a-legacy-namelist-input)), and you
+from. Inputs come either as a Q3 YAML manifest or as an unmodified Quantum ESPRESSO
+(pw.x) namelist input ([§2.4](#24-run-a-pwx-namelist-input)), and you
 can drive it from the command line or from Python ([§3](#3-workflows)).
 
 One caveat worth internalizing early: a calculation that converges is not the
@@ -90,17 +89,17 @@ be converged deliberately for the system in front of you, which is what
 -   **Differentiable, JAX Support** — analytic forces (−dE/dR) and stress (dE/dε), exposed as a JAX-differentiable energy primitive via `q3.jax`; the full gradient API is charted in [docs/differentiability.md](docs/differentiability.md).
 -   **MPI & GPU (Multi-Arch) Support** — k-point-pool and band-group MPI parallelism, GPU backends for NVIDIA (CUDA), Apple Silicon (Metal), AMD (HIP), and Intel (SYCL), and amd64 + arm64 container images.
 -   **Modular Layered Architecture, Clear Data Standards** — six dependency-ordered layers from math foundations to property calculations, with structured I/O built on the [ESSE](https://github.com/mat3ra/esse) data standard.
--   **Object-Oriented Design, Compartmentalized Complexity** — RAII, modern memory management, strategy/factory patterns, and no legacy Fortran or global state.
--   **Drop-In Support for Legacy Formats** — runs unmodified legacy-namelist inputs and writes legacy-engine-compatible binary checkpoints, so existing pipelines keep working.
+-   **Object-Oriented Design, Compartmentalized Complexity** — RAII, modern memory management, strategy/factory patterns, and no global state.
+-   **Drop-In Support for Quantum ESPRESSO Formats** — runs unmodified pw.x namelist inputs and writes Quantum ESPRESSO-compatible binary checkpoints, so existing pipelines keep working.
 
 ### 1.3 In More Detail
 
 -   **Explicit Naming (No Abbreviations)**: Completely self-documenting code. Variable names are fully spelled out (e.g., `number_of_plane_waves` instead of `npw`, `pseudopotential_set` instead of `ppset`).
--   **Pseudopotential Support**: Norm-Conserving (NC), Ultrasoft (US), and Projector Augmented-Wave (PAW) pseudopotentials, including spin polarization, forces and stress. UPF paths are validated against a LibXC-enabled Legacy Modeling Engine.
--   **Legacy-namelist compatible**: runs an unmodified legacy-namelist input, refusing by name any key it cannot honour rather than ignoring it — walked through in [tutorial 06](docs/tutorials/06-existing-inputs.md).
+-   **Pseudopotential Support**: Norm-Conserving (NC), Ultrasoft (US), and Projector Augmented-Wave (PAW) pseudopotentials, including spin polarization, forces and stress. UPF paths are validated against a LibXC-enabled Quantum ESPRESSO build.
+-   **pw.x-namelist compatible**: runs an unmodified Quantum ESPRESSO (pw.x) namelist input, refusing by name any key it cannot honour rather than ignoring it — walked through in [tutorial 06](docs/tutorials/06-existing-inputs.md).
 -   **LibXC Integration**: All exchange-correlation via the standard LibXC library — named functionals (PZ, PBE, PBEsol, BLYP, revPBE, RPBE) plus arbitrary `libxc:X:C` combinations, addressed by LibXC id or by name.
 -   **Symmetry-Aware**: Integrates with SPGlib for spacegroup detection and Monkhorst-Pack grid symmetry reduction.
--   **Standardized Data Models**: Built on the ESSE (Exabyte Source of Schemas and Examples) data standard, outputting structured JSON results and writing Q3-native and legacy-engine-compatible binary checkpoints.
+-   **Standardized Data Models**: Built on the ESSE (Exabyte Source of Schemas and Examples) data standard, outputting structured JSON results and writing Q3-native and Quantum ESPRESSO-compatible binary checkpoints.
 
 ## 2. Getting Started
 
@@ -241,12 +240,13 @@ until 2026-09-11.
 
 All other dependencies (such as `LibXC`, `spglib`, `yaml-cpp`, `spdlog`, `nlohmann_json`, and `GoogleTest`) are fetched automatically during configuration via CMake `FetchContent`.
 
-Clone with submodules, and create the Python environment the build itself needs
-— generating C++ from the JSON schemas happens during `cmake --build`, so these
-modules must be in place before you configure:
+Clone, and create the Python environment the build itself needs — generating
+C++ from the JSON schemas happens during `cmake --build`, and ESSE's schemas
+come from the `mat3ra-esse` package, so these modules must be in place before
+you configure:
 
 ```bash
-git clone --recurse-submodules <repository-url> q3 && cd q3
+git clone <repository-url> q3 && cd q3
 python3 -m venv .venv && .venv/bin/pip install -e ".[build]"
 ```
 
@@ -291,9 +291,9 @@ What the numbers in that file mean, and how to pull them out, is
 [tutorial 02](docs/tutorials/02-reading-results.md); the exhaustive field
 reference is [docs/io_reference.md](docs/io_reference.md).
 
-### 2.4 Run a Legacy Namelist Input
+### 2.4 Run a pw.x Namelist Input
 
-Q3 reads an unmodified legacy-namelist input — the `&CONTROL`, `&SYSTEM` and
+Q3 reads an unmodified Quantum ESPRESSO (pw.x) namelist input — the `&CONTROL`, `&SYSTEM` and
 `&ELECTRONS` namelists and their cards — and resolves it to the same internal
 model a YAML manifest does. Run it from the directory it lives in, because its
 `pseudo_dir` resolves against your current directory:
@@ -441,7 +441,7 @@ Generate band structure plots with the included script:
 ```
 
 See [docs/band_structure_comparison.md](docs/band_structure_comparison.md) for
-validated Q3 vs legacy-engine band structure comparisons (Si and Cu, NC and US).
+validated Q3 vs Quantum ESPRESSO band structure comparisons (Si and Cu, NC and US).
 
 ### 3.4 Geometry Relaxation
 
@@ -484,9 +484,24 @@ from q3.workflows import run_relax_workflow
 result = run_relax_workflow(
     "examples/relaxation--semiconductor--silicon/reference/nc/relax.in",
     q3_binary="./build/q3",          # or q3_mpi, or a GPU binary
-    # launcher="srun -n 64",         # placed before the binary on every step
+    # execution_policy=ExecutionPolicy(
+    #     number_of_processes=64, number_of_kpoint_pools=64, launcher="srun -n {number_of_processes}"
+    # ),
 )
 ```
+
+`ExecutionPolicy` (from `q3.binary`) describes the engine execution policy
+from outside — ranks, k-point pools, band distribution, GPU precision and the
+MPI launcher (`mpirun -np N` unless given) — and every `q3.workflows` function
+takes it: each engine run the workflow makes is started with it — every relaxation step, the
+SCF and the NSCF of a band structure, DOS or PDOS, every strain of an equation
+of state or elastic-constant fit, every displacement of a phonon calculation.
+`q3_mpi` runs the SCF and the NSCF on one rank per k-point pool, which its
+automatic topology chooses when `number_of_kpoint_pools` is left unset; the SCF
+needs it to write the checkpoint the NSCF reads. So use at most as many
+processes as the SCF has irreducible k-points (and the NSCF lists): beyond that
+ranks would share a pool, and `q3_mpi` refuses with a message saying how many
+to use.
 
 Each geometry is one SCF of the deck itself, run by that binary in the deck's
 own directory, so the deck's relative `pseudo_dir` and `outdir` resolve as they
@@ -502,8 +517,8 @@ Q3 refuses so that a target pressure is never silently dropped.
 Running the deck directly — `q3 relax.in` — is not a relaxation: it runs one
 SCF at the starting geometry and says so in the log.
 
-See [PERFORMANCE.md](PERFORMANCE.md) for relaxation benchmarks (Q3 is 1.6–2.4× faster
-than a Legacy Modeling Engine across Si and Cu supercell relaxation cases).
+See [PERFORMANCE.md](PERFORMANCE.md) for relaxation benchmarks (single-core, Q3 is 1.6–2.4× faster
+than Quantum ESPRESSO across the Si and Cu supercell relaxation cases).
 
 ### 3.5 Variable-Cell Relaxation
 
@@ -532,7 +547,7 @@ workflow always runs in subprocess mode (not the nanobind `q3_core` bindings mod
 since the bindings' `SCFSolver` has no API to update the cell mid-run — see
 [FUNCTIONALITY.md](FUNCTIONALITY.md)'s Variable-Cell Relaxation note for validation
 details (a +2% isotropically strained Si cell recovers the unstrained equilibrium
-lattice constant and matches an independent legacy-engine variable-cell run
+lattice constant and matches an independent Quantum ESPRESSO variable-cell run
 to <0.01%).
 
 ### 3.6 Phonons
@@ -748,9 +763,9 @@ src/
 │   ├── forces/                     # Hellmann-Feynman forces (all contributions)
 │   └── stress_tensor/              # Nielsen-Martin stress tensor
 ├── io/                             # File I/O (vertical slice, reaches into any layer)
-│   ├── input/                      # YAML & legacy-namelist input parsers
+│   ├── input/                      # YAML & pw.x-namelist input parsers
 │   ├── pseudopotential/            # UPF v1/v2 readers
-│   ├── checkpoint/                 # Binary checkpoints (Q3-native + legacy-engine-compatible)
+│   ├── checkpoint/                 # Binary checkpoints (Q3-native + QE-compatible)
 │   ├── quantum_system/             # Quantum system I/O
 │   ├── charge_density/             # Charge density I/O
 │   ├── wavefunction/               # Wavefunction I/O
@@ -787,7 +802,7 @@ that avoids writing one.
 
 **Using Q3**
 
--   [docs/io_reference.md](docs/io_reference.md) — every YAML / legacy-namelist input field, CLI flag, and output file format, with units and defaults
+-   [docs/io_reference.md](docs/io_reference.md) — every YAML / pw.x-namelist input field, CLI flag, and output file format, with units and defaults
 -   [docs/build_reference.md](docs/build_reference.md) — every CMake configuration variable and option, with example values for Homebrew, Ubuntu and HPC systems
 -   [docs/podman_hpc_and_shifter.md](docs/podman_hpc_and_shifter.md) — running the container at centres that provide `podman-hpc` or Shifter instead of Apptainer, with batch scripts
 -   [FUNCTIONALITY.md](FUNCTIONALITY.md) — current capabilities by area (Science / Performance / Engineering), each with validation status

@@ -9,7 +9,7 @@ The visual diagram is in [ontology.drawio](ontology.drawio).
 > DataHolder / DataCalculator / Result design pattern, whose class names
 > (`ForcesDataHolder`, `AtomicForcesResult`, `LoggableMixin`, …) describe design
 > intent and have **diverged from the implementation** — results are produced via
-> `FlavorResult` and per-property structs in `layer_5_properties/*/contributions.hpp`
+> `generated::Results` (the struct generated from `schemas/q3/results.json`) and per-property structs in `layer_5_properties/*/contributions.hpp`
 > plus generated ESSE types. A full reconciliation pass, including
 > [ontology.drawio](ontology.drawio), is tracked in [TODOs.md](../TODOs.md) §3.5.
 > For the authoritative per-file map, see [architecture.md](architecture.md).

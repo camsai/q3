@@ -48,10 +48,11 @@
 #include <string>
 #include <vector>
 
+#include "generated/esse/properties/workflow/convergence_electronic.hpp"
 #include "io/logger.hpp"
+#include "io/output/results.hpp"
 #include "io/quantum_system/kohn_sham/planewave/checkpoint/q3.hpp"
 #include "layer_4_computation/flavors/base.hpp"
-#include "layer_4_computation/flavors/result.hpp"
 #include "layer_4_computation/iterator/factory.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/pseudopotential/init.hpp"
 
@@ -59,7 +60,7 @@ namespace q3 {
 
 class VerificationFlavor : public Flavor {
   protected:
-    FlavorResult run_calculation(const InputData& input) override {
+    generated::Results run_calculation(const InputData& input) override {
         /**
          * ─── Step 1: Check the input before touching the disk ────────────────
          * The budget is whatever the input asks for, not a number chosen here.
@@ -122,25 +123,30 @@ class VerificationFlavor : public Flavor {
         iterator->run();
 
         // ─── Step 5: Report the trajectory ───────────────────────────────────
-        FlavorResult flavor_result;
-        flavor_result.flavor = "verification";
+        generated::Results results = new_results("verification");
         /**
          * The run deliberately never satisfies its (zeroed) convergence test,
          * so the iterator's own verdict says nothing here. What the flavor
          * produced is a complete trajectory, and that is what "converged"
          * reports -- the caller decides whether the trajectory is flat enough.
          */
-        flavor_result.converged =
-            static_cast<int>(iterator->total_energy_history_in_ry().size()) == iteration_budget;
-        flavor_result.scf_energies_in_ry = iterator->total_energy_history_in_ry();
-        flavor_result.total_energy_in_ry = iterator->total_energy();
-        flavor_result.fermi_energy_in_ry = planewave_iterator->quantum_system().fermi_energy();
+        const std::vector<Real>& energies_in_ry = iterator->total_energy_history_in_ry();
+        results.runtime_log.converged = static_cast<int>(energies_in_ry.size()) == iteration_budget;
+        set_energy_records(results, iterator->total_energy(), PlanewaveKohnShamEnergies{});
+        set_fermi_energy(results, planewave_iterator->quantum_system().fermi_energy());
+        if (!energies_in_ry.empty()) {
+            set_record(results,
+                       generated::ConvergenceElectronic{
+                           generated::ConvergenceElectronicNameEnum::CONVERGENCE_ELECTRONIC,
+                           generated::ConvergenceElectronicUnitsEnum::RY,
+                           {std::vector<double>(energies_in_ry.begin(), energies_in_ry.end())}});
+        }
 
         log::info("Verification: {} iterations, energy drift {:.3e} Ry",
-                  flavor_result.scf_energies_in_ry.size(),
-                  energy_drift_in_ry(flavor_result.scf_energies_in_ry));
+                  energies_in_ry.size(),
+                  energy_drift_in_ry(energies_in_ry));
 
-        return flavor_result;
+        return results;
     }
 
   private:

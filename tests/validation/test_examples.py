@@ -7,17 +7,21 @@ these tests run the production examples as-is — validating that the
 documentation examples work correctly.
 """
 
-import json
+from q3.io.results.classes import Results
 
 from helpers import (
     EXAMPLES_DIRECTORY,
     TOLERANCE_EXAMPLES_RYDBERG,
     TOLERANCE_STRESS_REGRESSION_KBAR,
+    atomic_forces,
+    energy_contribution,
     pressure_from_tensor,
     run_q3,
+    stress_contributions,
+    stress_tensor,
 )
 
-# stdout stress-line label -> results.json stress_contributions_kbar key.
+# stdout stress-line label -> results.json stress_contributions key.
 # self_consistent_field.hpp's add_stress_contribution() calls are the JSON
 # keys; the stdout labels are stress_tensor/planewave/init.hpp's
 # print_contribution() calls.
@@ -168,10 +172,9 @@ def run_example_and_validate(
     )
 
     assert json_path.exists(), f"Output results JSON not found: {json_path}"
-    with open(json_path) as file_handle:
-        data = json.load(file_handle)
+    data = Results.read(json_path)
 
-    assert data["converged"] is True, f"SCF did not converge for {yml_filename}!"
+    assert data.runtime_log.converged is True, f"SCF did not converge for {yml_filename}!"
 
     if energy_tolerance is None:
         energy_tolerance = TOLERANCE_EXAMPLES_RYDBERG
@@ -179,7 +182,7 @@ def run_example_and_validate(
         stress_tolerance = TOLERANCE_STRESS_REGRESSION_KBAR
 
     # 1. Compare total energy.
-    computed_energy = data["total_energy_ry"]
+    computed_energy = data.properties.total_energy.value
     difference = abs(computed_energy - expected["energy"])
     assert difference < energy_tolerance, (
         f"Total energy {computed_energy:.8f} Ry differs from expected "
@@ -188,14 +191,14 @@ def run_example_and_validate(
     )
 
     # 2. Compare energy contributions.
-    # In Q3's flat schema, "one_electron" = band_energy + double_counting_correction,
+    # In Q3's results, "one_electron" = band_energy + double_counting_correction,
     # matching QE's definition: E_one_electron = Σ(ε_n) + double_counting_correction.
-    band_energy = data["band_energy_ry"]
-    double_counting_correction = data["double_counting_correction_ry"]
+    band_energy = data.properties.total_energy_contributions.eigenvalues.value
+    double_counting_correction = energy_contribution(data, "double_counting")
     contributions_from_data = {
-        "ewald": data["ewald_energy_ry"],
-        "exchange_correlation": data["exchange_correlation_energy_ry"],
-        "hartree": data["hartree_energy_ry"],
+        "ewald": data.properties.total_energy_contributions.ewald.value,
+        "exchange_correlation": data.properties.total_energy_contributions.exchange_correlation.value,
+        "hartree": data.properties.total_energy_contributions.hartree.value,
         "one_electron": band_energy + double_counting_correction,
     }
     for term, expected_value in expected["energy_contributions"].items():
@@ -211,7 +214,7 @@ def run_example_and_validate(
         )
 
     # 3. Compare forces.
-    computed_forces = data["forces_ry_per_bohr"]
+    computed_forces = atomic_forces(data)
     assert len(computed_forces) == len(expected["forces"]), "Force vector length mismatch"
     for atom_index, (computed_force, expected_force) in enumerate(
         zip(computed_forces, expected["forces"])
@@ -229,10 +232,10 @@ def run_example_and_validate(
     # "total" has no per-contribution JSON key, so it's the trace/3 of the
     # top-level stress_kbar tensor instead, the same quantity the old
     # "Pressure = ..." stdout line reported.
-    stress_contributions_kbar = data["stress_contributions_kbar"]
+    stress_contributions_kbar = stress_contributions(data)
     for term, expected_value in expected["stress"].items():
         if term == "total":
-            computed_value = pressure_from_tensor(data["stress_kbar"])
+            computed_value = pressure_from_tensor(stress_tensor(data))
         else:
             json_key = STRESS_LABEL_TO_JSON_KEY[term]
             assert json_key in stress_contributions_kbar, (

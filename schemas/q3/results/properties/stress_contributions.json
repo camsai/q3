@@ -1,0 +1,10 @@
+{
+    "$id": "q3/results/properties/stress_contributions",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "stress contributions",
+    "type": "object",
+    "description": "The stress tensor broken down by physical mechanism, same names as the force breakdown plus 'kinetic', 'hartree' and 'exchange_correlation'.",
+    "additionalProperties": {
+        "$ref": "../../../esse/properties_directory/non_scalar/stress_tensor.json"
+    }
+}

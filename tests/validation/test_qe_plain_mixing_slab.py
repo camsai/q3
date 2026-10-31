@@ -78,8 +78,8 @@ def test_plain_mixing_converges_a_metallic_slab_like_pwx(q3_command, tmp_path):
         f"stdout:\n{completed.stdout[-4000:]}\nstderr:\n{completed.stderr}"
     )
     results = load_results_json(tmp_path / "output", "cu_slab")
-    assert results.get("converged"), completed.stdout[-3000:]
-    iterations = int(results["self_consistent_field_iterations"])
+    assert results.runtime_log.converged, completed.stdout[-3000:]
+    iterations = int(results.runtime_log.self_consistent_field_iterations)
     assert iterations <= ITERATION_BOUND, (
         f"the Cu(111) slab took {iterations} SCF iterations (bound {ITERATION_BOUND}); "
         "Kerker-preconditioned mixing takes 46 on it, pw.x's plain mixing 22"

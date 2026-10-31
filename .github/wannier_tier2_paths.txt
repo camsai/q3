@@ -1,0 +1,68 @@
+# The changed paths that run the Wannier tier-2 job (ci.yml, wannier-tier2).
+#
+# One extended regular expression per line, matched from the start of a
+# repository-relative path; blank lines and lines starting with # are ignored.
+#
+# Anything that feeds a Wannier model: the interpolator itself, the
+# ITERATOR that hands it the quantum system, the k-space geometry it
+# is built on, the Fermi energy the frozen window is measured against,
+# the command and workflow that drive it, the input schema that
+# configures it, the examples it runs, and the tests themselves.
+#
+# The iterator is here because the capture reads its quantum-system
+# snapshot: a downcast against the wrong one of its two systems made
+# every ultrasoft and PAW capture unreachable, and a change to that
+# snapshot would have matched nothing in this list.
+#
+# The layer-0 dense algebra and the two q3.io model packages are here
+# because every chain runs through them: the kernels multiply and
+# diagonalise with the first, and the ladder writes each evaluation's
+# block and reads each results file through the second.
+#
+# The eigensolver and the NSCF flavor are here because they produce the
+# eigenvectors the capture reads. Halving Davidson's default working
+# basis made a single NSCF pass miss eigenvalues by tens of meV while
+# every residual test passed; these chains were the only thing that
+# noticed, and the change matched nothing in this list.
+
+src/layer_4_computation/interpolator/
+src/layer_4_computation/iterator/
+src/layer_4_computation/diagonalizer/
+src/layer_4_computation/flavors/non_self_consistent_field\.hpp
+src/layer_4_computation/fermi_energy/
+src/layer_3_representation/basis/planewave/local_orbital/
+src/io/interpolation/
+src/layer_1_structure/reciprocal_space/
+src/layer_0_core/math/linear_algebra/
+src/layer_0_core/math/convergence_window\.hpp
+src/commands/interpolate_command\.hpp
+src/py/q3/workflows/interpolation\.py
+src/py/q3/workflows/band_distance\.py
+src/py/q3/workflows/kpath\.py
+src/py/q3/workflows/wannier/
+src/py/q3/io/interpolation/
+src/py/q3/io/interpolation_settings/
+src/py/q3/io/pseudo_atomic_shells/
+src/py/q3/io/results_block\.py
+src/py/q3/generated/interpolation/
+src/py/q3/io/input_reader\.py
+src/py/q3/io/input_writer\.py
+src/py/q3/structure/lattice\.py
+src/py/q3/binary\.py
+src/py/q3/errors\.py
+scripts/validation/run_wannier_campaign\.py
+scripts/validation/wannier_campaign/
+schemas/q3/
+src/generated/q3/
+examples/band_structure--.*wannier
+examples/data/
+tests/validation/test_wannier_interpolation\.py
+tests/validation/test_automatic_wannier\.py
+tests/validation/test_copper_disentanglement\.py
+tests/validation/test_gallium_arsenide_band_selection\.py
+tests/validation/test_silicon_carbon_alloy\.py
+tests/validation/test_wannier_protocol\.py
+tests/validation/test_wannier_campaign\.py
+tests/helpers_wannier\.py
+\.github/workflows/ci\.yml
+\.github/wannier_tier2_paths\.txt

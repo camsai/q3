@@ -123,11 +123,11 @@ Reading the eigenvalues out — silicon has 8 valence electrons, so bands 0–3 
 occupied and band 4 is the first empty one:
 
 ```python
-import json
+from q3.io.results.classes import Results, eigenvalue_arrays
 
 RYDBERG_TO_EV = 13.605693
-with open("output/si_bands_results.json") as handle:
-    eigenvalues = json.load(handle)["eigenvalues_ry"]
+results = Results.read("output/si_bands_results.json")
+eigenvalues, _, _ = eigenvalue_arrays(results.properties.eigenvalues_at_kpoints)  # Ry, [k-point][spin][band]
 
 labels = ["G", "0.83 G-X", "X", "L"]
 for label, kpoint in zip(labels, eigenvalues):

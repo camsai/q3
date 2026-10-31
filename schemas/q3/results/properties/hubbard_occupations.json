@@ -1,0 +1,26 @@
+{
+    "$id": "q3/results/properties/hubbard_occupations",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "hubbard occupations",
+    "type": "array",
+    "description": "Tr[n] per Hubbard manifold, per spin channel — the electron count the manifold's projectors see. Absent when no Hubbard correction is active.",
+    "items": {
+        "type": "object",
+        "required": ["atom_index", "occupation_trace"],
+        "additionalProperties": false,
+        "properties": {
+            "atom_index": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "0-based, matching the orbital_projections labels. The log prints it 1-based."
+            },
+            "occupation_trace": {
+                "type": "array",
+                "items": {
+                    "type": "number"
+                },
+                "description": "One entry per spin component."
+            }
+        }
+    }
+}

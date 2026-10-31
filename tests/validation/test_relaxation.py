@@ -18,12 +18,17 @@ geometry would validate the position-update path.
 
 import json
 import logging
+import re
+import subprocess
+from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
+from q3.structure.ase_atoms import ase_atoms_to_material_json, material_json_to_ase_atoms
 from q3.workflows.relax import run_relax_workflow
 
-from helpers import EXAMPLES_DIRECTORY
+from helpers import EXAMPLES_DIRECTORY, atomic_forces, load_results_json
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -502,3 +507,105 @@ def test_supercell_relaxation_displaced(q3_command, tmp_path, material, flavor):
 
     assert result["steps"] == 1
     assert result["final_energy_ry"] is not None
+
+
+# ── A relaxation step's starting wavefunctions ───────────────────────────────
+
+SI_RELAX_DECK = SI_EXAMPLE_DIR / "reference" / "nc" / "relax.in"
+
+
+def _silicon_relax_deck(outdir, ecutwfc=None):
+    """The silicon relax deck with absolute paths, a tight SCF, and its own outdir."""
+    deck = SI_RELAX_DECK.read_text()
+    pseudo_dir = (SI_RELAX_DECK.parent / "../../../data/pseudopotentials/nc").resolve()
+    deck = re.sub(r"pseudo_dir\s*=\s*'[^']*'", f"pseudo_dir = '{pseudo_dir}'", deck)
+    deck = re.sub(r"outdir\s*=\s*'[^']*'", f"outdir = '{outdir}'", deck)
+    deck = re.sub(r"(?m)^(\s*)conv_thr\s*=\s*[^,\n]+", r"\1conv_thr = 1.0e-12", deck)
+    if ecutwfc is not None:
+        deck = re.sub(r"ecutwfc\s*=\s*[^,\n]+", f"ecutwfc = {ecutwfc}", deck)
+        deck = re.sub(r"ecutrho\s*=\s*[^,\n]+", f"ecutrho = {4 * ecutwfc}", deck)
+    return deck
+
+
+def _run_relaxation_step(q3_command, deck_path, material_path=None):
+    """One step as run_relax_workflow runs it: the deck, at the material it is handed."""
+    command = [*q3_command, str(deck_path)]
+    if material_path is not None:
+        command += ["--material", str(material_path)]
+    process = subprocess.run(command, cwd=deck_path.parent, capture_output=True, text=True)
+    log = process.stdout + process.stderr
+    assert process.returncode == 0, log[-3000:]
+    outdir = Path(re.search(r"outdir\s*=\s*'([^']*)'", deck_path.read_text()).group(1))
+    return load_results_json(outdir, "si_relax"), log
+
+
+def _displaced_material(results, path, displacement_angstrom=0.02):
+    """The structure a step ran at, its first atom moved further along a1.
+
+    The deck already displaces that atom along a1, so the move keeps its
+    symmetry and irreducible k-points, as FixSymmetry keeps them from step to
+    step of run_relax_workflow.
+    """
+    atoms = material_json_to_ase_atoms(results.structure.material)
+    positions = atoms.get_positions()
+    first_lattice_vector = atoms.get_cell()[0]
+    positions[0] += (
+        displacement_angstrom * first_lattice_vector / np.linalg.norm(first_lattice_vector)
+    )
+    atoms.set_positions(positions)
+    path.write_text(json.dumps(ase_atoms_to_material_json(atoms)))
+    return path
+
+
+def test_a_relaxation_step_starts_from_the_previous_geometrys_bands(q3_command, tmp_path):
+    """The next geometry starts from the bands the last one saved, as pw.x's next ionic step does.
+
+    Every step used to rebuild the atomic + random guess even though the
+    previous step had just written converged bands to <prefix>.save. Starting
+    from them must change only how quickly the SCF gets there: the same
+    geometry started from scratch converges to the same energy and forces in
+    more iterations.
+    """
+    deck = tmp_path / "relax.in"
+    deck.write_text(_silicon_relax_deck(tmp_path / "relaxation"))
+    first, first_log = _run_relaxation_step(q3_command, deck)
+    first_match = re.search(r"saved bands at (\d+) of \d+ k-point", first_log)
+    assert first_match and first_match.group(1) == "0", "nothing was saved before the first step"
+
+    material = _displaced_material(first, tmp_path / "displaced.json")
+    restarted, restarted_log = _run_relaxation_step(q3_command, deck, material)
+    match = re.search(
+        r"Starting wavefunctions    = saved bands at (\d+) of (\d+) k-point", restarted_log
+    )
+    assert match, "the second geometry did not start from the saved bands"
+    assert match.group(1) == match.group(2), match.group(0)
+
+    fresh_deck = tmp_path / "fresh.in"
+    fresh_deck.write_text(_silicon_relax_deck(tmp_path / "fresh"))
+    fresh, _ = _run_relaxation_step(q3_command, fresh_deck, material)
+
+    assert abs(restarted.properties.total_energy.value - fresh.properties.total_energy.value) < 1e-8
+    forces_difference = max(
+        abs(a - b)
+        for row_restarted, row_fresh in zip(atomic_forces(restarted), atomic_forces(fresh))
+        for a, b in zip(row_restarted, row_fresh)
+    )
+    assert forces_difference < 1e-6, forces_difference
+    restarted_iterations = restarted.runtime_log.self_consistent_field_iterations
+    fresh_iterations = fresh.runtime_log.self_consistent_field_iterations
+    assert restarted_iterations < fresh_iterations, (restarted_iterations, fresh_iterations)
+
+
+def test_saved_bands_from_another_basis_are_not_used(q3_command, tmp_path):
+    """Bands saved at another cutoff hold plane waves this basis lacks; the guess falls back."""
+    saved_deck = tmp_path / "saved.in"
+    saved_deck.write_text(_silicon_relax_deck(tmp_path / "relaxation", ecutwfc=40.0))
+    saved, _ = _run_relaxation_step(q3_command, saved_deck)
+
+    deck = tmp_path / "relax.in"
+    deck.write_text(_silicon_relax_deck(tmp_path / "relaxation"))
+    material = _displaced_material(saved, tmp_path / "displaced.json")
+    restarted, log = _run_relaxation_step(q3_command, deck, material)
+    match = re.search(r"Starting wavefunctions    = saved bands at (\d+) of (\d+) k-point", log)
+    assert match and match.group(1) == "0", match.group(0) if match else log[-2000:]
+    assert restarted.runtime_log.converged

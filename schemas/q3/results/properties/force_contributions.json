@@ -1,0 +1,10 @@
+{
+    "$id": "q3/results/properties/force_contributions",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "force contributions",
+    "type": "object",
+    "description": "The per-atom force broken down by physical mechanism ('local', 'ewald', 'nonlocal', 'core_correction', 'augmentation', 'dispersion', 'hubbard'). A total that disagrees with a reference says only that something is wrong; the term that disagrees says what.",
+    "additionalProperties": {
+        "$ref": "../../../esse/properties_directory/structural/atomic_forces.json"
+    }
+}

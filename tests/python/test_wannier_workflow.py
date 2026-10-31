@@ -197,10 +197,17 @@ outdir.mkdir(parents=True, exist_ok=True)
 kpoints = control.get("kpoints_list") or [[0.0, 0.0, 0.0, 2.0]]
 bands = int(manifest.get("method", {{}}).get("scf", {{}}).get("number_of_bands", 8))
 results = {{
-    "converged": True,
-    "fermi_energy_ry": -0.5,
-    "kpoints": [row[:3] for row in kpoints],
-    "eigenvalues_ry": [[[eigenvalue(n, row[:3]) for n in range(bands)]] for row in kpoints],
+    "runtime_log": {{"converged": True}},
+    "properties": {{
+        "records": [
+            {{"name": "fermi_energy", "units": "Ry", "value": -0.5}},
+            {{"name": "eigenvalues_at_kpoints", "units": "Ry", "values": [
+                {{"kpoint": row[:3], "weight": row[3],
+                  "eigenvalues": [{{"energies": [eigenvalue(n, row[:3]) for n in range(bands)]}}]}}
+                for row in kpoints
+            ]}},
+        ],
+    }},
 }}
 (outdir / (control.get("prefix", "q3") + "_results.json")).write_text(json.dumps(results))
 """
@@ -254,10 +261,15 @@ captured = int(manifest.get("method", {{}}).get("scf", {{}}).get("number_of_band
 bands = int(entry.get("number_of_bands", captured))
 kpoints = control.get("kpoints_list", [])
 results = {{
-    "kpoints": [row[:3] for row in kpoints],
-    "eigenvalues_ry": [[[eigenvalue(n, row[:3]) + offset for n in range(bands)]] for row in kpoints],
-    "fermi_energy_ry": -0.5,
-    "interpolation": {{
+    "properties": {{
+        "eigenvalues_at_kpoints": {{"name": "eigenvalues_at_kpoints", "units": "Ry", "values": [
+            {{"kpoint": row[:3],
+              "eigenvalues": [{{"energies": [eigenvalue(n, row[:3]) + offset for n in range(bands)]}}]}}
+            for row in kpoints
+        ]}},
+        "fermi_energy": {{"name": "fermi_energy", "units": "Ry", "value": -0.5}},
+    }},
+    "construction": {{
         "spread": {{
             "localized": entry.get("localized", True),
             "localization_converged": entry.get("converged", True),
@@ -268,11 +280,11 @@ results = {{
             "frozen_window_above_fermi_ev": control["interpolation"].get("frozen_window_above_fermi_ev", 2.0),
             "bands_excluded_from_freeze": entry.get("excluded", []),
         }},
-        "quality": {{"hamiltonian_decay": {{"ratio": 0.01}}}},
     }},
+    "quality": {{"hamiltonian_decay": {{"ratio": 0.01}}}},
 }}
 if "number_of_bands" in entry:
-    results["interpolation"]["number_of_bands"] = entry["number_of_bands"]
+    results["construction"]["number_of_bands"] = entry["number_of_bands"]
 (outdir / (control["prefix"] + "_interpolation_results.json")).write_text(json.dumps(results))
 """
     Path(body_path).write_text(body)
@@ -499,7 +511,7 @@ def test_a_model_that_passes_is_accepted_on_the_first_rung(tmp_path):
     written = json.loads(
         (tmp_path / "run" / "output" / "si_interpolation_results.json").read_text()
     )
-    quality = written["interpolation"]["quality"]
+    quality = written["quality"]
     assert quality["status"] == "accept"
     assert quality["band_distance"]["eta_ev"] == pytest.approx(0.002, abs=1e-9)
     assert quality["band_distance"]["reference"] == "half-shifted mesh"
@@ -855,8 +867,8 @@ def test_a_model_that_survives_nothing_is_rejected_with_the_history(tmp_path):
     written = json.loads(
         (tmp_path / "run" / "output" / "si_interpolation_results.json").read_text()
     )
-    assert written["interpolation"]["quality"]["status"] == "reject"
-    assert len(written["interpolation"]["quality"]["ladder"]) == 31
+    assert written["quality"]["status"] == "reject"
+    assert len(written["quality"]["ladder"]) == 31
 
 
 def test_the_walk_can_be_capped_and_an_explicit_grid_is_doubled_by_the_mesh_rung(tmp_path):

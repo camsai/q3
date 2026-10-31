@@ -103,10 +103,9 @@ int main(int argc, char* argv[]) {
          * Multi-step workflows (band_structure, dos, relaxation) are orchestrated by the
          * Python layer, which chains these single-flavor runs.
          */
-        auto flavor_result = run_flavor(input);
-        flavor_result.write_results_json(input.output_directory + "/" + input.prefix +
-                                         "_results.json");
-        write_companion_outputs(input, flavor_result);
+        generated::Results results = run_flavor(input);
+        write_results_json(results, input.output_directory + "/" + input.prefix + "_results.json");
+        write_companion_outputs(input, results);
 
     } catch (const std::exception& e) {
         log::error("Error: {}", e.what());

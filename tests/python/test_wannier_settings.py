@@ -23,10 +23,8 @@ SCHEMA_BLOCK = json.loads((REPOSITORY_ROOT / "schemas" / "q3" / "input.json").re
     "properties"
 ]["control"]["properties"]["interpolation"]["properties"]
 LADDER_ATTEMPT = json.loads(
-    (REPOSITORY_ROOT / "schemas" / "q3" / "interpolation_results.json").read_text()
-)["properties"]["interpolation"]["properties"]["quality"]["properties"]["ladder"]["items"][
-    "properties"
-]
+    (REPOSITORY_ROOT / "schemas/q3/interpolation/results/quality/ladder.json").read_text()
+)["properties"]
 THRESHOLDS_HEADER = (
     REPOSITORY_ROOT
     / "src/layer_4_computation/interpolator/method/wannier/settings/band_classification_thresholds.hpp"

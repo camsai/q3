@@ -5,11 +5,11 @@
  * assembled block by block onto the struct generated from its schema, and
  * written once.
  *
- * One contract, one serialisation. schemas/q3/interpolation_results.json is
- * the source of truth and src/generated/q3/interpolation_results.hpp its
+ * One contract, one serialisation. schemas/q3/interpolation/results.json is
+ * the source of truth and src/generated/q3/interpolation/results.hpp its
  * C++ form; this class owns that struct and is the only place the engine's
  * types are mapped onto it, so nothing builds the file's JSON by hand. The
- * Python model, q3.io.interpolation_results, reads the same schema, and a
+ * Python model, q3.io.interpolation.results, reads the same schema, and a
  * key renamed on one side without the other is caught by the parity test
  * there rather than by a driver at campaign speed.
  *
@@ -27,7 +27,10 @@
 
 #include <nlohmann/json.hpp>
 
-#include "generated/q3/interpolation_results.hpp"
+#include "generated/esse/core/reusable/energy.hpp"
+#include "generated/esse/properties/non_scalar/eigenvalues_at_kpoints.hpp"
+#include "generated/esse/properties/scalar/fermi_energy.hpp"
+#include "generated/q3/interpolation/results.hpp"
 #include "io/json_file.hpp"
 #include "layer_0_core/types/constants.hpp"
 #include "layer_0_core/types/init.hpp"
@@ -47,7 +50,10 @@ class InterpolationResultsDocument {
     InterpolationResultsDocument(nlohmann::json provenance, Real fermi_energy_rydberg) {
         results_.calculation = "interpolation";
         results_.provenance = std::move(provenance);
-        results_.fermi_energy_ry = fermi_energy_rydberg;
+        results_.properties.fermi_energy =
+            generated::FermiEnergy{generated::FermiEnergyNameEnum::FERMI_ENERGY,
+                                   generated::FermiEnergyUnitsEnum::RY,
+                                   fermi_energy_rydberg};
     }
 
     /**
@@ -59,20 +65,19 @@ class InterpolationResultsDocument {
     void describe_model(const std::string& method,
                         const std::string& record_path,
                         const QuantumStateInterpolator& interpolator) {
-        generated::InterpolationResultsInterpolation& model = results_.interpolation;
-        model.method = method;
-        model.description = interpolator.description();
-        model.record = record_path;
-        model.number_of_bands = interpolator.number_of_bands();
+        results_.construction.method = method;
+        results_.construction.description = interpolator.description();
+        results_.construction.record = record_path;
+        results_.construction.number_of_bands = interpolator.number_of_bands();
         for (const auto& [name, value] : interpolator.diagnostics()) {
             if (name == LocalOrbitalQuantumStateInterpolator::TOTAL_BLOCH_SUM_WEIGHT) {
-                model.total_bloch_sum_weight = value;
+                results_.construction.total_bloch_sum_weight = value;
                 continue;
             }
-            if (!model.diagnostics) {
-                model.diagnostics.emplace();
+            if (!results_.construction.diagnostics) {
+                results_.construction.diagnostics.emplace();
             }
-            (*model.diagnostics)[name] = value;
+            (*results_.construction.diagnostics)[name] = value;
         }
     }
 
@@ -86,34 +91,52 @@ class InterpolationResultsDocument {
      */
     void add_construction(const WannierConstructionReport& construction,
                           const WannierQualityReport& quality) {
-        generated::InterpolationResultsInterpolation& model = results_.interpolation;
-        model.spread = spread_block(construction.spread);
+        results_.construction.spread = spread_block(construction.spread);
         if (construction.disentanglement.performed) {
-            model.disentanglement = disentanglement_block(construction.disentanglement);
+            results_.construction.disentanglement =
+                disentanglement_block(construction.disentanglement);
         }
-        model.quality = quality_block(quality, construction.spread);
+        results_.quality = quality_block(quality, construction.spread);
     }
 
-    /// The k-points evaluated and the eigenvalues there, shaped [k-point][spin][band].
+    /**
+     * The eigenvalues at each evaluated k-point as ESSE's eigenvalues_at_kpoints
+     * record, the one the SCF results file lists: per k-point its crystal
+     * coordinates and one (unlabelled) spin channel of band energies.
+     */
     void add_bands(const std::vector<Vector3D>& kpoints, const InterpolatedBandStructure& bands) {
-        results_.kpoints = triplets(kpoints);
-        std::vector<std::vector<std::vector<double>>> blocks;
-        blocks.reserve(bands.eigenvalues_rydberg.size());
-        for (const std::vector<Real>& at_kpoint : bands.eigenvalues_rydberg) {
-            blocks.push_back({at_kpoint});
+        generated::EigenvaluesAtKpoints block;
+        block.name = generated::EigenvaluesAtKpointsNameEnum::EIGENVALUES_AT_KPOINTS;
+        block.units = generated::EigenvaluesAtKpointsUnitsEnum::RY;
+        block.values.reserve(bands.eigenvalues_rydberg.size());
+        for (size_t kpoint_index = 0; kpoint_index < bands.eigenvalues_rydberg.size();
+             kpoint_index++) {
+            const std::vector<Real>& at_kpoint = bands.eigenvalues_rydberg[kpoint_index];
+            generated::EigenvaluesAtKpointsBandEnergies channel;
+            channel.energies = std::vector<double>(at_kpoint.begin(), at_kpoint.end());
+            generated::EigenvaluesAtKpointsEigenvaluesAtKPoint entry;
+            if (kpoint_index < kpoints.size()) {
+                const Vector3D& kpoint = kpoints[kpoint_index];
+                entry.kpoint = std::vector<double>{kpoint.x, kpoint.y, kpoint.z};
+            }
+            entry.eigenvalues = std::vector{channel};
+            block.values.push_back(std::move(entry));
         }
-        results_.eigenvalues_ry = std::move(blocks);
+        results_.properties.eigenvalues_at_kpoints = std::move(block);
     }
 
-    void add_density_of_states(const std::array<int, 3>& mesh,
-                               Real broadening_rydberg,
-                               const InterpolatedDensityOfStates& density) {
-        generated::InterpolationResultsDensityOfStates block;
-        block.mesh = {mesh[0], mesh[1], mesh[2]};
-        block.broadening_ry = broadening_rydberg;
-        block.energies_ry = density.energies_rydberg;
-        block.dos = density.density_of_states;
-        results_.density_of_states = std::move(block);
+    /// The density of states as ESSE's density_of_states record.
+    void add_density_of_states(const InterpolatedDensityOfStates& density) {
+        generated::DensityOfStates block;
+        block.name = generated::DensityOfStatesNameEnum::DENSITY_OF_STATES;
+        block.x_axis.label = generated::DensityOfStatesXAxisLabelEnum::ENERGY;
+        block.x_axis.units = generated::DensityOfStatesXAxisUnitsEnum::RY;
+        block.y_axis.label = generated::DensityOfStatesYAxisLabelEnum::DENSITY_OF_STATES;
+        block.y_axis.units = generated::DensityOfStatesYAxisUnitsEnum::STATES_UNITCELL;
+        block.x_data_array = std::vector<nlohmann::json>(density.energies_rydberg.begin(),
+                                                         density.energies_rydberg.end());
+        block.y_data_series = {density.density_of_states};
+        results_.properties.density_of_states = std::move(block);
     }
 
     [[nodiscard]] const generated::InterpolationResults& results() const {

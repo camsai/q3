@@ -35,6 +35,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from q3.io.results.classes import Results
 
 manifest_path, field, *values = sys.argv[1:]
 manifest_path = Path(manifest_path).resolve()
@@ -65,8 +66,9 @@ for value in values:
     finally:
         copy_path.unlink()
 
-    results = json.loads((scratch / f"run_{value}" / "scan_results.json").read_text())
-    print(f"{value:>6}  {results['total_energy_ry']:.9f} Ry  converged={results['converged']}")
+    results = Results.read(scratch / f"run_{value}" / "scan_results.json")
+    energy = results.properties.total_energy.value
+    print(f"{value:>6}  {energy:.9f} Ry  converged={results.runtime_log.converged}")
 ```
 
 Two details in it are the ones people get wrong. `outdir` is made absolute
@@ -194,8 +196,8 @@ python3 scan.py examples/total_energy--metal--copper/nc_888.yml method.scf.smear
 | 0.05         | −386.589032029     | −0.005256 | −386.586404171        | 1.2471     | 41.80           |
 | 0.10         | −386.598552897     | −0.029232 | −386.583937122        | 1.2586     | 60.46           |
 
-`total_energy_ry` is the **free energy** — it already includes the
-`smearing_entropy_contribution_ry` (`-TS`) term, which is why it drifts by
+The `total_energy` record is the **free energy** — it already includes the
+`temperatureEntropy` (`-TS`) term of `total_energy_contributions`, which is why it drifts by
 163 meV/atom across this range while the physics does not. The zero-width
 extrapolation `E₀ = F − (−TS)/2` is the quantity to compare: it moves
 0.5 meV/atom between 0.005 and 0.02 Ry, and 1.7 meV/atom out to 0.05 Ry.
@@ -203,7 +205,7 @@ extrapolation `E₀ = F − (−TS)/2` is the quantity to compare: it moves
 At `degauss = 0.10` everything breaks down at once — the entropy term reaches
 29 mRy (400 meV), E₀ jumps 35 meV/atom, the Fermi level shifts 16 mRy, and the
 pressure goes from 42 to 60 kbar. A smearing wide enough to smooth the integrand is also wide
-enough to change the physics. Watch `smearing_entropy_contribution_ry`: when it
+enough to change the physics. Watch `temperatureEntropy`: when it
 grows to the size of the energy differences you care about, it is no longer a
 numerical convenience.
 

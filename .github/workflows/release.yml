@@ -71,9 +71,6 @@ jobs:
     steps:
       - name: Checkout this repository
         uses: actions/checkout@v5
-        with:
-          # Schema code generation reads the ESSE submodule during the build.
-          submodules: recursive
 
       - name: Resolve the version this archive is named for
         id: version
@@ -101,7 +98,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install the schema code generator's dependencies
-        run: python -m pip install jinja2 jsonref pyyaml
+        run: python -m pip install ".[build]"
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'

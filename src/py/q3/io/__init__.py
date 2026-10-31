@@ -1,4 +1,11 @@
-"""q3.io — Input/output utilities for Q3."""
+"""q3.io — Input/output utilities for Q3.
+
+Nothing here re-exports a module that reads results.json (``q3.io.results``,
+``q3.io.interpolation.results``, ``q3.io.output_writer``): the generated results
+models derive from bases in this package, so importing one of those here would
+import the generated models while they are still being built. Import them from
+their own modules.
+"""
 
 from q3.io.input_reader import (
     load_material,
@@ -12,22 +19,12 @@ from q3.io.input_writer import (
     write_scf_input,
     write_supercell_scf_input,
 )
-from q3.io.interpolation_results import InterpolationResults, LadderAttempt
 from q3.io.interpolation_settings import CaptureSettings, EvaluationSettings
-from q3.io.output_writer import (
-    extract_band_structure,
-    extract_dos,
-    extract_lowdin_charges,
-    extract_pdos,
-    extract_total_energy,
-)
 from q3.io.pseudo_atomic_shells import PseudoAtomicShell, pseudo_atomic_shells
 
 __all__ = [
     "CaptureSettings",
     "EvaluationSettings",
-    "InterpolationResults",
-    "LadderAttempt",
     "PseudoAtomicShell",
     "ensure_calculation_type",
     "load_material",
@@ -38,9 +35,4 @@ __all__ = [
     "write_nscf_input",
     "write_scf_input",
     "write_supercell_scf_input",
-    "extract_band_structure",
-    "extract_dos",
-    "extract_lowdin_charges",
-    "extract_pdos",
-    "extract_total_energy",
 ]

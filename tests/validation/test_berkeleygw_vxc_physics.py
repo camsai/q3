@@ -38,12 +38,12 @@ Three preconditions make the reconstruction exact rather than approximate.
 Each is asserted, not assumed, so that a future edit to the example or the
 overlay fails loudly instead of quietly invalidating the comparison:
 
-  1. **No non-linear core correction.** With NLCC, Q3 evaluates V_xc at
-     ``rho_valence + rho_core``, and ``rho_core`` is absent from ``RHO`` --
-     the reconstruction would be wrong for a reason that is not a bug in the
-     exporter. The silicon example's default ``Si.upf`` *does* declare
-     ``core_correction="T"``, so this test overlays ``Si.pz-vbc.UPF``
-     instead, and asserts the file contains no ``PP_NLCC`` block.
+  1. **V_xc of the valence density.** The exporter evaluates V_xc at
+     ``rho_valence`` alone, as pw2bgw does by default (``vxc_zero_rho_core``),
+     which is exactly the density ``RHO`` carries -- so a non-linear core
+     correction no longer breaks the reconstruction. (It did while the export
+     included ``rho_core``; the dataset below is NLCC-free for precondition 2's
+     sake, not this one's.)
   2. **A local LDA functional, matching the one implemented below.** The
      overlay pins ``functional: pz`` (libxc's ``XC_LDA_X`` +
      ``XC_LDA_C_PZ``), which ``Si.pz-vbc.UPF`` was itself generated with
@@ -169,14 +169,6 @@ def inverse_transform_to_real_space(grid):
 
 def _assert_reconstruction_preconditions(merged_config):
     """Fail loudly if the run no longer satisfies what makes this test exact."""
-    pseudopotential_path = merged_config["method"]["pseudopotentials"]["Si"]
-    pseudopotential_text = open(pseudopotential_path, encoding="latin-1").read()
-    assert "PP_NLCC" not in pseudopotential_text, (
-        f"{pseudopotential_path} declares a non-linear core correction. Q3 then "
-        f"evaluates V_xc at rho_valence + rho_core, but RHO carries only the "
-        f"valence density, so this test's reconstruction would be wrong for a "
-        f"reason unrelated to the exporter. Use an NLCC-free pseudopotential."
-    )
     assert merged_config["model"]["functional"].lower() == "pz", (
         "this test implements the Perdew-Zunger LDA functional specifically; "
         f"the run used '{merged_config['model']['functional']}'."

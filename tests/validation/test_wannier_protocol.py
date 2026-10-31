@@ -29,7 +29,7 @@ from q3.constants import RYDBERG_TO_ELECTRONVOLT
 from q3.workflows.interpolation import run_interpolation_workflow
 from q3.workflows.wannier import run_automatic_wannier_workflow
 
-from helpers import EXAMPLES_DIRECTORY
+from helpers import EXAMPLES_DIRECTORY, eigenvalues_ry
 
 SILICON = EXAMPLES_DIRECTORY / "band_structure--semiconductor--silicon--wannier"
 PERTURBED = EXAMPLES_DIRECTORY / "band_structure--semiconductor--silicon-perturbed--wannier"
@@ -82,7 +82,7 @@ def silicon_models(tmp_path_factory, q3_command, q3_utility_command) -> dict:
         result = run_interpolation_workflow(
             scf, grid=grid, kpoints=[(0.0, 0.0, 0.0)], **binaries, **options
         )
-        models[label] = result["interpolation_results"]["interpolation"]
+        models[label] = result["interpolation_results"]
     return models
 
 
@@ -120,9 +120,9 @@ def test_the_hand_tuned_model_has_the_lower_spread_variance_and_sits_on_the_bond
     )
     assert tuned["quality"]["spread"]["outliers"] == []
     assert automatic["quality"]["spread"]["outliers"] == []
-    assert len(automatic["spread"]["spreads_bohr_squared"]) == 8
-    assert sum(automatic["spread"]["spreads_bohr_squared"]) == pytest.approx(
-        automatic["spread"]["total_bohr_squared"], rel=1e-8
+    assert len(automatic["construction"]["spread"]["spreads_bohr_squared"]) == 8
+    assert sum(automatic["construction"]["spread"]["spreads_bohr_squared"]) == pytest.approx(
+        automatic["construction"]["spread"]["total_bohr_squared"], rel=1e-8
     )
 
 
@@ -130,8 +130,8 @@ def _band_distance_by_hand(reference: dict, model: dict, fermi_energy_ry: float)
     """eta with the weights written out, independently of q3.workflows.band_distance."""
     mu = fermi_energy_ry * RYDBERG_TO_ELECTRONVOLT + 2.0
     sigma = 0.1
-    ref = np.sort(np.array(reference["eigenvalues_ry"])[:, 0, :], axis=1) * RYDBERG_TO_ELECTRONVOLT
-    mod = np.sort(np.array(model["eigenvalues_ry"])[:, 0, :], axis=1) * RYDBERG_TO_ELECTRONVOLT
+    ref = np.sort(np.array(eigenvalues_ry(reference))[:, 0, :], axis=1) * RYDBERG_TO_ELECTRONVOLT
+    mod = np.sort(np.array(eigenvalues_ry(model))[:, 0, :], axis=1) * RYDBERG_TO_ELECTRONVOLT
     bands = min(ref.shape[1], mod.shape[1])
     ref, mod = ref[:, :bands], mod[:, :bands]
     weight = np.sqrt(
@@ -173,12 +173,12 @@ def test_the_workflow_judges_the_perturbed_silicon_by_the_published_band_distanc
     )
     assert reported == pytest.approx(by_hand, abs=1.0e-4), (reported, by_hand)
 
-    quality = result["interpolation_results"]["interpolation"]["quality"]
+    quality = result["interpolation_results"]["quality"]
     assert quality["status"] == result["status"]
     assert quality["band_distance"]["eta_ev"] == pytest.approx(reported)
     assert quality["band_distance"]["reference"] == "half-shifted mesh"
     assert len(quality["ladder"]) == len(result["attempts"])
-    verdict = result["interpolation_results"]["interpolation"]["disentanglement"]
+    verdict = result["interpolation_results"]["construction"]["disentanglement"]
     assert verdict["metallic"] is False
     # The published window, or wider if the ladder's window rung widened it.
     assert verdict["frozen_window_above_fermi_ev"] >= 2.0 - 1e-9
@@ -213,13 +213,13 @@ def test_copper_runs_unattended_and_the_ladder_lands_on_the_occupied_manifold(
     assert result["attempts"][2]["localization_converged"] is True
     assert result["status"] == "accept"
 
-    interpolation = result["interpolation_results"]["interpolation"]
+    interpolation = result["interpolation_results"]["construction"]
     assert "maximally localized" in interpolation["description"]
     assert interpolation["spread"]["gauge_invariant_bohr_squared"] == pytest.approx(
         12.4358, abs=1e-3
     )
     assert interpolation["disentanglement"]["frozen_window_above_fermi_ev"] == 0.0
     assert interpolation["disentanglement"]["metallic"] is True
-    ladder = interpolation["quality"]["ladder"]
+    ladder = result["interpolation_results"]["quality"]["ladder"]
     assert ladder[0]["settings"].get("frozen_window_above_fermi_ev") is None
     assert ladder[2]["settings"]["frozen_window_above_fermi_ev"] == 0.0

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel
-from q3.io.interpolation_results import BandDistanceReport, Quality
+from q3.io.interpolation.results.classes import BandDistanceReport, Quality
 
 from .case import CampaignCase
 from .utils import millielectronvolts

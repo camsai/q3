@@ -42,9 +42,9 @@ def _run(q3_command, run_directory, maximum_iterations=None):
 def test_a_run_that_exhausts_its_budget_reports_that_budget(q3_command, tmp_path):
     results = _run(q3_command, tmp_path, maximum_iterations=3)
 
-    assert results["converged"] is False
-    assert results["self_consistent_field_iterations"] == 3
-    assert results["provenance"]["precision"]["maximum_self_consistent_field_iterations"] == 3
+    assert results.runtime_log.converged is False
+    assert results.runtime_log.self_consistent_field_iterations == 3
+    assert results.provenance["precision"]["maximum_self_consistent_field_iterations"] == 3
 
 
 def test_a_converged_run_reports_the_smallest_budget_that_converges(q3_command, tmp_path):
@@ -55,18 +55,18 @@ def test_a_converged_run_reports_the_smallest_budget_that_converges(q3_command, 
     in either direction fails one of the two.
     """
     unlimited = _run(q3_command, tmp_path / "unlimited")
-    converged_on = unlimited["self_consistent_field_iterations"]
-    limit = unlimited["provenance"]["precision"]["maximum_self_consistent_field_iterations"]
-    assert unlimited["converged"] is True
+    converged_on = unlimited.runtime_log.self_consistent_field_iterations
+    limit = unlimited.provenance["precision"]["maximum_self_consistent_field_iterations"]
+    assert unlimited.runtime_log.converged is True
     assert 2 <= converged_on < limit
 
     exactly_enough = _run(q3_command, tmp_path / "exactly_enough", maximum_iterations=converged_on)
-    assert exactly_enough["converged"] is True
-    assert exactly_enough["self_consistent_field_iterations"] == converged_on
+    assert exactly_enough.runtime_log.converged is True
+    assert exactly_enough.runtime_log.self_consistent_field_iterations == converged_on
 
     one_short = _run(q3_command, tmp_path / "one_short", maximum_iterations=converged_on - 1)
-    assert one_short["converged"] is False
-    assert one_short["self_consistent_field_iterations"] == converged_on - 1
+    assert one_short.runtime_log.converged is False
+    assert one_short.runtime_log.self_consistent_field_iterations == converged_on - 1
 
 
 def test_run_q3_reports_the_count_the_engine_wrote(q3_command, tmp_path):

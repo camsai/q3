@@ -455,8 +455,8 @@ log warning — invisible to anything reading the results
 programmatically. A geometry or cell relaxation driven by them does not fail;
 it converges, to the wrong answer.
 
-Q3 records `stress_is_incomplete` with a reason in its results JSON (and
-`forces_are_incomplete` for any future gap), and `raise_if_derivative_incomplete`
+Q3 names an incomplete stress, with its reason, under `runtime_log.incomplete` in its
+results JSON (and the forces the same way for any future gap), and `raise_if_derivative_incomplete`
 in the ASE calculator refuses the affected property when a caller asks for it —
 so a cell relaxation on a Hubbard system stops instead of converging to a wrong
 cell. Energies are correct
@@ -540,7 +540,7 @@ projectability at a handful of k-points (4 to 7 of 64 on the 4×4×4 example,
 depending on the SCF; 17 of 512 on an 8×8×8 grid). The classifier keeps such a
 state out of the frozen window rather than freezing it — freezing it makes the
 projection gauge singular — and reports the band and the k-point count under
-`interpolation.disentanglement.bands_excluded_from_freeze`. The model then has
+`construction.disentanglement.bands_excluded_from_freeze`. The model then has
 no state of that character at those k-points, and the automatic 2 eV
 window, which freezes the same band where it is barely reachable, produces a
 tenth Wannier function of 8 bohr² and a localisation that stalls;
@@ -661,6 +661,32 @@ Nothing in Q3's own phonon path is implicated; the rest of the validation suite
 runs with it excluded.
 
 ## Resolved
+
+### The BerkeleyGW export's Vxc included the core charge, and ParaBands had no inputs (resolved 2026-10-24)
+
+**Affected:** `vxc.dat` from any `mean_field_export: berkeleygw` run whose datasets carry a
+nonlinear core correction; and every BerkeleyGW workflow that extends `WFN` with `parabands`
+or has `sigma` read V_xc(G) itself (`dont_use_vxcdat`), which needed `VSC`, `VKB` and `VXC`
+that Q3 did not write.
+
+The export evaluated Vxc at the density the Hamiltonian uses, ρ_valence + ρ_core. A GW
+self-energy is built from the valence electrons, and pw2bgw evaluates Vxc at ρ_valence
+unless told otherwise -- its manual says keeping the core charge "will produce incorrect
+results" (`vxc_zero_rho_core`, INPUT_pw2bgw). On silicon with an NLCC dataset at 25 Ry,
+V_xc(G = 0) was -0.6750 Ry against pw2bgw's -0.6524 Ry. The existing physics test avoided
+it by using an NLCC-free dataset.
+
+**Fix.** Vxc for the export is evaluated by the base effective-potential calculator, which
+adds no core charge (`valence_exchange_correlation_potential_g_of()`), for both flavors.
+The export also writes `VXC` and `VSC`, and on request
+(`control.mean_field_export_kleinman_bylander_projectors`) `VKB`, the nonlocal
+pseudopotential at every k-point. Measured on silicon against pw.x and pw2bgw.x 7.5: `VXC`
+and `VSC` within 7e-7 Ry, the nonlocal potential Σ β D β† built from `VKB` within 5e-16 Ry
+at every k-point, and BerkeleyGW 4.0's `parabands` on Q3's `VSC` + `VKB` reproduces pw.x's
+eigenvalues to 0.004 meV over all eight bands. `vxc.dat` now matches pw2bgw's to 0.004 meV
+on the occupied bands; on the conduction bands it follows Q3's own NSCF wavefunctions, whose
+highest bands converge less tightly (see "The highest bands of a single NSCF pass can still
+be wrong"). Pinned by `tests/validation/test_berkeleygw_parabands_inputs.py`.
 
 ### A result did not say how many threads or which BLAS produced it, and one timer was misnamed (resolved 2026-10-23)
 

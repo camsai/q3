@@ -1,0 +1,114 @@
+{
+    "$id": "q3/results/properties",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "properties",
+    "type": "object",
+    "description": "The physical properties the run computed: every one ESSE has a property schema for as that ESSE record under records, and beside them the quantities ESSE has no property for yet, each an ESSE schema or one built from ESSE pieces carrying its own units.",
+    "required": ["records", "energy_contributions"],
+    "additionalProperties": false,
+    "properties": {
+        "records": {
+            "type": "array",
+            "description": "Every result ESSE has a property schema for, as that ESSE record and nowhere else in this file, each validated against the ESSE schema itself: total_energy, total_energy_contributions (eigenvalues, hartree, exchange_correlation, ewald, temperatureEntropy), fermi_energy and eigenvalues_at_kpoints always; atomic_forces (ids 1-based, as in the material basis) whenever forces were computed, and stress_tensor and pressure whenever the stress was, a known-missing term in either being named in runtime_log.incomplete; band_edge_valence_max, the highest eigenvalue at or below the Fermi energy, and band_edge_conduction_min, the lowest above it, each when such a level exists and with its k-point when the run lists k-point coordinates; band_gaps, as a 'direct' and an 'indirect' entry, when both band edges exist and no level is fractionally occupied; magnetization_total, the integral of rho_up - rho_down over the cell, and magnetization_absolute, the integral of its absolute value, for a spin-polarized run (the total alone is zero both for a converged antiferromagnet and for one that collapsed to non-magnetic); convergence_electronic, the total energy after each SCF iteration as one row, where the flavor records that trajectory. eigenvalues_at_kpoints lists one entry per k-point state with one spin channel: a spin-polarized run lists every k-point twice, the spin-up states first and then the spin-down ones, each at half the k-point's weight; weights sum to 2.0 over the k-points, the spin degeneracy included, and occupations are fractions in [0, 1]. A quantity ESSE has no property schema for yet is one of the blocks beside these records, carrying its own units, until the schema is added to ESSE (AGENTS.md, 'Output schemas').",
+            "items": {
+                "oneOf": [
+                    {
+                        "$ref": "../../esse/properties_directory/scalar/total_energy.json"
+                    },
+                    {
+                        "$ref": "../../esse/properties_directory/non_scalar/total_energy_contributions.json"
+                    },
+                    {
+                        "$ref": "../../esse/properties_directory/scalar/fermi_energy.json"
+                    },
+                    {
+                        "$ref": "../../esse/properties_directory/structural/atomic_forces.json"
+                    },
+                    {
+                        "$ref": "../../esse/properties_directory/non_scalar/stress_tensor.json"
+                    },
+                    {
+                        "$ref": "../../esse/properties_directory/scalar/pressure.json"
+                    },
+                    {
+                        "$ref": "../../esse/properties_directory/non_scalar/band_gaps.json"
+                    },
+                    {
+                        "$ref": "../../esse/properties_directory/workflow/convergence/electronic.json"
+                    },
+                    {
+                        "$ref": "../../esse/properties_directory/non_scalar/eigenvalues_at_kpoints.json"
+                    },
+                    {
+                        "$ref": "../../esse/properties_directory/scalar/band_edge_valence_max.json"
+                    },
+                    {
+                        "$ref": "../../esse/properties_directory/scalar/band_edge_conduction_min.json"
+                    },
+                    {
+                        "$ref": "../../esse/properties_directory/scalar/magnetization_total.json"
+                    },
+                    {
+                        "$ref": "../../esse/properties_directory/scalar/magnetization_absolute.json"
+                    }
+                ]
+            },
+            "allOf": [
+                {
+                    "contains": {
+                        "properties": {
+                            "name": {
+                                "const": "total_energy"
+                            }
+                        }
+                    }
+                },
+                {
+                    "contains": {
+                        "properties": {
+                            "name": {
+                                "const": "total_energy_contributions"
+                            }
+                        }
+                    }
+                },
+                {
+                    "contains": {
+                        "properties": {
+                            "name": {
+                                "const": "fermi_energy"
+                            }
+                        }
+                    }
+                },
+                {
+                    "contains": {
+                        "properties": {
+                            "name": {
+                                "const": "eigenvalues_at_kpoints"
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+        "energy_contributions": {
+            "$ref": "./properties/energy_contributions.json"
+        },
+        "isolated_system_correction": {
+            "$ref": "./properties/isolated_system_correction.json"
+        },
+        "hubbard_occupations": {
+            "$ref": "./properties/hubbard_occupations.json"
+        },
+        "force_contributions": {
+            "$ref": "./properties/force_contributions.json"
+        },
+        "stress_contributions": {
+            "$ref": "./properties/stress_contributions.json"
+        },
+        "orbital_projections": {
+            "$ref": "./properties/orbital_projections.json"
+        }
+    }
+}

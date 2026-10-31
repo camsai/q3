@@ -14,7 +14,7 @@ materially, that is a bug worth reporting, not a rounding difference.
 | [03](03-convergence.md)            | Converging a calculation | Scan cutoff, k-grid and smearing; see why the defaults are not answers | 45 min |
 | [04](04-band-structure-and-dos.md) | Band structure and DOS   | Run SCF → NSCF by hand and with the workflow; get silicon's real gap   | 30 min |
 | [05](05-python-and-ase.md)         | Python and ASE           | Drive Q3 from Python, relax a structure, compute phonons               | 30 min |
-| [06](06-existing-inputs.md)        | Bringing existing inputs | Run legacy input file formats                                          | 20 min |
+| [06](06-existing-inputs.md)        | Bringing existing inputs | Run a Quantum ESPRESSO namelist as it is                               | 20 min |
 | [07](07-contributing.md)           | Contributing a change    | Find your way around the layers, add a test, submit a PR               | 45 min |
 | [08](08-wannier-interpolation.md)  | Wannier interpolation    | Turn a 64-k-point run into a model that gives bands at any k-point     | 40 min |
 

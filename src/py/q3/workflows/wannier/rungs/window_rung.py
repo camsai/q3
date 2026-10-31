@@ -60,7 +60,7 @@ class WindowRung(Rung):
         return state
 
     def _widen(self, state: LadderState) -> LadderState:
-        verdict = state.results.interpolation.disentanglement
+        verdict = state.results.construction.disentanglement
         applied = float(
             verdict.frozen_window_above_fermi_ev
             if verdict is not None and verdict.frozen_window_above_fermi_ev is not None

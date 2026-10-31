@@ -31,7 +31,7 @@ import json
 import pytest
 import yaml
 
-from helpers import EXAMPLES_DIRECTORY, load_results_json, run_q3
+from helpers import EXAMPLES_DIRECTORY, eigenvalues_ry, load_results_json, run_q3
 
 RYDBERG_IN_MILLIELECTRONVOLTS = 13605.693122994
 NORM_CONSERVING_DIRECTORY = EXAMPLES_DIRECTORY / "data" / "pseudopotentials" / "nc"
@@ -160,7 +160,7 @@ def full_mesh(q3_command, tmp_path_factory):
 def test_the_wedge_keeps_the_screw_axis_pairs_degenerate(wedge):
     _, face = wedge
     widest = {}
-    for name, by_spin in zip(FACE_POINTS, face["eigenvalues_ry"]):
+    for name, by_spin in zip(FACE_POINTS, eigenvalues_ry(face)):
         bands = by_spin[0] if isinstance(by_spin[0], list) else by_spin
         widest[name] = max(
             (bands[band + 1] - bands[band]) * RYDBERG_IN_MILLIELECTRONVOLTS
@@ -174,8 +174,8 @@ def test_the_wedge_keeps_the_screw_axis_pairs_degenerate(wedge):
 
 def test_the_wedge_reproduces_the_full_meshs_total_energy(wedge, full_mesh):
     self_consistent, _ = wedge
-    wedge_energy = float(self_consistent["total_energy_ry"])
-    full_energy = float(full_mesh["total_energy_ry"])
+    wedge_energy = float(self_consistent.properties.total_energy.value)
+    full_energy = float(full_mesh.properties.total_energy.value)
     assert wedge_energy == pytest.approx(full_energy, abs=WEDGE_ENERGY_TOLERANCE_RYDBERG), (
         f"wedge {wedge_energy:.12f} Ry vs full mesh {full_energy:.12f} Ry "
         f"({wedge_energy - full_energy:+.3e} Ry)"

@@ -1,0 +1,31 @@
+{
+    "$id": "q3/interpolation/results/quality/band_distance",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Interpolation results band distance",
+    "type": "object",
+    "required": ["eta_ev", "eta_maximum_ev", "number_of_states", "reference", "number_of_kpoints"],
+    "additionalProperties": false,
+    "description": "Added by q3.workflows.wannier: the band distance of this model against a direct calculation on the reference k-points.",
+    "properties": {
+        "eta_ev": {
+            "type": "number",
+            "description": "The band distance eta, in electronvolts."
+        },
+        "eta_maximum_ev": {
+            "type": "number",
+            "description": "The largest pointwise band difference, in electronvolts."
+        },
+        "number_of_states": {
+            "type": "integer",
+            "description": "How many (k-point, band) pairs entered the distance."
+        },
+        "reference": {
+            "type": "string",
+            "description": "What the reference k-points were: \"path\" or \"half-shifted mesh\"."
+        },
+        "number_of_kpoints": {
+            "type": "integer",
+            "description": "How many reference k-points were compared."
+        }
+    }
+}

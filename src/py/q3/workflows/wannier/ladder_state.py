@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
 
-from q3.io.interpolation_results import InterpolationResults, LadderAttempt
+from q3.io.interpolation.results.classes import InterpolationResults, LadderAttempt
 from q3.io.interpolation_settings import EvaluationSettings
 from q3.workflows.band_distance import BandDistance
 from q3.workflows.wannier.attempt_status import AttemptStatus

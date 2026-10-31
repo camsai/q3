@@ -8,9 +8,9 @@
 #include "io/addon_registration.hpp"
 #include "io/cli.hpp"
 #include "io/input/parser/factory.hpp"
-#include "io/iterator/kohn_sham/planewave/factory_mpi.hpp"
+#include "io/logger_mpi.hpp"
 #include "io/output/companion_outputs.hpp"
-#include "layer_4_computation/flavors/self_consistent_field.hpp"
+#include "layer_4_computation/flavors/factory.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/execution/mpi.hpp"
 #include "utils/time.hpp"
 
@@ -48,10 +48,9 @@ int main(int argc, char* argv[]) {
     }
 
     /**
-     * Capture the rank now, while MPI is guaranteed live and the policy is
-     * guaranteed to still be here. The catch block below needs it to attribute
-     * a fatal error, but by then the policy has been moved into the factory and
-     * MPI may already be finalized -- and MPI_Comm_rank after MPI_Finalize is
+     * Capture the rank now, while MPI is guaranteed live. The catch block below
+     * needs it to attribute a fatal error, and asking there would mean asking
+     * whether MPI is still up first -- MPI_Comm_rank after MPI_Finalize is
      * itself undefined.
      */
     int world_rank_index = 0;
@@ -127,40 +126,28 @@ int main(int argc, char* argv[]) {
                   pool_source,
                   options.distribute_bands ? "bands" : "reciprocal space");
 
-        auto iterator = create_scf_iterator_mpi(input, std::move(policy));
-        bool is_root = iterator->execution_policy().is_root();
         /**
-         * Only the self-consistent field flavor can run here, and until now a
-         * deck asking for anything else got one anyway: this line ran
-         * regardless of input.calculation, so `q3_mpi nscf.yml` reported an SCF
-         * under an NSCF's name. Refuse instead.
-         *
-         * The restriction is structural, not an oversight. This binary builds
-         * its own iterator so it can inject the MPI execution policy, and
-         * SelfConsistentFieldFlavor is the only flavor that accepts one; the
-         * others call create_iterator() themselves and would get a serial
-         * policy. Lifting it means a composition root that can hand any flavor
-         * its execution policy, which is tracked as its own piece of work.
+         * Every flavor builds its iterator on this rank's policy, so a unit of
+         * a workflow -- the SCF, the non-self-consistent pass of a band
+         * structure or a DOS, each step of a relaxation -- runs on the same
+         * ranks and topology. The policy stays owned here rather than by the
+         * iterator: it outlives the flavor, for the reductions after the run
+         * and for MPI_Finalize, which its destructor calls at the end of main.
          */
-        if (input.calculation != "self_consistent_field") {
-            throw std::runtime_error(
-                "q3_mpi runs self_consistent_field only, but this input asks for '" +
-                input.calculation +
-                "'. The MPI binary supplies its own execution policy, which today only the "
-                "self-consistent field flavor accepts. Run this input with the serial q3 "
-                "binary, which supports every flavor.");
-        }
-
-        auto flavor = std::make_unique<SelfConsistentFieldFlavor>(std::move(iterator));
+        bool is_root = policy->is_root();
+        IteratorFactory iterator_factory = [&policy](const InputData& run_input) {
+            return create_kohn_sham_iterator(run_input, *policy);
+        };
+        auto flavor = create_flavor(input.calculation, std::move(iterator_factory));
 
         cli::print_header();
         log::info("     Calculation type: {}", input.calculation);
 
-        auto flavor_result = flavor->run(input);
+        generated::Results results = flavor->run(input);
         if (is_root) {
-            flavor_result.write_results_json(input.output_directory + "/" + input.prefix +
-                                             "_results.json");
-            write_companion_outputs(input, flavor_result);
+            write_results_json(results,
+                               input.output_directory + "/" + input.prefix + "_results.json");
+            write_companion_outputs(input, results);
         }
 
         if (is_root) {
@@ -268,14 +255,12 @@ int main(int argc, char* argv[]) {
 
         /**
          * Abort so that a rank failing alone cannot leave its peers blocked in
-         * a collective forever. Reaching this at all depends on the execution
-         * policy's destructor running no collective while unwinding: it is
-         * destroyed before this handler on every throwing path -- inside
-         * create_scf_iterator_mpi, which takes it by value, or with the
-         * iterator that owns it afterwards -- and a barrier or MPI_Finalize
-         * there would block until peers that are still doing physics arrived,
-         * which for a rank-local failure is never. That is why the destructor
-         * declines; see ~MPIExecutionPolicy().
+         * a collective forever. The execution policy is still alive here -- it
+         * is owned by main, outside the try block -- so nothing has finalized
+         * MPI on the way: MPI_Finalize is collective, and reached from a
+         * rank-local failure it would block until peers that are still doing
+         * physics arrived, which is never. The abort ends the process before
+         * the policy's destructor runs.
          *
          * The guard remains because MPI_Abort after MPI_Finalize is undefined
          * -- in practice OpenMPI buries the message above under a wall of
@@ -292,11 +277,9 @@ int main(int argc, char* argv[]) {
     }
 
     /**
-     * MPI_Finalize is called by PlanewaveMPIExecutionPolicy's destructor, which
-     * finalizes on this path only: the policy was moved into the iterator, and
-     * is destroyed when flavor goes out of scope, with no exception in flight.
-     * A policy destroyed while unwinding tears nothing down and leaves MPI live
-     * for the handler above.
+     * MPI_Finalize is called by PlanewaveMPIExecutionPolicy's destructor, as
+     * `policy` goes out of scope on this return, after every rank has finished
+     * the run and the reductions above.
      */
     return 0;
 }

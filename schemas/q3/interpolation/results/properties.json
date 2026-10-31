@@ -1,0 +1,23 @@
+{
+    "$id": "q3/interpolation/results/properties",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Interpolation results properties",
+    "type": "object",
+    "description": "What the model gave at the k-points it was evaluated at, grouped as the SCF results file groups its own: the Fermi level, the eigenvalues and the density of states, each carrying its unit in its own `units` field.",
+    "required": ["fermi_energy"],
+    "additionalProperties": false,
+    "properties": {
+        "fermi_energy": {
+            "$ref": "../../../esse/properties_directory/scalar/fermi_energy.json",
+            "description": "ESSE's fermi_energy property: the Fermi level the NSCF that built the record computed over its own full-grid k-set, the highest occupied level when every requested band is occupied. q3.workflows.interpolation reports the SCF's value instead, which is the authoritative one."
+        },
+        "eigenvalues_at_kpoints": {
+            "$ref": "../../../esse/properties_directory/non_scalar/eigenvalues_at_kpoints.json",
+            "description": "ESSE's eigenvalues_at_kpoints record: the interpolated eigenvalues at each evaluated k-point, one entry per k-point with its crystal coordinates and one spin channel, as the SCF results file lists its own, so the Python readers read both the same way; present when bands were evaluated."
+        },
+        "density_of_states": {
+            "$ref": "../../../esse/properties_directory/non_scalar/density_of_states.json",
+            "description": "ESSE's density_of_states record, as it stands: the interpolated density of states on control.interpolation.dos_mesh, broadened by control.dos_broadening; xDataArray the energy grid in xAxis.units, yDataSeries one series of states per that energy unit per cell, spin included. Present when a mesh was asked for."
+        }
+    }
+}

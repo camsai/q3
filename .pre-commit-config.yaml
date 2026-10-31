@@ -2,12 +2,8 @@
 # commit-msg stage so a missing sign-off is caught at commit time, not in CI.
 default_install_hook_types: [pre-commit, commit-msg]
 
-# Vendored upstream content, excluded from every hook. schemas/esse is a
-# submodule in this repository, so the hooks never see inside it -- but the
-# packer vendors its files into the clean repo as ordinary tracked files, and
-# there end-of-file-fixer and check-json would police upstream's formatting on
-# every sync. A no-op here; load-bearing on the mirror, which runs this same
-# config.
+# ESSE's schemas, written from the mat3ra-esse package into the untracked
+# schemas/esse (scripts/repo/schemas.py): upstream's files, not ours to police.
 exclude: "^schemas/esse/"
 
 repos:
@@ -181,8 +177,28 @@ repos:
         language: python
         # Needs the generator's own deps (schemas/README.md § Dependencies) --
         # unlike the other local Python hooks here, which are stdlib-only.
-        additional_dependencies: [jinja2==3.1.6, jsonref==1.1.0, pyyaml==6.0.3]
+        # pre-commit cannot read pyproject.toml, so the pins are repeated here;
+        # tests/python/test_pyproject_pins.py fails when they differ.
+        additional_dependencies:
+          [jinja2==3.1.6, jsonref==1.1.0, pyyaml==6.0.3, mat3ra-esse==2026.10.31.post1]
         entry: python scripts/repo/generate_cpp_from_schemas.py --check
+        pass_filenames: false
+        always_run: true
+
+      - id: python-models-check
+        name: generated Python models are up-to-date (schemas/README.md)
+        language: python
+        # The generator's own deps, pinned as pyproject.toml's dev extra pins
+        # them: the formatters decide the bytes --check compares.
+        additional_dependencies:
+          [
+            datamodel-code-generator==0.28.5,
+            black==26.10.1,
+            isort==6.1.0,
+            pyyaml==6.0.3,
+            mat3ra-esse==2026.10.31.post1
+          ]
+        entry: python scripts/repo/generate_python_from_schemas.py --check
         pass_filenames: false
         always_run: true
 

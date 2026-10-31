@@ -29,7 +29,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           lfs: true
-          submodules: recursive
 
       - name: Pull LFS Files
         run: git lfs pull

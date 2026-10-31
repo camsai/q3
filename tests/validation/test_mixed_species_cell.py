@@ -44,6 +44,7 @@ SILICON_CARBIDE_MATERIAL = EXAMPLES_DIRECTORY / "data" / "materials" / "silicon_
 SILICON_ULTRASOFT_DATASET = (
     EXAMPLES_DIRECTORY / "data" / "pseudopotentials" / "us" / "Si_PBE_USPP.UPF"
 )
+
 CARBON_NORM_CONSERVING_DATASET = EXAMPLES_DIRECTORY / "data" / "pseudopotentials" / "nc" / "C.upf"
 
 INPUT_TEMPLATE = """material: {material}
@@ -79,9 +80,9 @@ def test_mixed_ultrasoft_and_norm_conserving_cell_converges(q3_command, tmp_path
         q3_command, input_path, prefix="sic_mixed", working_directory=tmp_path, timeout=600
     )
 
-    assert results["converged"], "mixed ultrasoft + norm-conserving SCF did not converge"
+    assert results.runtime_log.converged, "mixed ultrasoft + norm-conserving SCF did not converge"
 
-    total_energy = results["total_energy_ry"]
+    total_energy = results.properties.total_energy.value
     assert math.isfinite(total_energy), f"total energy is not finite: {total_energy}"
 
     # A Q3-against-Q3 anchor, not a comparison against another code: no external

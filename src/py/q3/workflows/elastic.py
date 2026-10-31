@@ -40,6 +40,7 @@ from typing import Any
 import numpy as np
 import yaml
 
+from q3.binary import ExecutionPolicy
 from q3.calculators.ase_calculator import Q3ASECalculator
 from q3.properties.elastic_constants import (
     DEFAULT_STRAIN_MAGNITUDES,
@@ -56,6 +57,7 @@ def run_cubic_elastic_constants_workflow(
     *,
     strain_magnitudes=DEFAULT_STRAIN_MAGNITUDES,
     q3_binary: str | Path | None = None,
+    execution_policy: ExecutionPolicy | None = None,
     workdir: str | Path | None = None,
     capture_output: bool = True,
 ) -> dict[str, Any]:
@@ -71,7 +73,7 @@ def run_cubic_elastic_constants_workflow(
     strain_magnitudes:
         Positive magnitudes, each applied in both signs.  Shear strains are
         engineering strains (eps_4 = 2 eps_yz).
-    q3_binary, workdir, capture_output:
+    q3_binary, execution_policy, workdir, capture_output:
         Forwarded to ``Q3ASECalculator``; *workdir* collects one
         ``step_NNNN/`` directory per point with the exact input that produced it.
 
@@ -96,6 +98,7 @@ def run_cubic_elastic_constants_workflow(
         scf_input_path,
         mode="subprocess",
         q3_binary=q3_binary,
+        execution_policy=execution_policy,
         workdir=workdir,
         capture_output=capture_output,
     )

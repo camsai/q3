@@ -342,12 +342,12 @@ These are single-run measurements at 10⁻⁸ Ry convergence from an earlier cod
 
 #### Single-Core Runtimes
 
-| Stage / Component                      | Q3 Time     | QE Walltime  | Q3 Speedup        |
-| :------------------------------------- | :---------- | :----------- | :---------------- |
-| **Initialization**                     | 2.38 s      | 6.84 s       | **2.87×**         |
-| **SCF Iteration Loop (10 iterations)** | 32.34 s     | 150.70 s     | **4.66×**         |
-| **Forces + Stress Property Run**       | 5.10 s      | 14.13 s      | **2.77×**         |
-| **Total Execution Time**               | **39.81 s** | **171.83 s** | **4.32× faster!** |
+| Stage / Component                      | Q3 Time     | QE Walltime  | Q3 Speedup |
+| :------------------------------------- | :---------- | :----------- | :--------- |
+| **Initialization**                     | 2.38 s      | 6.84 s       | **2.87×**  |
+| **SCF Iteration Loop (10 iterations)** | 32.34 s     | 150.70 s     | **4.66×**  |
+| **Forces + Stress Property Run**       | 5.10 s      | 14.13 s      | **2.77×**  |
+| **Total Execution Time**               | **39.81 s** | **171.83 s** | **4.32×**  |
 
 ---
 
@@ -368,12 +368,12 @@ These are single-run measurements at 10⁻⁸ Ry convergence from an earlier cod
 
 #### Single-Core Runtimes
 
-| Stage / Component                | Q3 Time          | QE Walltime       | Q3 Speedup        |
-| :------------------------------- | :--------------- | :---------------- | :---------------- |
-| **Initialization**               | 4.23 s           | 5.58 s            | **1.32×**         |
-| **SCF Iteration Loop**           | 29.26 s (9 iter) | 42.40 s (13 iter) | **1.45×**         |
-| **Forces + Stress Property Run** | 4.45 s           | 2.89 s            | 0.65×             |
-| **Total Execution Time**         | **37.93 s**      | **51.11 s**       | **1.35× faster!** |
+| Stage / Component                | Q3 Time          | QE Walltime       | Q3 Speedup |
+| :------------------------------- | :--------------- | :---------------- | :--------- |
+| **Initialization**               | 4.23 s           | 5.58 s            | **1.32×**  |
+| **SCF Iteration Loop**           | 29.26 s (9 iter) | 42.40 s (13 iter) | **1.45×**  |
+| **Forces + Stress Property Run** | 4.45 s           | 2.89 s            | 0.65×      |
+| **Total Execution Time**         | **37.93 s**      | **51.11 s**       | **1.35×**  |
 
 ---
 
@@ -396,18 +396,18 @@ These are single-run measurements at 10⁻⁸ Ry convergence from an earlier cod
 
 #### Single-Core Runtimes
 
-| Stage / Component                      | Q3 Time     | QE Walltime  | Q3 Speedup        |
-| :------------------------------------- | :---------- | :----------- | :---------------- |
-| **Initialization**                     | 2.22 s      | 2.97 s       | **1.34×**         |
-| **SCF Iteration Loop (17 iterations)** | 79.21 s     | 104.88 s     | **1.32×**         |
-| **Forces + Stress Property Run**       | 3.84 s      | 2.50 s       | **0.65×**         |
-| **Total Execution Time**               | **85.27 s** | **110.35 s** | **1.29× faster!** |
+| Stage / Component                      | Q3 Time     | QE Walltime  | Q3 Speedup |
+| :------------------------------------- | :---------- | :----------- | :--------- |
+| **Initialization**                     | 2.22 s      | 2.97 s       | **1.34×**  |
+| **SCF Iteration Loop (17 iterations)** | 79.21 s     | 104.88 s     | **1.32×**  |
+| **Forces + Stress Property Run**       | 3.84 s      | 2.50 s       | **0.65×**  |
+| **Total Execution Time**               | **85.27 s** | **110.35 s** | **1.29×**  |
 
 > **Note on performance optimization**: By implementing a block orthogonalization algorithm using
 > BLAS 3 (`dgemm`/`zgemm`) for projecting out the existing basis and a fast Cholesky QR algorithm
 > (`dpotrf`/`dtrsm`) for the intra-batch orthogonalization, the Davidson diagonalizer bottleneck
 > was resolved. The total orthogonalization time was reduced from 80.1 s to 5.0 s (a **16×
-> speedup** for orthogonalization), making Q3 overall **1.29× faster than Quantum ESPRESSO** for
+> speedup** for orthogonalization), making Q3 overall 1.29× faster than Quantum ESPRESSO for
 > this large copper supercell calculation.
 
 ---

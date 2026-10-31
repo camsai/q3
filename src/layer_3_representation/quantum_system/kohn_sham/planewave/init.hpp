@@ -72,7 +72,7 @@ class PlanewaveKohnShamQuantumSystem : public KohnShamQuantumSystem<PlanewaveKoh
         occupation.number_of_electrons = number_of_electrons_;
         occupation.spin_degeneracy = spin_degeneracy();
         occupation.occupied_bands_per_spin = number_of_occupied_bands_per_spin();
-        occupation.is_smeared = has_fractional_occupations_;
+        occupation.is_smeared = is_fractionally_occupied_;
         return occupation;
     }
 
@@ -126,7 +126,7 @@ class PlanewaveKohnShamQuantumSystem : public KohnShamQuantumSystem<PlanewaveKoh
     // ─── Occupation access ─────────────────────────────────────
     [[nodiscard]] Real occupation_by_kpoint_state_index_and_band_index(int kpoint_state_index,
                                                                        int band_index) const {
-        if (has_fractional_occupations_) {
+        if (is_fractionally_occupied_) {
             return this->quantum_states_[kpoint_state_index * number_of_bands_ + band_index]
                 .occupation;
         }
@@ -136,8 +136,8 @@ class PlanewaveKohnShamQuantumSystem : public KohnShamQuantumSystem<PlanewaveKoh
     }
 
     void set_occupation(int kpoint_state_index, int band_index, Real value) {
-        if (!has_fractional_occupations_) {
-            has_fractional_occupations_ = true;
+        if (!is_fractionally_occupied_) {
+            is_fractionally_occupied_ = true;
             // Initialize all states with fixed occupations (done in the loop below).
             int occupied = number_of_occupied_bands_per_spin();
             int total_states = number_of_kpoint_states();
@@ -238,7 +238,7 @@ class PlanewaveKohnShamQuantumSystem : public KohnShamQuantumSystem<PlanewaveKoh
         number_of_bands_ = planewave_source.number_of_bands_;
         number_of_electrons_ = planewave_source.number_of_electrons_;
         fermi_energy_ = planewave_source.fermi_energy_;
-        has_fractional_occupations_ = planewave_source.has_fractional_occupations_;
+        is_fractionally_occupied_ = planewave_source.is_fractionally_occupied_;
         number_of_spin_components = planewave_source.number_of_spin_components;
 
         if (saved_grid != nullptr) {
@@ -291,7 +291,7 @@ class PlanewaveKohnShamQuantumSystem : public KohnShamQuantumSystem<PlanewaveKoh
     int number_of_bands_ = 0;
     Real number_of_electrons_ = 0.0;
     Real fermi_energy_ = 0.0;
-    bool has_fractional_occupations_ = false;
+    bool is_fractionally_occupied_ = false;
 };
 
 } // namespace q3

@@ -1,0 +1,33 @@
+{
+    "$id": "q3/interpolation/results/quality/centers",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Interpolation results quality centers",
+    "type": "object",
+    "required": [
+        "nearest_atom_distance_bohr",
+        "nearest_bond_midpoint_distance_bohr",
+        "shortest_bond_bohr"
+    ],
+    "additionalProperties": false,
+    "description": "The Wannier centres against the atoms of the manifest's material, over periodic images; present when a spread was evaluated and the manifest names atoms.",
+    "properties": {
+        "nearest_atom_distance_bohr": {
+            "type": "array",
+            "items": {
+                "type": "number"
+            },
+            "description": "Per function, the distance to the nearest atom."
+        },
+        "nearest_bond_midpoint_distance_bohr": {
+            "type": "array",
+            "items": {
+                "type": "number"
+            },
+            "description": "Per function, the distance to the nearest midpoint of a bond."
+        },
+        "shortest_bond_bohr": {
+            "type": "number",
+            "description": "The shortest interatomic distance, which defines a bond here as anything within 20 percent of it."
+        }
+    }
+}

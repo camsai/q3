@@ -20,6 +20,10 @@ dependencies = [
     "mat3ra-utils",
     "mat3ra-code",
     "mat3ra-periodic-table",
+    # The pydantic model of every ESSE property schema: results.json writes its
+    # results as ESSE records, and q3.io.results reads them as these
+    # models rather than re-describing them.
+    "mat3ra-esse>=2026.10.31.post1",
     # Bravais lattices, reciprocal lattices and the AFLOW high-symmetry points:
     # q3.structure.lattice and q3.workflows.kpath are adapters onto it. The floor
     # is the first release that pins numpy only in its `tools` extra (made#299);
@@ -55,7 +59,9 @@ phonons = [
     "phonopy>=4.0",
 ]
 # Needed to BUILD Q3, not to run it: scripts/repo/generate_cpp_from_schemas.py runs
-# during `cmake --build`, long before anything imports the q3 package.
+# during `cmake --build`, long before anything imports the q3 package. It also
+# reads ESSE's schemas from mat3ra-esse, a base dependency, so the images and
+# the release workflow install ".[build]" rather than repeating any version.
 build = [
     "jinja2>=3.1",
     "jsonref>=1.1",
@@ -65,6 +71,11 @@ dev = [
     "gcovr>=7.0",
     "pre-commit>=4.0",
     "ruff>=0.11",
+    # scripts/repo/generate_python_from_schemas.py: ESSE's generator, at ESSE's
+    # pin, and the formatters it runs, pinned so --check reads the same everywhere.
+    "datamodel-code-generator==0.28.5",
+    "black==26.10.1",
+    "isort==6.1.0",
 ]
 
 # ── Pytest ───────────────────────────────────────────────────────────
@@ -96,6 +107,9 @@ extraPaths = ["tests", "src/py"]
 line-length = 100
 indent-width = 4
 target-version = "py312"
+# Written by scripts/repo/generate_python_from_schemas.py; its --check is the gate.
+extend-exclude = ["src/py/q3/generated"]
+force-exclude = true
 
 [tool.ruff.format]
 quote-style = "double"

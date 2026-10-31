@@ -15,6 +15,8 @@
  */
 
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "layer_0_core/types/init.hpp"
@@ -63,6 +65,17 @@ class UltrasoftPlanewaveKohnShamQuantumSystem
      */
     [[nodiscard]] bool has_ultrasoft() const override {
         return true;
+    }
+
+    /**
+     * Always refuses: augmentation charges bring an overlap operator S, so the
+     * eigenproblem is H ψ = E S ψ. PAW runs use this system too.
+     */
+    void require_identity_overlap(const std::string& purpose) const override {
+        throw std::runtime_error(purpose +
+                                 " needs norm-conserving pseudopotentials: with ultrasoft or "
+                                 "PAW datasets the Hamiltonian comes with an overlap operator S, "
+                                 "which it cannot carry.");
     }
 
     /**

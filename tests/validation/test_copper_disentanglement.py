@@ -31,8 +31,9 @@ import numpy as np
 import pytest
 import yaml
 from q3.constants import RYDBERG_TO_ELECTRONVOLT
+from q3.io.results.classes import Results
 
-from helpers import EXAMPLES_DIRECTORY
+from helpers import EXAMPLES_DIRECTORY, density_of_states_ry, eigenvalues_ry, evaluated_kpoints
 
 EXAMPLE = EXAMPLES_DIRECTORY / "band_structure--metal--copper--wannier"
 
@@ -139,7 +140,7 @@ def test_the_automatic_window_reports_the_band_this_dataset_cannot_represent(cap
     """
     output, results = _evaluate(captured, "interpolate_auto.yml", None)
     assert "a metal" in output, output[-1500:]
-    interpolation = results["interpolation"]
+    interpolation = results["construction"]
     verdict = interpolation["disentanglement"]
     assert verdict["metallic"] is True
     assert verdict["bands_crossing_fermi"] == 1
@@ -152,7 +153,7 @@ def test_the_automatic_window_reports_the_band_this_dataset_cannot_represent(cap
     assert excluded[0]["kpoints"] > 0
     assert "localization stalled" in interpolation["description"]
     assert interpolation["spread"]["localization_converged"] is False
-    assert interpolation["quality"]["spread"]["outliers"] == [9], (
+    assert results["quality"]["spread"]["outliers"] == [9], (
         "the Wannier function built on the unrepresentable state is the outlier"
     )
 
@@ -169,7 +170,7 @@ def test_the_occupied_manifold_window_converges_and_builds_a_ten_state_model(cap
     assert "converged" in output, output[-800:]
     assert "stationary" in output, output[-800:]
 
-    interpolation = results["interpolation"]
+    interpolation = results["construction"]
     assert interpolation["number_of_bands"] == 10
     assert "disentanglement" in interpolation["description"]
     assert "maximally localized" in interpolation["description"]
@@ -186,11 +187,10 @@ def test_the_occupied_manifold_window_converges_and_builds_a_ten_state_model(cap
     # The Wigner-Seitz weights must sum to the number of k-points transformed.
     assert interpolation["total_bloch_sum_weight"] == pytest.approx(64.0, abs=1e-6)
     # Every centre sits on the atom, which is what atomic projections should give.
-    assert max(interpolation["quality"]["centers"]["nearest_atom_distance_bohr"]) < 0.5
+    assert max(results["quality"]["centers"]["nearest_atom_distance_bohr"]) < 0.5
 
-    density = results["density_of_states"]
-    energies = np.array(density["energies_ry"])
-    values = np.array(density["dos"])
+    density = results["properties"]["density_of_states"]
+    energies, values = density_of_states_ry(density)
     integral = float(np.sum(0.5 * (values[1:] + values[:-1]) * np.diff(energies)))
     assert integral == pytest.approx(10.0, abs=0.05), (
         f"the DOS integrates to {integral:.4f}, not the ten Wannier functions in the model"
@@ -208,7 +208,7 @@ def test_the_d_bands_track_a_direct_calculation(captured):
 
     # The same path, computed directly, on the same density the capture used.
     direct_manifest = _stage(workspace, "nc_interpolate.yml")
-    kpoints = interpolated["kpoints"]
+    kpoints = evaluated_kpoints(interpolated)
     direct_manifest["control"] = {
         "calculation": "nscf",
         "outdir": str(workspace / "output"),
@@ -217,10 +217,10 @@ def test_the_d_bands_track_a_direct_calculation(captured):
     }
     direct_path = _write(workspace, "direct.yml", direct_manifest)
     _run(captured["q3"] + ["--log-level", "warn", str(direct_path)], workspace, "direct bands")
-    direct = json.loads((workspace / "output" / "cu_results.json").read_text())
+    direct = Results.read(workspace / "output" / "cu_results.json")
 
-    model = np.sort(np.array(interpolated["eigenvalues_ry"])[:, 0, :], axis=1)
-    reference = np.sort(np.array(direct["eigenvalues_ry"])[:, 0, :], axis=1)
+    model = np.sort(np.array(eigenvalues_ry(interpolated))[:, 0, :], axis=1)
+    reference = np.sort(np.array(eigenvalues_ry(direct))[:, 0, :], axis=1)
 
     # Bands 6 to 9 of the model are the 3d manifold; index 5 through 8.
     for band in range(5, 9):

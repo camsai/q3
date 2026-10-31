@@ -28,7 +28,9 @@
 
 namespace q3 {
 
-struct FlavorResult;
+namespace generated {
+struct Results;
+} // namespace generated
 
 /// One input format a run can be read from; see the file comment.
 class InputFormat {
@@ -74,7 +76,7 @@ class InputFormat {
      * no such convention.
      */
     virtual void write_companion_outputs(const InputData& /*input*/,
-                                         const FlavorResult& /*result*/) const {}
+                                         const generated::Results& /*results*/) const {}
 };
 
 } // namespace q3

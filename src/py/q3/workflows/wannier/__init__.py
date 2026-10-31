@@ -64,7 +64,7 @@ Example::
 
 from __future__ import annotations
 
-from q3.io.interpolation_results import LadderAttempt
+from q3.io.interpolation.results.classes import LadderAttempt
 from q3.io.pseudo_atomic_shells import PseudoAtomicShell, pseudo_atomic_shells
 from q3.workflows.wannier.accept_gate import AcceptGate
 from q3.workflows.wannier.attempt_status import AttemptStatus

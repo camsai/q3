@@ -9,8 +9,8 @@ from __future__ import annotations
 import numpy as np
 from pydantic import BaseModel, ConfigDict
 
-from q3.io.interpolation_results import InterpolationResults
-from q3.workflows.band_distance import BandDistance, band_distance, eigenvalues_electronvolt
+from q3.io.interpolation.results.classes import InterpolationResults
+from q3.workflows.band_distance import BandDistance, band_distance, eigenvalues_ev
 from q3.workflows.wannier.attempt_status import AttemptStatus
 from q3.workflows.wannier.settings import MILLIELECTRONVOLT_PER_ELECTRONVOLT
 from q3.workflows.wannier.verdict import Verdict
@@ -32,12 +32,12 @@ class AcceptGate(BaseModel):
         """eta against the reference, and the verdict on this evaluation."""
         distance = band_distance(
             reference_ev,
-            eigenvalues_electronvolt(results),
+            eigenvalues_ev(results),
             fermi_energy_ev,
             energy_offset=self.energy_offset_ev,
             smearing=self.smearing_ev,
         )
-        spread = results.interpolation.spread if results.interpolation is not None else None
+        spread = results.construction.spread if results.construction is not None else None
         localized = spread.localized if spread is not None else None
         converged = spread.localization_converged if spread is not None else None
         status, reason = self._status_and_reason(distance, localized, converged)

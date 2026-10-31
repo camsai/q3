@@ -607,7 +607,12 @@
                     "type": "string",
                     "enum": ["none", "berkeleygw"],
                     "default": "none",
-                    "description": "Mean-field export for many-body perturbation theory: 'berkeleygw' writes WFN/RHO/vxc.dat"
+                    "description": "Mean-field export for many-body perturbation theory: 'berkeleygw' writes WFN/RHO/vxc.dat/VXC/VSC"
+                },
+                "mean_field_export_kleinman_bylander_projectors": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "With mean_field_export 'berkeleygw', also write the nonlocal pseudopotential as VKB, which BerkeleyGW's parabands needs with VSC. Norm-conserving pseudopotentials only"
                 },
                 "band_path": {
                     "type": "array",

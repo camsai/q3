@@ -294,7 +294,7 @@ def parity(request, tmp_path_factory, q3_command, q3_utility_command) -> dict:
         f"{name} evaluation",
     )
     model = json.loads((workspace / "q3.json").read_text())
-    spread = model["interpolation"]["spread"]
+    spread = model["construction"]["spread"]
     assert spread["guiding_centers"] == "trial orbitals", "the record must carry the trial centres"
 
     prefix = case["prefix"]
@@ -318,7 +318,7 @@ def parity(request, tmp_path_factory, q3_command, q3_utility_command) -> dict:
     # echoing that told Wannier90 to freeze nothing while Q3 froze at E_F+2 eV
     # -- two codes on two different problems, which is not a parity test. The
     # evaluator reports what it settled on; that is what the oracle is handed.
-    resolved = model["interpolation"].get("disentanglement") or {}
+    resolved = model["construction"].get("disentanglement") or {}
     frozen_window_above_fermi_ev = resolved.get(
         "frozen_window_above_fermi_ev", interpolation.get("frozen_window_above_fermi_ev")
     )
@@ -334,7 +334,7 @@ def parity(request, tmp_path_factory, q3_command, q3_utility_command) -> dict:
         - nscf["control"]["interpolation"]["bands"][0]
         + 1,
         guiding_centers_angstrom=np.array(spread["trial_orbital_centers_bohr"]) * BOHR_TO_ANGSTROM,
-        fermi_energy_ev=model["fermi_energy_ry"] * RYDBERG_TO_ELECTRONVOLT,
+        fermi_energy_ev=model["properties"]["fermi_energy"]["value"] * RYDBERG_TO_ELECTRONVOLT,
         frozen_window_above_fermi_ev=frozen_window_above_fermi_ev,
         projectability_minimum=interpolation.get("projectability_minimum"),
         projectability_maximum=interpolation.get("projectability_maximum"),

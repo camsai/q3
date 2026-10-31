@@ -26,8 +26,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 import yaml
+from q3.io.results.classes import Results
 
-from helpers import EXAMPLES_DIRECTORY
+from helpers import EXAMPLES_DIRECTORY, density_of_states_ry, eigenvalues_ry
 
 EXAMPLE = EXAMPLES_DIRECTORY / "band_structure--semiconductor--silicon-carbon-alloy--wannier"
 RYDBERG_TO_ELECTRONVOLT = 13.605693122994
@@ -127,7 +128,7 @@ def chain(tmp_path_factory, q3_command, q3_utility_command) -> dict:
         workspace,
         "direct mesh bands",
     )
-    mesh_exact = json.loads((workspace / "output" / "si3c_results.json").read_text())
+    mesh_exact = Results.read(workspace / "output" / "si3c_results.json")
     return {
         "model": model,
         "mesh_model": mesh_model,
@@ -142,12 +143,11 @@ def test_the_pseudopotentials_decide_how_many_wannier_functions(chain):
     four orbitals per atom over four atoms, and mixed chemistry is the case
     where an orbital count taken per species rather than per structure matters.
     """
-    interpolation = chain["model"]["interpolation"]
+    interpolation = chain["model"]["construction"]
     assert interpolation["number_of_bands"] == WANNIER_FUNCTIONS
 
-    density = chain["model"]["density_of_states"]
-    energies = np.array(density["energies_ry"])
-    values = np.array(density["dos"])
+    density = chain["model"]["properties"]["density_of_states"]
+    energies, values = density_of_states_ry(density)
     integral = float(np.sum(0.5 * (values[1:] + values[:-1]) * np.diff(energies)))
     assert integral == pytest.approx(float(WANNIER_FUNCTIONS), abs=0.05)
 
@@ -161,7 +161,7 @@ def test_the_gauge_reaches_a_stationary_point(chain):
     a label that says so. A regression shows up as "localization stalled" rather
     than as a quietly worse number.
     """
-    interpolation = chain["model"]["interpolation"]
+    interpolation = chain["model"]["construction"]
     assert "disentanglement" in interpolation["description"]
     assert "maximally localized" in interpolation["description"]
 
@@ -179,8 +179,8 @@ def test_the_mesh_points_come_back_exactly(chain):
     eigenvalues of the chosen subspace -- with no symmetry, no degeneracy and no
     tuned parameter anywhere in the structure to make that accidental.
     """
-    model = np.sort(np.array(chain["mesh_model"]["eigenvalues_ry"])[:, 0, :], axis=1)
-    exact = np.sort(np.array(chain["mesh_exact"]["eigenvalues_ry"])[:, 0, :], axis=1)
+    model = np.sort(np.array(eigenvalues_ry(chain["mesh_model"]))[:, 0, :], axis=1)
+    exact = np.sort(np.array(eigenvalues_ry(chain["mesh_exact"]))[:, 0, :], axis=1)
     difference = (model[:, :OCCUPIED] - exact[:, :OCCUPIED]) * RYDBERG_TO_ELECTRONVOLT * 1000.0
 
     root_mean_square = float(np.sqrt(np.mean(difference**2)))

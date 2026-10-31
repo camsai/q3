@@ -63,14 +63,14 @@ from typing import Self
 
 import yaml
 
-from q3.binary import find_binary, run_q3, run_q3_utility
+from q3.binary import ExecutionPolicy, find_binary, run_q3, run_q3_utility
 from q3.io.input_reader import (
     load_material,
     make_file_references_absolute,
     pseudopotential_paths,
 )
 from q3.io.input_writer import write_nscf_input
-from q3.io.interpolation_results import InterpolationResults
+from q3.io.interpolation.results.classes import InterpolationResults
 from q3.io.interpolation_settings import (
     CaptureSettings,
     EvaluationSettings,
@@ -78,6 +78,7 @@ from q3.io.interpolation_settings import (
     validated_grid,
 )
 from q3.io.output_writer import extract_band_structure
+from q3.io.results.classes import Results
 from q3.structure.lattice import reciprocal_lattice
 from q3.workflows.kpath import (
     DEFAULT_POINTS_PER_SEGMENT,
@@ -247,8 +248,8 @@ def evaluate_interpolation(
     """Run ``q3_utility interpolate`` on an evaluation manifest and return its results file.
 
     The file is ``<outdir>/<prefix>_interpolation_results.json`` next to the
-    record, with ``eigenvalues_ry`` shaped ``[k-point][spin][band]`` like the
-    engine's own results file. :func:`evaluated_interpolation_results` is the
+    record, with its ``eigenvalues`` listed as the engine's own results file
+    lists them. :func:`evaluated_interpolation_results` is the
     same run with the file typed.
     """
     return evaluated_interpolation_results(
@@ -289,7 +290,7 @@ def interpolation_results_file_name(prefix: str) -> str:
     return f"{prefix}_interpolation_results.json"
 
 
-def fermi_energy_ry(*results_by_precedence: dict | None) -> float | None:
+def fermi_energy_ry(*results_by_precedence: Results | None) -> float | None:
     """The Fermi level of the first of *results_by_precedence* that was computed; None with none.
 
     Which run's Fermi level is the right one depends on what it is for, so the
@@ -299,7 +300,8 @@ def fermi_energy_ry(*results_by_precedence: dict | None) -> float | None:
     """
     for results in results_by_precedence:
         if results is not None:
-            return float(results.get("fermi_energy_ry", 0.0))
+            record = results.properties.fermi_energy
+            return float(record.value) if record is not None else 0.0
     return None
 
 
@@ -314,12 +316,22 @@ class EngineChain:
     that belong to another step by name.
     """
 
-    def __init__(self, scf_input_path: Path, *, q3_binary, q3_utility_binary, capture_output: bool):
+    def __init__(
+        self,
+        scf_input_path: Path,
+        *,
+        q3_binary,
+        q3_utility_binary,
+        capture_output: bool,
+        execution_policy: ExecutionPolicy | None = None,
+    ):
         self.scf_input_path = scf_input_path
         with open(scf_input_path) as handle:
             self.config = yaml.safe_load(handle)
         self.material = load_material(self.config, scf_input_path.parent)
         self.binary = find_binary(q3_binary)
+        # Every engine step -- the SCF, the capture, each reference NSCF -- runs on it.
+        self.execution_policy = execution_policy
         self.q3_utility_binary = q3_utility_binary
         self.capture_output = capture_output
 
@@ -361,12 +373,18 @@ class EngineChain:
         finally:
             path.unlink(missing_ok=True)
 
-    def run_scf(self) -> dict:
+    def run_scf(self) -> Results:
+        return self._run_q3(self.effective_scf_path)
+
+    def _run_q3(self, path: Path) -> Results:
         return run_q3(
-            self.effective_scf_path, q3_binary=self.binary, capture_output=self.capture_output
+            path,
+            q3_binary=self.binary,
+            execution_policy=self.execution_policy,
+            capture_output=self.capture_output,
         )
 
-    def capture(self, settings: CaptureSettings, number_of_bands: int | None = None) -> dict:
+    def capture(self, settings: CaptureSettings, number_of_bands: int | None = None) -> Results:
         """The full-grid NSCF that builds the model and saves the record.
 
         The expensive step, and the only one that touches plane waves: every
@@ -380,10 +398,10 @@ class EngineChain:
                 settings=settings,
                 number_of_bands=number_of_bands,
             ),
-            lambda path: run_q3(path, q3_binary=self.binary, capture_output=self.capture_output),
+            self._run_q3,
         )
 
-    def reference(self, kpoints: list[KPoint], number_of_bands: int) -> dict:
+    def reference(self, kpoints: list[KPoint], number_of_bands: int) -> Results:
         """A direct NSCF at *kpoints* -- the bands a model is judged against."""
         return self._run(
             "_reference.yml",
@@ -393,7 +411,7 @@ class EngineChain:
                 kpoints_list=kpoints_list_with_uniform_weight(kpoints),
                 number_of_bands=number_of_bands,
             ),
-            lambda path: run_q3(path, q3_binary=self.binary, capture_output=self.capture_output),
+            self._run_q3,
         )
 
     def evaluate(
@@ -521,6 +539,7 @@ def run_interpolation_workflow(
     number_of_bands: int | None = None,
     q3_binary: str | Path | None = None,
     q3_utility_binary: str | Path | None = None,
+    execution_policy: ExecutionPolicy | None = None,
     skip_scf: bool = False,
     capture_output: bool = True,
 ) -> dict:
@@ -560,6 +579,12 @@ def run_interpolation_workflow(
         method it must equal the number of trial orbitals, unless
         *disentanglement* is asked for -- which is what makes a wider window
         usable at all.
+    execution_policy:
+        The execution policy every engine run starts the binary with -- the SCF, the capture and
+        any reference NSCF -- see :class:`q3.binary.ExecutionPolicy`. The
+        capture keeps each k-point's neighbours in reach, which ranks holding
+        separate k-points cannot, so ``q3_mpi`` refuses it on more than one
+        process; a GPU binary runs it.
     skip_scf:
         Reuse an existing SCF checkpoint in the outdir.
 
@@ -580,6 +605,7 @@ def run_interpolation_workflow(
         q3_binary=q3_binary,
         q3_utility_binary=q3_utility_binary,
         capture_output=capture_output,
+        execution_policy=execution_policy,
     ) as chain:
         grid = chain.mesh(grid, kpoint_spacing_inverse_angstrom)
 
@@ -610,7 +636,7 @@ def run_interpolation_workflow(
         if kpoints is None and band_path is not None:
             kpoints, kpath_distances = chain.kpath(band_path, lattice_type, points_per_segment)
 
-        interpolation_results = chain.evaluate(
+        interpolation = chain.evaluate(
             kpoints,
             EvaluationSettings(
                 method=method,
@@ -621,7 +647,7 @@ def run_interpolation_workflow(
                 frozen_window_above_fermi_ev=frozen_window_above_fermi_ev,
             ),
             dos_broadening_ry=dos_broadening_ry,
-        ).to_document()
+        )
 
     # The SCF Fermi energy is the authoritative one: an NSCF on a k-set that is
     # not a proper Monkhorst-Pack grid, or with every requested band occupied,
@@ -632,25 +658,26 @@ def run_interpolation_workflow(
         "grid": list(grid),
         "scf_results": scf_results,
         "nscf_results": nscf_results,
-        "interpolation_results": interpolation_results,
+        "interpolation_results": interpolation.to_document(),
     }
     if kpoints:
         if kpath_distances is None:
             kpath_distances = list(range(len(kpoints)))
         result["band_structure"] = extract_band_structure(
-            interpolation_results,
+            interpolation,
             kpoints=list(kpoints),
             kpath_distances=kpath_distances,
             fermi_energy_ry=fermi_level_ry,
         )
-    density = interpolation_results.get("density_of_states")
+    density = interpolation.properties.density_of_states if interpolation.properties else None
     if density is not None:
+        (values,) = density.yDataSeries  # the total density of states, its one series
         result["density_of_states"] = {
-            "energies_ry": density["energies_ry"],
+            "energies_ry": list(density.xDataArray),
             # The utility reports states per band per k-point; the spin factor of
             # two makes it states per cell for an unpolarized system, the
             # convention run_dos_workflow uses.
-            "dos": [2.0 * value for value in density["dos"]],
+            "dos": [2.0 * value for value in values],
             "fermi_energy_ry": fermi_level_ry,
         }
     return result

@@ -1,0 +1,51 @@
+{
+    "$id": "q3/interpolation/results/construction",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Interpolation results construction",
+    "type": "object",
+    "description": "How the evaluated model was built and how big it is: the method, the record it was read from, its number of bands, and what the construction measured of it (the spread of its Wannier functions and, when the subspace was disentangled, the classifier's verdict).",
+    "required": [
+        "method",
+        "description",
+        "record",
+        "number_of_bands",
+        "total_bloch_sum_weight",
+        "spread"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "method": {
+            "type": "string",
+            "description": "The record's method name (\"wannier\")."
+        },
+        "description": {
+            "type": "string",
+            "description": "How the model was built, in words: the method, the subspace choice, whether and how far the gauge was localised, and the model's size."
+        },
+        "record": {
+            "type": "string",
+            "description": "The path of the record that was evaluated."
+        },
+        "number_of_bands": {
+            "type": "integer",
+            "description": "The number of bands the model interpolates: the number of Wannier functions."
+        },
+        "total_bloch_sum_weight": {
+            "type": "number",
+            "description": "The Wigner-Seitz weight identity: the sum of the Bloch-sum weights over the model's lattice vectors, which equals the number of k-points of the mesh the record was built on."
+        },
+        "diagnostics": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "number"
+            },
+            "description": "Any further diagnostic the interpolator reports, by name. The local-orbital interpolator reports none beyond total_bloch_sum_weight, which has its own key because readers and the reference name it."
+        },
+        "spread": {
+            "$ref": "./construction/spread.json"
+        },
+        "disentanglement": {
+            "$ref": "./construction/disentanglement.json"
+        }
+    }
+}

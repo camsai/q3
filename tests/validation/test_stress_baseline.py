@@ -27,6 +27,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from q3.io.results.classes import Results
+
+from helpers import stress_contributions, stress_tensor
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 DATA_DIRECTORY = Path(__file__).resolve().parent / "data" / "stress_baseline"
@@ -48,6 +51,7 @@ FULL_ZONE_KPOINTS = (
     (0.25, 0.25, -0.25, 0.25),
     (0.25, 0.25, 0.25, 0.25),
 )
+
 STRAIN_COMPONENTS = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
 FINITE_STRAIN_STEP = 0.002
 ANGSTROM_TO_BOHR = 1.0 / 0.529177249
@@ -168,10 +172,13 @@ def run_q3(q3_bin, directory, material, label, sampling, wavefunction_cutoff, de
         timeout=3600,
     )
     assert completed.returncode == 0, completed.stdout[-3000:]
-    results = json.loads((directory / "output" / f"{label}_results.json").read_text())
-    assert results["converged"], completed.stdout[-3000:]
-    assert "stress_contributions_kbar" in results
-    print(f"\n  completed {label}: E={results['total_energy_ry']:.12f} Ry", flush=True)
+    results = Results.read(directory / "output" / f"{label}_results.json")
+    assert results.runtime_log.converged, completed.stdout[-3000:]
+    assert results.properties.stress_contributions is not None
+    print(
+        f"\n  completed {label}: E={results.properties.total_energy.value:.12f} Ry",
+        flush=True,
+    )
     return {"output": completed.stdout, "results": results}
 
 
@@ -236,15 +243,24 @@ def test_low_symmetry_reduction_matches_the_explicit_full_zone(low_symmetry_runs
     reduced = low_symmetry_runs["reduced"]
     full = low_symmetry_runs["full"]
     assert "8 -> 4 k-points" in reduced["output"]
-    assert abs(reduced["results"]["total_energy_ry"] - full["results"]["total_energy_ry"]) < 1.0e-10
     assert (
-        maximum_tensor_difference(reduced["results"]["stress_kbar"], full["results"]["stress_kbar"])
+        abs(
+            reduced["results"].properties.total_energy.value
+            - full["results"].properties.total_energy.value
+        )
+        < 1.0e-10
+    )
+    assert (
+        maximum_tensor_difference(
+            stress_tensor(reduced["results"]),
+            stress_tensor(full["results"]),
+        )
         < ZONE_INVARIANCE_TOLERANCE_KILOBAR
     )
-    for contribution, reduced_tensor in reduced["results"]["stress_contributions_kbar"].items():
+    for contribution, reduced_tensor in stress_contributions(reduced["results"]).items():
         assert (
             maximum_tensor_difference(
-                reduced_tensor, full["results"]["stress_contributions_kbar"][contribution]
+                reduced_tensor, stress_contributions(full["results"])[contribution]
             )
             < ZONE_INVARIANCE_TOLERANCE_KILOBAR
         )
@@ -252,18 +268,19 @@ def test_low_symmetry_reduction_matches_the_explicit_full_zone(low_symmetry_runs
 
 def test_low_symmetry_stress_and_every_component_match_quantum_espresso(low_symmetry_runs):
     measured = low_symmetry_runs["reduced"]["results"]
-    assert abs(measured["total_energy_ry"] - REFERENCE_REDUCED["total_energy_rydberg"]) < (
-        REFERENCE_ENERGY_TOLERANCE_RYDBERG
-    )
+    assert abs(
+        measured.properties.total_energy.value - REFERENCE_REDUCED["total_energy_rydberg"]
+    ) < (REFERENCE_ENERGY_TOLERANCE_RYDBERG)
     assert (
-        maximum_tensor_difference(measured["stress_kbar"], REFERENCE_REDUCED["stress_kilobar"])
+        maximum_tensor_difference(
+            stress_tensor(measured),
+            REFERENCE_REDUCED["stress_kilobar"],
+        )
         < REFERENCE_STRESS_TOLERANCE_KILOBAR
     )
     for contribution, expected_tensor in REFERENCE_REDUCED["stress_contributions_kilobar"].items():
         assert (
-            maximum_tensor_difference(
-                measured["stress_contributions_kbar"][contribution], expected_tensor
-            )
+            maximum_tensor_difference(stress_contributions(measured)[contribution], expected_tensor)
             < REFERENCE_STRESS_TOLERANCE_KILOBAR
         )
     assert abs(REFERENCE_REDUCED["stress_contributions_kilobar"]["ewald"][1][2]) > 50.0
@@ -276,11 +293,11 @@ def test_low_symmetry_tensor_is_q3s_own_energy_gradient(finite_strain_runs):
     for direction_a, direction_b in STRAIN_COMPONENTS:
         pair = finite_strain_runs["strains"][(direction_a, direction_b)]
         numerical_stress = (
-            -(pair[1]["total_energy_ry"] - pair[-1]["total_energy_ry"])
+            -(pair[1].properties.total_energy.value - pair[-1].properties.total_energy.value)
             / (2.0 * FINITE_STRAIN_STEP * volume_bohr_cubed)
             * (RYDBERG_PER_BOHR_CUBED_TO_KILOBAR)
         )
-        analytic_stress = baseline["stress_kbar"][direction_a][direction_b]
+        analytic_stress = stress_tensor(baseline)[direction_a][direction_b]
         assert abs(analytic_stress - numerical_stress) < SELF_GRADIENT_TOLERANCE_KILOBAR
 
 
@@ -291,11 +308,14 @@ def test_ewald_tensor_is_the_gradient_of_the_ewald_energy(finite_strain_runs):
     for direction_a, direction_b in STRAIN_COMPONENTS:
         pair = finite_strain_runs["strains"][(direction_a, direction_b)]
         numerical_stress = (
-            -(pair[1]["ewald_energy_ry"] - pair[-1]["ewald_energy_ry"])
+            -(
+                pair[1].properties.total_energy_contributions.ewald.value
+                - pair[-1].properties.total_energy_contributions.ewald.value
+            )
             / (2.0 * FINITE_STRAIN_STEP * volume_bohr_cubed)
             * (RYDBERG_PER_BOHR_CUBED_TO_KILOBAR)
         )
-        analytic_stress = baseline["stress_contributions_kbar"]["ewald"][direction_a][direction_b]
+        analytic_stress = stress_contributions(baseline)["ewald"][direction_a][direction_b]
         assert abs(analytic_stress - numerical_stress) < EWALD_SELF_GRADIENT_TOLERANCE_KILOBAR
 
 
@@ -304,19 +324,22 @@ def test_gamma_half_sphere_matches_the_explicit_full_sphere(gamma_runs):
     full = gamma_runs["gamma_full"]["results"]
     assert "half-sphere" in gamma_runs["gamma_half"]["output"]
     assert "half-sphere" not in gamma_runs["gamma_full"]["output"]
-    assert abs(half["total_energy_ry"] - full["total_energy_ry"]) < 1.0e-8
+    assert abs(half.properties.total_energy.value - full.properties.total_energy.value) < 1.0e-8
     assert (
-        maximum_tensor_difference(half["stress_kbar"], full["stress_kbar"])
+        maximum_tensor_difference(
+            stress_tensor(half),
+            stress_tensor(full),
+        )
         < GAMMA_CONTRIBUTION_TOLERANCE_KILOBAR
     )
-    for contribution, half_tensor in half["stress_contributions_kbar"].items():
+    for contribution, half_tensor in stress_contributions(half).items():
         assert (
-            maximum_tensor_difference(half_tensor, full["stress_contributions_kbar"][contribution])
+            maximum_tensor_difference(half_tensor, stress_contributions(full)[contribution])
             < GAMMA_CONTRIBUTION_TOLERANCE_KILOBAR
         )
     assert (
         min(
-            abs(half["stress_contributions_kbar"][name][0][0])
+            abs(stress_contributions(half)[name][0][0])
             for name in (
                 "kinetic",
                 "hartree",
@@ -334,11 +357,17 @@ def test_gamma_half_sphere_matches_the_explicit_full_sphere(gamma_runs):
 def test_gamma_ewald_energy_and_stress_are_storage_invariant(gamma_runs):
     half = gamma_runs["gamma_half"]["results"]
     full = gamma_runs["gamma_full"]["results"]
-    assert abs(half["ewald_energy_ry"] - full["ewald_energy_ry"]) < 1.0e-10
+    assert (
+        abs(
+            half.properties.total_energy_contributions.ewald.value
+            - full.properties.total_energy_contributions.ewald.value
+        )
+        < 1.0e-10
+    )
     assert (
         maximum_tensor_difference(
-            half["stress_contributions_kbar"]["ewald"],
-            full["stress_contributions_kbar"]["ewald"],
+            stress_contributions(half)["ewald"],
+            stress_contributions(full)["ewald"],
         )
         < GAMMA_EWAL_ROUNDOFF_TOLERANCE_KILOBAR
     )

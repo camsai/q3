@@ -28,6 +28,7 @@ from ase.filters import FrechetCellFilter
 from ase.optimize import BFGS
 from mat3ra.code.constants import Coefficients as _Coefficients
 
+from q3.binary import ExecutionPolicy
 from q3.calculators.ase_calculator import Q3ASECalculator
 from q3.properties.stress import pressure_gpa_to_ev_per_angstrom3
 from q3.workflows.relax import read_relaxation_input
@@ -41,7 +42,7 @@ def run_vc_relax_workflow(
     use_symmetry: bool = True,
     target_pressure_gpa: float = 0.0,
     q3_binary: str | Path | None = None,
-    launcher: str | list[str] = (),
+    execution_policy: ExecutionPolicy | None = None,
     trajectory_path: str | Path | None = None,
     workdir: str | Path | None = None,
     capture_output: bool = True,
@@ -91,8 +92,9 @@ def run_vc_relax_workflow(
         answer through energies alone and is biased differently.
     q3_binary:
         Path to the binary each step runs: ``q3``, ``q3_mpi`` or a GPU binary.
-    launcher:
-        Command each step runs the binary under, e.g. ``"srun -n 64"``.
+    execution_policy:
+        The execution policy every step starts the binary with: ranks,
+        k-point pools, the launcher (see :class:`q3.binary.ExecutionPolicy`).
     trajectory_path:
         ASE trajectory output path.
     workdir:
@@ -119,7 +121,7 @@ def run_vc_relax_workflow(
         # step regardless of what the cell filter does.
         mode="subprocess",
         q3_binary=q3_binary,
-        launcher=launcher,
+        execution_policy=execution_policy,
         workdir=workdir,
         capture_output=capture_output,
     )

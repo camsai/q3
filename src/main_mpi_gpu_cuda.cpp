@@ -22,9 +22,9 @@
  * Without that every rank on a node opens GPU 0 and the run measures four
  * processes contending for one card.
  *
- * Scope. Like q3_mpi this runs self_consistent_field only, and for the same
- * structural reason: it supplies its own execution policy, and that is the one
- * flavor which accepts one.
+ * Scope. Like q3_mpi it runs every engine flavor -- the SCF and the
+ * non-self-consistent pass -- on the same ranks, devices and precision: the
+ * flavor is handed an iterator factory carrying all three.
  */
 
 #include "layer_0_core/profiling/counters.hpp"
@@ -35,7 +35,7 @@
 #include "io/addon_registration.hpp"
 #include "io/cli.hpp"
 #include "io/input/parser/factory.hpp"
-#include "io/iterator/kohn_sham/planewave/factory_mpi.hpp"
+#include "io/logger_mpi.hpp"
 #include "io/output/companion_outputs.hpp"
 #include "layer_0_core/execution/gpu/device/factory.hpp"
 #include "layer_0_core/execution/gpu/device/init.hpp"
@@ -43,7 +43,7 @@
 #include "layer_0_core/math/linear_algebra/gpu/lapack/init.hpp"
 #include "layer_3_representation/basis/planewave/internal/fft/gpu/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/davidson.hpp"
-#include "layer_4_computation/flavors/self_consistent_field.hpp"
+#include "layer_4_computation/flavors/factory.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/execution/mpi.hpp"
 #include "utils/time.hpp"
 
@@ -97,12 +97,6 @@ int main(int argc, char* argv[]) {
             log::error("DFT+U (hubbard) is not yet supported on GPU. Run on CPU instead.");
             return 1;
         }
-        if (input.calculation != "self_consistent_field") {
-            throw std::runtime_error(
-                "q3_mpi_gpu_cuda runs self_consistent_field only, but this input asks for '" +
-                input.calculation + "'.");
-        }
-
         // ── GPU backends, one device per rank ─────────────────────────────
         auto device_backend = execution::gpu::device::create_gpu_device_backend();
         auto gpu_blas = execution::gpu::blas::create_cuda_gpu_blas(device_backend);
@@ -126,29 +120,31 @@ int main(int argc, char* argv[]) {
 
         /**
          * The Davidson takes the execution policy by base reference, so the MPI
-         * policy goes in where the serial one does for q3_gpu_cuda. Hold the
-         * reference before the unique_ptr is moved into the iterator.
+         * policy goes in where the serial one does for q3_gpu_cuda. The policy
+         * stays owned here, outliving every iterator built on it, and finalizes
+         * MPI from its destructor at the end of main.
          */
-        const execution::ExecutionPolicy& policy_reference = *policy;
-        auto iterator = create_scf_iterator_mpi(input, std::move(policy));
-        bool is_root = iterator->execution_policy().is_root();
-
-        auto gpu_davidson = std::make_unique<PlanewaveDavidsonDiagonalizer>(
-            policy_reference, *gpu_blas, gpu_fft_grid.get(), *gpu_eigensolver, device_backend);
-        if (use_mixed_precision) {
-            gpu_davidson->set_use_mixed_precision(true);
-        }
-        iterator->set_diagonalizer(std::move(gpu_davidson));
-
-        auto flavor = std::make_unique<SelfConsistentFieldFlavor>(std::move(iterator));
+        bool is_root = policy->is_root();
+        IteratorFactory iterator_factory = [&](const InputData& run_input) {
+            auto iterator = create_kohn_sham_iterator(run_input, *policy);
+            const execution::ExecutionPolicy& policy_reference = *policy;
+            auto gpu_davidson = std::make_unique<PlanewaveDavidsonDiagonalizer>(
+                policy_reference, *gpu_blas, gpu_fft_grid.get(), *gpu_eigensolver, device_backend);
+            if (use_mixed_precision) {
+                gpu_davidson->set_use_mixed_precision(true);
+            }
+            iterator->set_diagonalizer(std::move(gpu_davidson));
+            return iterator;
+        };
+        auto flavor = create_flavor(input.calculation, std::move(iterator_factory));
         cli::print_header();
         log::info("     Calculation type: {}", input.calculation);
 
-        auto flavor_result = flavor->run(input);
+        generated::Results results = flavor->run(input);
         if (is_root) {
-            flavor_result.write_results_json(input.output_directory + "/" + input.prefix +
-                                             "_results.json");
-            write_companion_outputs(input, flavor_result);
+            write_results_json(results,
+                               input.output_directory + "/" + input.prefix + "_results.json");
+            write_companion_outputs(input, results);
             ProfilingCounters::instance().davidson_timing.print_summary();
             cli::print_footer();
         }

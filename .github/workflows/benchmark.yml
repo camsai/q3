@@ -101,7 +101,6 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v5
         with:
-          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v6

@@ -3,12 +3,13 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "io/input/data.hpp"
 #include "io/input/parser/yaml.hpp"
+#include "io/output/results.hpp"
 #include "io/quantum_system/kohn_sham/planewave/checkpoint/q3.hpp"
 #include "layer_4_computation/flavors/factory.hpp"
-#include "layer_4_computation/flavors/result.hpp"
 
 using namespace q3;
 
@@ -54,6 +55,14 @@ InputData diamond_paw_input(const std::string& output_directory) {
     return input;
 }
 
+/// The eigenvalues the results list at k-point state `state`, in rydberg.
+std::vector<double> energies_at(const generated::Results& results, size_t state) {
+    return find_record<generated::EigenvaluesAtKpoints>(results)
+        ->values.at(state)
+        .eigenvalues.at(0)
+        .energies;
+}
+
 } // namespace
 
 TEST(NonSelfConsistentFieldIntegration, APawPassReproducesTheBandsOfTheSelfConsistentRun) {
@@ -63,16 +72,16 @@ TEST(NonSelfConsistentFieldIntegration, APawPassReproducesTheBandsOfTheSelfConsi
     std::filesystem::create_directories(directory);
 
     const InputData scf_input = diamond_paw_input(directory);
-    const FlavorResult scf = create_flavor("self_consistent_field")->run(scf_input);
-    ASSERT_TRUE(scf.converged);
+    const generated::Results scf = create_flavor("self_consistent_field")->run(scf_input);
+    ASSERT_TRUE(scf.runtime_log.converged);
 
     InputData nscf_input = scf_input;
     nscf_input.calculation = "non_self_consistent_field";
     nscf_input.kpoints_list = {{Vector3D{0.0, 0.0, 0.0}, 1.0}};
-    const FlavorResult nscf = create_flavor("non_self_consistent_field")->run(nscf_input);
+    const generated::Results nscf = create_flavor("non_self_consistent_field")->run(nscf_input);
 
-    const auto& scf_gamma = scf.eigenvalues_in_ry.at(0).at(0);
-    const auto& nscf_gamma = nscf.eigenvalues_in_ry.at(0).at(0);
+    const std::vector<double> scf_gamma = energies_at(scf, 0);
+    const std::vector<double> nscf_gamma = energies_at(nscf, 0);
     ASSERT_EQ(nscf_gamma.size(), scf_gamma.size());
     /**
      * Every band but the highest, which a single pass converges least well
@@ -103,6 +112,49 @@ TEST(NonSelfConsistentFieldIntegration, APawPassReproducesTheBandsOfTheSelfConsi
         EXPECT_NE(std::string(refusal.what()).find("on-site occupations"), std::string::npos)
             << refusal.what();
     }
+    std::filesystem::remove_all(directory);
+}
+
+/**
+ * ── Every flavor runs on the entry point's execution policy ───────────────
+ *
+ * The MPI and GPU entry points hand create_flavor() an iterator factory that
+ * carries their execution policy and diagonalizer. A flavor that built its
+ * own iterator instead ran serially on the CPU however the binary was
+ * launched, which is how only the SCF of a workflow came to use the ranks it
+ * was given. The non-self-consistent pass adjusts its input before building
+ * (one iteration, a wider Davidson basis), so the factory must see that
+ * adjusted input, not the deck's.
+ */
+TEST(NonSelfConsistentFieldIntegration, EveryFlavorBuildsItsIteratorThroughTheGivenFactory) {
+    const std::string directory =
+        (std::filesystem::temp_directory_path() / "q3-flavor-iterator-factory").string();
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+
+    std::vector<InputData> built_for;
+    IteratorFactory counting_factory = [&built_for](const InputData& run_input) {
+        built_for.push_back(run_input);
+        return create_iterator(run_input);
+    };
+
+    const InputData scf_input = diamond_paw_input(directory);
+    ASSERT_TRUE(create_flavor("self_consistent_field", counting_factory)
+                    ->run(scf_input)
+                    .runtime_log.converged);
+    ASSERT_EQ(built_for.size(), 1u);
+
+    InputData nscf_input = scf_input;
+    nscf_input.calculation = "non_self_consistent_field";
+    nscf_input.kpoints_list = {{Vector3D{0.0, 0.0, 0.0}, 1.0}};
+    const generated::Results nscf =
+        create_flavor("non_self_consistent_field", counting_factory)->run(nscf_input);
+    ASSERT_EQ(built_for.size(), 2u);
+    EXPECT_EQ(built_for.back().maximum_iterations, 1);
+    EXPECT_EQ(find_record<generated::EigenvaluesAtKpoints>(nscf)->values.size(), 1u);
+    EXPECT_EQ(nscf.runtime_log.execution.number_of_processes, 1);
+    EXPECT_EQ(nscf.runtime_log.execution.number_of_kpoint_pools, 1);
+
     std::filesystem::remove_all(directory);
 }
 
@@ -138,8 +190,8 @@ TEST(NonSelfConsistentFieldIntegration, APassOverSeveralKPointsKeepsItsTolerance
     scf_input.use_deterministic_fft_planning = true;
     scf_input.output_directory = directory;
     scf_input.prefix = "silicon_nc";
-    const FlavorResult scf = create_flavor("self_consistent_field")->run(scf_input);
-    ASSERT_TRUE(scf.converged);
+    const generated::Results scf = create_flavor("self_consistent_field")->run(scf_input);
+    ASSERT_TRUE(scf.runtime_log.converged);
 
     // The two irreducible points of the shifted 2x2x2 mesh the SCF ran on.
     const Vector3D first_point{0.25, 0.25, 0.25};
@@ -147,12 +199,12 @@ TEST(NonSelfConsistentFieldIntegration, APassOverSeveralKPointsKeepsItsTolerance
     InputData nscf_input = scf_input;
     nscf_input.calculation = "non_self_consistent_field";
     nscf_input.kpoints_list = {{first_point, 1.0}, {second_point, 1.0}};
-    const FlavorResult both = create_flavor("non_self_consistent_field")->run(nscf_input);
+    const generated::Results both = create_flavor("non_self_consistent_field")->run(nscf_input);
     nscf_input.kpoints_list = {{second_point, 1.0}};
-    const FlavorResult alone = create_flavor("non_self_consistent_field")->run(nscf_input);
+    const generated::Results alone = create_flavor("non_self_consistent_field")->run(nscf_input);
 
-    const auto& second_in_both = both.eigenvalues_in_ry.at(1).at(0);
-    const auto& second_alone = alone.eigenvalues_in_ry.at(0).at(0);
+    const std::vector<double> second_in_both = energies_at(both, 1);
+    const std::vector<double> second_alone = energies_at(alone, 0);
     ASSERT_EQ(second_in_both.size(), second_alone.size());
     // Silicon's eight valence electrons fill four bands.
     const size_t number_of_occupied_bands = 4;

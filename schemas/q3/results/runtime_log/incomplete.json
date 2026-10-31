@@ -1,0 +1,18 @@
+{
+    "$id": "q3/results/runtime_log/incomplete",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "incomplete",
+    "type": "object",
+    "description": "Present only when a derivative was left out, each entry saying why. The Python relaxation workflows refuse to run on a result whose forces are incomplete.",
+    "additionalProperties": false,
+    "properties": {
+        "forces": {
+            "type": "string",
+            "description": "Why the forces are incomplete: a force term Q3 cannot yet compute was left out."
+        },
+        "stress": {
+            "type": "string",
+            "description": "Why the stress is incomplete: a stress term was left out, or the topology skipped the stress entirely, in which case there is no stress_tensor or pressure record."
+        }
+    }
+}

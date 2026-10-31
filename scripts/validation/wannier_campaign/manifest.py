@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from q3.io import write_material_json, write_scf_input
+from q3.io.input_writer import write_material_json, write_scf_input
 from q3.workflows.interpolation import mesh_for_spacing
 
 from .case import CampaignCase

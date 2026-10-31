@@ -8,7 +8,7 @@ take from ``EngineChain`` rather than each computing on its own.
 
 import pytest
 import yaml
-from q3.io.interpolation_results import InterpolationResults, LadderAttempt
+from q3.io.interpolation.results.classes import InterpolationResults, LadderAttempt
 from q3.workflows.band_distance import BandDistance
 from q3.workflows.interpolation import EngineChain
 from q3.workflows.wannier import WorkflowResult, off_mesh_reference_kpoints
@@ -126,9 +126,7 @@ def test_the_results_quality_is_the_results_files_own_block():
     document = InterpolationResults.model_validate(
         {
             "calculation": "interpolation",
-            "interpolation": {
-                "quality": {"status": "accept", "hamiltonian_decay": {"ratio": 0.01}}
-            },
+            "quality": {"status": "accept", "hamiltonian_decay": {"ratio": 0.01}},
         }
     )
     result = WorkflowResult(
@@ -147,7 +145,7 @@ def test_the_results_quality_is_the_results_files_own_block():
         nscf_results=None,
         fermi_energy_ry=0.4,
     ).as_dict()
-    assert result["quality"] is result["interpolation_results"]["interpolation"]["quality"]
+    assert result["quality"] is result["interpolation_results"]["quality"]
     assert result["quality"] == {"status": "accept", "hamiltonian_decay": {"ratio": 0.01}}
     assert result["band_distance"] == {
         "eta_ev": 0.001,

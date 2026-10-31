@@ -64,26 +64,24 @@ def test_martyna_tuckerman_correction_self_consistent_anchor(q3_command, tmp_pat
         q3_command, input_path, "si_nc_charged", working_directory=str(tmp_path)
     )
 
-    correction = results.get("isolated_system_correction")
+    correction = results.properties.isolated_system_correction
     assert correction is not None, (
         "results.json is missing the isolated_system_correction object -- "
         "control.isolated_system_correction: martyna-tuckerman should have populated it"
     )
-    assert correction["method"] == "martyna-tuckerman"
+    assert correction.method == "martyna-tuckerman"
 
     # Martyna-Tuckerman reports a single "energy" term (see
     # IsolatedSystemCorrectionResult's scheme-agnostic terms_in_ry design) -- unlike
-    # Makov-Payne's first_order_ry/second_order_ry pair.
-    assert "energy_ry" in correction
-    assert "first_order_ry" not in correction
-    assert "second_order_ry" not in correction
+    # Makov-Payne's first_order/second_order pair.
+    assert set(correction.terms) == {"energy"}
 
-    energy_correction = float(correction["energy_ry"])
-    corrected_total = float(correction["corrected_total_energy_ry"])
-    total_energy = float(results["total_energy_ry"])
+    energy_correction = correction.terms["energy"].value
+    corrected_total = correction.corrected_total_energy.value
+    total_energy = float(results.properties.total_energy.value)
 
     assert abs(total_energy - MEASURED_TOTAL_ENERGY_RYDBERG) < TOTAL_ENERGY_TOLERANCE_RYDBERG, (
-        f"uncorrected total_energy_ry = {total_energy:.8f} Ry drifted from the measured "
+        f"uncorrected total_energy = {total_energy:.8f} Ry drifted from the measured "
         f"anchor {MEASURED_TOTAL_ENERGY_RYDBERG:.8f} Ry -- the SCF itself changed, which "
         f"would also invalidate the correction anchor below"
     )
@@ -95,12 +93,12 @@ def test_martyna_tuckerman_correction_self_consistent_anchor(q3_command, tmp_pat
         f"(self-anchored, not QE-cross-validated -- see module docstring)"
     )
 
-    assert abs(float(correction["total_ry"]) - energy_correction) < 1.0e-12, (
-        "total_ry must equal the single 'energy' term for Martyna-Tuckerman"
+    assert abs(correction.total.value - energy_correction) < 1.0e-12, (
+        "total must equal the single 'energy' term for Martyna-Tuckerman"
     )
     assert abs(corrected_total - (total_energy + energy_correction)) < 1.0e-9, (
-        "isolated_system_correction.corrected_total_energy_ry must equal "
-        "total_energy_ry + energy_ry"
+        "isolated_system_correction.corrected_total_energy must equal "
+        "total_energy + the energy term"
     )
 
 
@@ -110,4 +108,4 @@ def test_martyna_tuckerman_not_applied_without_opt_in(q3_command, tmp_path):
     results, _ = run_q3_and_load_results(
         q3_command, input_path, "si_nc_charged", working_directory=str(tmp_path)
     )
-    assert "isolated_system_correction" not in results
+    assert results.properties.isolated_system_correction is None

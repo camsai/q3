@@ -22,6 +22,15 @@
 {% endif %}
 
 #include <nlohmann/json.hpp>
+{% if esse_includes or local_includes %}
+
+{% for include in esse_includes %}
+#include "generated/{{ include }}"
+{% endfor %}
+{% for include in local_includes %}
+#include "generated/{{ include }}"
+{% endfor %}
+{% endif %}
 
 namespace q3::generated {
 
@@ -123,6 +132,7 @@ inline void from_json(const nlohmann::json& json_input, {{ nested.name }}& data)
 }
 
 {% endfor %}
+{% if struct_name %}
 /**
 {% if description %}
  * {{ description }}
@@ -168,6 +178,7 @@ inline void from_json(const nlohmann::json& json_input, {{ struct_name }}& data)
 }
 {% endif %}
 
+{% endif %}
 {% if key_registry %}
 /**
  * Key allow-lists taken straight from {{ schema_path }}: one entry per object

@@ -88,8 +88,8 @@ from pathlib import Path
 # docstring: this list is the whole of the gate's tolerance for noise, and it
 # names measurements of the run rather than of the physics.
 VOLATILE_POINTERS = (
-    "/timings_ms",
-    "/execution/peak_resident_memory_bytes",
+    "/runtime_log/timings_ms",
+    "/runtime_log/execution/peak_resident_memory_bytes",
     "/provenance/generator/engine_version",
     "/provenance/generator/engine_commit",
     # Which build-time add-ons a binary compiled in is a fact about the build,

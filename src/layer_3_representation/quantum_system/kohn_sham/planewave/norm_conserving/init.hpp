@@ -18,6 +18,7 @@
 
 #include <cmath>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "layer_0_core/types/matrix.hpp"
@@ -104,6 +105,18 @@ class NormConservingPlanewaveKohnShamQuantumSystem : public PlanewaveKohnShamQua
      */
     [[nodiscard]] virtual bool has_ultrasoft() const {
         return false;
+    }
+
+    /**
+     * Refuses, naming `purpose`, unless H ψ = E ψ is the whole eigenproblem.
+     *
+     * For a consumer that hands the Hamiltonian to a code with no notion of an
+     * overlap operator, such as the BerkeleyGW `VKB` export. A norm-conserving
+     * dataset leaves S = 1, so this accepts; the ultrasoft system, which PAW
+     * runs use as well, overrides it to refuse.
+     */
+    virtual void require_identity_overlap(const std::string& purpose) const {
+        (void)purpose;
     }
 
   protected:

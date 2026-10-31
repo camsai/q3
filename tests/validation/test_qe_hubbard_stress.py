@@ -3,7 +3,7 @@ The DFT+U stress tensor, against Quantum ESPRESSO's own Hubbard stress term.
 
 Until 2026-08-10 no DFT+U stress existed in Q3 for any dataset family. The
 reported stress simply omitted it, and because that omission was announced only
-as a log warning and a ``stress_is_incomplete`` flag, the calculation it would
+as a log warning and an incomplete-stress flag, the calculation it would
 have ruined -- a variable-cell relaxation on a Hubbard system -- was refused
 rather than allowed to converge somewhere wrong.
 

@@ -65,9 +65,10 @@ model is cheap; changing the path or the mesh means re-running only this step.
 
 ## What you should see
 
-`output/si_interpolation_results.json` holds `eigenvalues_ry` (one row per
-path k-point, shaped like the engine's own results file), `density_of_states`
-and an `interpolation` block with the model's diagnostics:
+`output/si_interpolation_results.json` holds, under `properties`, the
+`eigenvalues` (one entry per path k-point, listed like the engine's own results
+file) and the `density_of_states`, and the model's diagnostics under
+`construction` and `quality`:
 
 ```
 Wigner-Seitz supercell: 93 lattice vectors, total weight 64.000000 (expected 64)

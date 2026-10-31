@@ -162,3 +162,49 @@ TEST(BerkeleyGWExporter, ExportToDirectoryWritesAllThreeFilesWhenVxcDataIsAvaila
 
     std::filesystem::remove_all(directory);
 }
+
+TEST(BerkeleyGWExporter, ExportToDirectoryWritesPotentialsButProjectorsOnlyWhenCarried) {
+    Crystal crystal_structure;
+    PlanewaveBasis basis;
+    KPointsGrid kpoint_grid;
+    std::shared_ptr<NormConservingPlanewaveKohnShamQuantumSystem> quantum_system;
+    NormConservingPlanewaveKohnShamSCFState scf_state;
+    populate_synthetic_state(crystal_structure, basis, kpoint_grid, quantum_system, scf_state);
+    scf_state.exchange_correlation_potential_g.assign(basis.g_vectors().size(), Complex(0.05, 0.0));
+    scf_state.total_potential_g.assign(basis.g_vectors().size(), Complex(-0.5, 0.0));
+
+    std::string directory = test_support::make_temporary_path();
+    MeanFieldRecord record = build_mean_field_record(scf_state);
+    ASSERT_EQ(record.self_consistent_potential_g.size(), 1u)
+        << "an unpolarized state's single total potential is the VSC field";
+    ASSERT_EQ(record.projector_source, nullptr)
+        << "projectors are added only on request (add_kleinman_bylander_projectors_to_...)";
+
+    BerkeleyGWExporter exporter;
+    EXPECT_NO_THROW(exporter.export_to_directory(record, directory));
+
+    EXPECT_TRUE(std::filesystem::exists(directory + "/VXC"));
+    EXPECT_TRUE(std::filesystem::exists(directory + "/VSC"));
+    EXPECT_FALSE(std::filesystem::exists(directory + "/VKB"));
+
+    std::filesystem::remove_all(directory);
+}
+
+TEST(BerkeleyGWExporter, ExportToDirectoryLeavesNoPotentialFilesWithoutTheirData) {
+    Crystal crystal_structure;
+    PlanewaveBasis basis;
+    KPointsGrid kpoint_grid;
+    std::shared_ptr<NormConservingPlanewaveKohnShamQuantumSystem> quantum_system;
+    NormConservingPlanewaveKohnShamSCFState scf_state;
+    populate_synthetic_state(crystal_structure, basis, kpoint_grid, quantum_system, scf_state);
+
+    std::string directory = test_support::make_temporary_path();
+    BerkeleyGWExporter exporter;
+    EXPECT_NO_THROW(exporter.export_to_directory(build_mean_field_record(scf_state), directory));
+
+    EXPECT_TRUE(std::filesystem::exists(directory + "/RHO"));
+    EXPECT_FALSE(std::filesystem::exists(directory + "/VXC"));
+    EXPECT_FALSE(std::filesystem::exists(directory + "/VSC"));
+
+    std::filesystem::remove_all(directory);
+}

@@ -15,14 +15,14 @@ brew install cmake fftw libomp lapack
 sudo apt-get update && sudo apt-get install -y cmake build-essential libfftw3-dev libomp-dev liblapack-dev libblas-dev
 ```
 
-Then clone with submodules (the JSON schemas Q3 generates C++ from live in one):
+Then clone:
 
 ```bash
-git clone --recurse-submodules <repository-url> q3 && cd q3
+git clone <repository-url> q3 && cd q3
 ```
 
-The build generates C++ from those schemas as it goes, which needs a few Python
-modules. Create the environment before configuring — a `.venv` at the repository
+The build generates C++ from the JSON schemas in `schemas/` as it goes, which
+needs a few Python modules, `mat3ra-esse` (ESSE's schemas) among them. Create the environment before configuring — a `.venv` at the repository
 root is picked up automatically:
 
 ```bash

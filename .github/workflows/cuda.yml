@@ -29,7 +29,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           lfs: true
-          submodules: recursive
 
       - name: Pull LFS Files
         run: git lfs pull
@@ -152,9 +151,10 @@ jobs:
           cmake --build build_serial -j$(nproc) --target q3
           ccache -s
 
-      - name: CPU↔GPU Energy Parity (blocker 15a)
+      - name: CPU↔GPU Energy and NSCF Parity (blocker 15a)
         run: |
-          pytest tests/validation/test_gpu_energy_parity.py -v \
+          pytest tests/validation/test_gpu_energy_parity.py \
+            tests/validation/test_gpu_non_self_consistent_field_parity.py -v \
             --q3-bin ./build_serial/q3 \
             --q3-gpu-bin ./build_cuda/q3_gpu_cuda
 
@@ -198,5 +198,6 @@ jobs:
         run: |
           pytest tests/validation/ -v \
             --ignore=tests/validation/test_gpu_energy_parity.py \
+            --ignore=tests/validation/test_gpu_non_self_consistent_field_parity.py \
             --q3-bin ./build_serial/q3 \
             --q3-gpu-bin ./build_cuda/q3_gpu_cuda

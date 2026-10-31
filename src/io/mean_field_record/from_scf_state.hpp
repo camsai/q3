@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "io/mean_field_record/init.hpp"
+#include "io/mean_field_record/scf_state_projector_source.hpp"
 #include "layer_1_structure/symmetry/symmetry.hpp"
 #include "layer_4_computation/state/kohn_sham/planewave/norm_conserving/init.hpp"
 
@@ -147,7 +148,78 @@ build_mean_field_record(const NormConservingPlanewaveKohnShamSCFState& scf_state
 
     record.exchange_correlation_potential_g = scf_state.exchange_correlation_potential_g;
 
+    /**
+     * The per-spin copy when the state has one -- an NSCF run fills it from the
+     * checkpoint's V_eff, and a spin-polarized SCF from its own -- and otherwise
+     * the single potential, which is the whole story for an unpolarized run
+     * (PlanewaveKohnShamSCFState::total_potential_g_by_spin).
+     */
+    if (!scf_state.total_potential_g_by_spin.empty()) {
+        record.self_consistent_potential_g = scf_state.total_potential_g_by_spin;
+    } else if (!scf_state.total_potential_g.empty()) {
+        record.self_consistent_potential_g = {scf_state.total_potential_g};
+    }
+
     return record;
+}
+
+/**
+ * Adds the nonlocal pseudopotential -- species, D blocks, projector source -- to
+ * a record built by build_mean_field_record(), for the BerkeleyGW `VKB` file.
+ *
+ * Refuses rather than writing a file that describes a different Hamiltonian
+ * from the one the bands solve: an ultrasoft or PAW dataset turns H ψ = E S ψ
+ * into a generalized problem whose S no `VKB` reader applies, and DFT+U adds a
+ * projector term that D does not carry.
+ */
+inline void add_kleinman_bylander_projectors_to_mean_field_record(
+    MeanFieldRecord& record, const NormConservingPlanewaveKohnShamSCFState& scf_state) {
+    const auto& quantum_system = scf_state.quantum_system();
+    const auto& pseudopotential_basis = quantum_system.pseudopotential_basis();
+    quantum_system.require_identity_overlap(
+        "mean_field_export_kleinman_bylander_projectors (BerkeleyGW VKB)");
+    if (!scf_state.hubbard_manifolds.empty()) {
+        throw std::runtime_error(
+            "mean_field_export_kleinman_bylander_projectors is not available with DFT+U: the "
+            "Hubbard term is a nonlocal potential of its own, which a BerkeleyGW VKB file "
+            "cannot carry.");
+    }
+
+    const Crystal& crystal_structure = *scf_state.crystal_structure;
+    int number_of_atoms = crystal_structure.number_of_atoms();
+    int number_of_species = static_cast<int>(pseudopotential_basis.pseudopotential_set().size());
+
+    record.projectors_per_species.resize(number_of_species);
+    for (int species_index = 0; species_index < number_of_species; species_index++) {
+        record.projectors_per_species[species_index] =
+            pseudopotential_basis.number_of_projector_channels(species_index);
+    }
+    record.atom_species_indices.resize(number_of_atoms);
+    for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+        record.atom_species_indices[atom_index] = crystal_structure.species_type_index(atom_index);
+    }
+
+    record.nonlocal_coefficients.assign(record.number_of_spin_components, {});
+    for (int spin_index = 0; spin_index < record.number_of_spin_components; spin_index++) {
+        auto& coefficients_by_atom = record.nonlocal_coefficients[spin_index];
+        coefficients_by_atom.resize(number_of_atoms);
+        for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+            int species_index = record.atom_species_indices[atom_index];
+            int number_of_channels = record.projectors_per_species[species_index];
+            auto& block = coefficients_by_atom[atom_index];
+            block.resize(static_cast<size_t>(number_of_channels) * number_of_channels);
+            for (int channel_j = 0; channel_j < number_of_channels; channel_j++) {
+                for (int channel_i = 0; channel_i < number_of_channels; channel_i++) {
+                    block[static_cast<size_t>(channel_i) +
+                          static_cast<size_t>(channel_j) * number_of_channels] =
+                        quantum_system.d_matrix_element(
+                            atom_index, species_index, channel_i, channel_j, spin_index);
+                }
+            }
+        }
+    }
+
+    record.projector_source = std::make_shared<ScfStateMeanFieldProjectorSource>(scf_state);
 }
 
 } // namespace q3

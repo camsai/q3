@@ -22,7 +22,6 @@ pytestmark = pytest.mark.skipif(
     reason="mpirun not found — MPI tests require an MPI installation",
 )
 
-
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 SI_EXAMPLE_DIRECTORY = EXAMPLES_DIRECTORY / "total_energy--semiconductor--silicon"
@@ -76,7 +75,7 @@ def run_si_scf_with_topology(
         working_directory=str(tmp_path),
         timeout=600,
     )
-    return float(results["total_energy_ry"])
+    return float(results.properties.total_energy.value)
 
 
 def run_ni_hubbard_scf_with_topology(
@@ -141,7 +140,7 @@ def run_ni_hubbard_scf_with_topology(
         working_directory=str(tmp_path),
         timeout=600,
     )
-    return float(results["total_energy_ry"])
+    return float(results.properties.total_energy.value)
 
 
 def run_silicon_ultrasoft_ortho_atomic_with_topology(
@@ -176,7 +175,7 @@ def run_silicon_ultrasoft_ortho_atomic_with_topology(
         working_directory=str(tmp_path),
         timeout=600,
     )
-    return float(results["total_energy_ry"])
+    return float(results.properties.total_energy.value)
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────

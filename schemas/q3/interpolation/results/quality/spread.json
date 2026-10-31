@@ -1,0 +1,41 @@
+{
+    "$id": "q3/interpolation/results/quality/spread",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Interpolation results quality spread",
+    "type": "object",
+    "required": [
+        "median_bohr_squared",
+        "variance_bohr_squared",
+        "maximum_bohr_squared",
+        "outliers",
+        "above_ten_angstrom_squared"
+    ],
+    "additionalProperties": false,
+    "description": "Statistics of the per-function spreads; present when a spread was evaluated.",
+    "properties": {
+        "median_bohr_squared": {
+            "type": "number"
+        },
+        "variance_bohr_squared": {
+            "type": "number",
+            "description": "The population variance of the spreads across functions: the published no-reference criterion."
+        },
+        "maximum_bohr_squared": {
+            "type": "number"
+        },
+        "outliers": {
+            "type": "array",
+            "items": {
+                "type": "integer"
+            },
+            "description": "Zero-based indices of functions above five times the median."
+        },
+        "above_ten_angstrom_squared": {
+            "type": "array",
+            "items": {
+                "type": "integer"
+            },
+            "description": "Zero-based indices of functions whose spread exceeds ten square angstrom, whatever the others do."
+        }
+    }
+}

@@ -16,9 +16,9 @@
  * utility subcommand and not an engine flavor.
  *
  * Output: `<outdir>/<prefix>_interpolation_results.json` (or `--output`),
- * with `eigenvalues_ry` shaped [k-point][spin][band] like the engine's own
- * results file so the Python extractors read it unchanged, the `kpoints` it
- * was evaluated at, the `density_of_states`, the method's diagnostics, and
+ * with the `eigenvalues` at the k-points evaluated, listed as the engine's
+ * own results file lists them so the Python readers read both the same way,
+ * the `density_of_states` as ESSE's record, the method's diagnostics, and
  * the same provenance stamp every result carries.
  */
 
@@ -127,8 +127,6 @@ class InterpolateCommand {
         if (input.interpolation.wants_density_of_states()) {
             const std::array<int, 3>& mesh = input.interpolation.dos_mesh;
             document.add_density_of_states(
-                mesh,
-                input.dos_broadening,
                 InterpolatedDensityOfStatesCalculator(interpolator)
                     .compute(
                         mesh[0], mesh[1], mesh[2], input.dos_broadening, input.dos_energy_steps));

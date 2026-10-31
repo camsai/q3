@@ -57,7 +57,7 @@ from q3.workflows.interpolation import (
     write_interpolation_evaluation_input,
 )
 
-from helpers import RYDBERG_TO_ELECTRONVOLT
+from helpers import RYDBERG_TO_ELECTRONVOLT, density_of_states_ry, eigenvalues_ry
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = REPOSITORY_ROOT / "examples" / "band_structure--semiconductor--silicon--wannier"
@@ -146,7 +146,7 @@ def _evaluate(
 
 def _bands_ev(results: dict) -> np.ndarray:
     """[k-point][band] in eV, ascending within each row."""
-    return np.sort(np.array(results["eigenvalues_ry"])[:, 0, :], axis=1) * RYDBERG_TO_ELECTRONVOLT
+    return np.sort(np.array(eigenvalues_ry(results))[:, 0, :], axis=1) * RYDBERG_TO_ELECTRONVOLT
 
 
 @pytest.fixture(scope="module")
@@ -190,8 +190,8 @@ def test_interpolation_reproduces_the_input_eigenvalues_at_the_coarse_mesh(refer
 def test_wigner_seitz_weight_matches_the_kpoint_count(reference_chain):
     """On a real fcc lattice, not only the cubic ones the unit tests use."""
     results = _evaluate(reference_chain)
-    assert results["interpolation"]["method"] == "wannier"
-    assert results["interpolation"]["total_bloch_sum_weight"] == pytest.approx(64.0, abs=1e-9)
+    assert results.construction.method == "wannier"
+    assert results.construction.total_bloch_sum_weight == pytest.approx(64.0, abs=1e-9)
 
 
 def test_interpolated_bands_track_the_direct_calculation_along_a_path(reference_chain):
@@ -378,9 +378,8 @@ def test_interpolated_density_of_states_integrates_to_the_band_count(reference_c
     comparable to anything else.
     """
     results = _evaluate(reference_chain, dos_mesh=(10, 10, 10), broadening=0.01)
-    density = results["density_of_states"]
-    energies = np.array(density["energies_ry"])
-    values = np.array(density["dos"])
+    density = results.properties.density_of_states
+    energies, values = density_of_states_ry(density)
 
     assert np.all(values >= 0.0)
     integral = float(np.sum(0.5 * (values[1:] + values[:-1]) * np.diff(energies)))

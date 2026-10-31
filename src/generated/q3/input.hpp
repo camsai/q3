@@ -1199,8 +1199,10 @@ struct InputControl {
     std::optional<bool> use_exact_wavefunction_grid;
     // Isolated (charged) system correction: 'makov-payne' (QE assume_isolated='makov-payne', cubic lattices only) or 'martyna-tuckerman' (post-SCF evaluation, any lattice)
     std::optional<InputControlIsolatedSystemCorrectionEnum> isolated_system_correction;
-    // Mean-field export for many-body perturbation theory: 'berkeleygw' writes WFN/RHO/vxc.dat
+    // Mean-field export for many-body perturbation theory: 'berkeleygw' writes WFN/RHO/vxc.dat/VXC/VSC
     std::optional<InputControlMeanFieldExportEnum> mean_field_export;
+    // With mean_field_export 'berkeleygw', also write the nonlocal pseudopotential as VKB, which BerkeleyGW's parabands needs with VSC. Norm-conserving pseudopotentials only
+    std::optional<bool> mean_field_export_kleinman_bylander_projectors;
     // High-symmetry path for band-structure calculations. Each entry is either a bare label or a {label, coordinates} map
     std::optional<std::vector<nlohmann::json>> band_path;
     // Number of k-points sampled per band-path segment
@@ -1261,6 +1263,9 @@ inline void to_json(nlohmann::json& json_output, const InputControl& data) {
     }
     if (data.mean_field_export) {
         json_output["mean_field_export"] = *data.mean_field_export;
+    }
+    if (data.mean_field_export_kleinman_bylander_projectors) {
+        json_output["mean_field_export_kleinman_bylander_projectors"] = *data.mean_field_export_kleinman_bylander_projectors;
     }
     if (data.band_path) {
         json_output["band_path"] = *data.band_path;
@@ -1333,6 +1338,9 @@ inline void from_json(const nlohmann::json& json_input, InputControl& data) {
     }
     if (json_input.contains("mean_field_export")) {
         data.mean_field_export = json_input.at("mean_field_export").get<InputControlMeanFieldExportEnum>();
+    }
+    if (json_input.contains("mean_field_export_kleinman_bylander_projectors")) {
+        data.mean_field_export_kleinman_bylander_projectors = json_input.at("mean_field_export_kleinman_bylander_projectors").get<bool>();
     }
     if (json_input.contains("band_path")) {
         data.band_path = json_input.at("band_path").get<std::vector<nlohmann::json>>();
@@ -1448,6 +1456,7 @@ inline const std::map<std::string, std::vector<std::string>>& allowed_keys_by_pa
              "isolated_system_correction",
              "kpoints_list",
              "mean_field_export",
+             "mean_field_export_kleinman_bylander_projectors",
              "nonlocal_stress_derivative_method",
              "number_of_kpoint_pools",
              "outdir",

@@ -27,7 +27,8 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict
 
 from q3.constants import RYDBERG_TO_ELECTRONVOLT
-from q3.io.interpolation_results import BandDistanceReport, InterpolationResults
+from q3.io.interpolation.results.classes import BandDistanceReport, InterpolationResults
+from q3.io.results.classes import Results, eigenvalue_arrays
 
 #: The published window above the Fermi level, in eV, and the smearing of its edge.
 DEFAULT_ENERGY_OFFSET_EV = 2.0
@@ -127,22 +128,18 @@ def band_distance(
     return BandDistance(eta=eta, eta_maximum=eta_maximum, number_of_states=int(weight.size))
 
 
-def eigenvalues_electronvolt(results: dict | InterpolationResults, spin: int = 0) -> np.ndarray:
-    """The ``eigenvalues_ry`` of a Q3 results file as a (k-point, band) array in eV.
+def eigenvalues_ev(results: Results | InterpolationResults, spin: int = 0) -> np.ndarray:
+    """The ``eigenvalues_at_kpoints`` of a Q3 results file as a (k-point, band) array in eV.
 
     Both the engine's ``<prefix>_results.json`` and ``q3_utility interpolate``'s
-    results file shape them ``[k-point][spin][band]``; one spin channel is
+    results file list them per k-point and spin channel; one spin channel is
     taken, since the interpolation is spin-unpolarized today. The file may be
-    the document or, for the utility's, the model of it.
+    the model of either.
     """
-    stored = (
-        results.eigenvalues_ry
-        if isinstance(results, InterpolationResults)
-        else results.get("eigenvalues_ry")
-    )
-    if stored is None:
-        raise ValueError("the results carry no eigenvalues_ry")
-    eigenvalues = np.asarray(stored, dtype=float)
+    record = results.properties.eigenvalues_at_kpoints
+    if record is None:
+        raise ValueError("the results carry no eigenvalues")
+    eigenvalues = np.asarray(eigenvalue_arrays(record)[0], dtype=float)
     if eigenvalues.ndim != 3:
-        raise ValueError("eigenvalues_ry must be shaped [k-point][spin][band]")
+        raise ValueError("the eigenvalues must be shaped [k-point][spin][band]")
     return eigenvalues[:, spin, :] * RYDBERG_TO_ELECTRONVOLT

@@ -1,0 +1,29 @@
+{
+    "$id": "q3/interpolation/results",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Interpolation results",
+    "description": "The file `q3_utility interpolate` writes: <outdir>/<prefix>_interpolation_results.json, the model a saved interpolation record holds — how it was built, how big it is and what it says about itself — and its evaluation along a k-point list and, when asked, on a dense mesh for a density of states. `required` is the PRODUCER's guarantee — present in every file the utility writes. It is not a reader's precondition: the Python model (q3.io.interpolation.results) defaults every field to None, because the unit-test stub and older files carry a subset. The keys q3.workflows.wannier adds after the evaluation (quality.status, quality.reason, quality.ladder, quality.band_distance) are optional here, so one schema describes the file before and after the workflow annotates it. The evaluated quantities under `properties` (the Fermi level, the eigenvalues, the density of states) are the shapes the SCF results file uses, each carrying its unit in its own `units` field (ESSE's fermi_energy and density_of_states records and results.json's eigenvalues block). The diagnostics of the evaluated model (construction and quality) still carry theirs in the key names (bohr and bohr squared for the geometry, rydberg for energies, electronvolts where the manifest speaks them) until the input manifest, which shares their vocabulary, moves to unit fields with them; ESSE has no unit for an area yet.",
+    "type": "object",
+    "required": ["calculation", "provenance", "properties", "construction", "quality"],
+    "additionalProperties": false,
+    "properties": {
+        "calculation": {
+            "type": "string",
+            "description": "Always \"interpolation\": the calculation this file is the result of."
+        },
+        "provenance": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The provenance stamp of the evaluated manifest, carried through as it stands; its shape is the SCF results file's (docs/io_reference.md, section 4.1) and is not described again here."
+        },
+        "properties": {
+            "$ref": "./results/properties.json"
+        },
+        "construction": {
+            "$ref": "./results/construction.json"
+        },
+        "quality": {
+            "$ref": "./results/quality.json"
+        }
+    }
+}

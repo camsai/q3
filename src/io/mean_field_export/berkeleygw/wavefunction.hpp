@@ -46,6 +46,7 @@
 #include "io/checkpoint/qe.hpp"
 #include "io/logger.hpp"
 #include "io/mean_field_export/berkeleygw/header.hpp"
+#include "io/mean_field_export/berkeleygw/record_writer.hpp"
 #include "io/mean_field_record/init.hpp"
 #include "layer_1_structure/reciprocal_space/kpoints_grid.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
@@ -85,14 +86,15 @@ class BerkeleyGWWavefunctionFile {
         BerkeleyGWCommonHeader header(record_, "WFN-Complex", /*include_kpoint_fields=*/true);
         header.write(output_file);
 
-        write_plane_wave_counts_record(output_file);
-        write_kpoint_weights_record(output_file);
-        write_kpoint_coordinates_record(output_file);
+        BerkeleyGWRecordWriter record_writer(record_);
+        record_writer.write_plane_wave_counts(output_file);         // record 9
+        record_writer.write_normalized_kpoint_weights(output_file); // record 10
+        record_writer.write_kpoint_coordinates(output_file);        // record 11
         write_occupied_band_bounds_records(output_file);
         write_eigenvalues_record(output_file);
         write_occupations_record(output_file);
-        write_charge_density_gvectors_records(output_file);
-        write_body(output_file);
+        record_writer.write_charge_density_gvectors(output_file); // records 16-18
+        write_body(output_file, record_writer);
 
         log::info("     Wrote BerkeleyGW wavefunction file: {}", file_path);
     }
@@ -116,78 +118,6 @@ class BerkeleyGWWavefunctionFile {
      * absolute 0.5 cutoff applies unchanged.
      */
     static constexpr Real occupied_band_occupation_threshold = 0.5;
-
-    /// Record 9: ngk(nk).
-    void write_plane_wave_counts_record(std::ofstream& output_file) const {
-        const auto& plane_waves_per_kpoint = record_.plane_waves_per_kpoint;
-        std::vector<int32_t> counts(plane_waves_per_kpoint.begin(), plane_waves_per_kpoint.end());
-        record_format_.write_record(
-            output_file, counts.data(), static_cast<int32_t>(counts.size() * sizeof(int32_t)));
-    }
-
-    /**
-     * Record 10: kw(nk), normalized so sum(kw) = 1 as BerkeleyGW requires.
-     * write_wfng gets there by writing QE's k-point weight times the number of
-     * spin components over 2, which leans on QE's invariant that its k-point
-     * weights sum to 2. Q3's *generated* grids share that
-     * invariant (KPointsGrid::scale_weights()'s docstring, halved exactly once
-     * for a spin-polarized run in
-     * system_builder.hpp:build_global_kpoint_grid_from_input), so dividing by
-     * spin_degeneracy() would reproduce the converter's factor exactly for them.
-     *
-     * It does NOT hold for an explicit `control.kpoints_list`, whose weights
-     * reach here from the input file verbatim -- nothing in the pipeline
-     * normalizes them. A user who writes weights summing to 1, the natural
-     * choice and the very convention BerkeleyGW itself uses, would then get
-     * sum(kw) = 0.5 on disk, silently (measured on an NSCF run before this was
-     * normalized here). An NSCF run is exactly how BerkeleyGW is normally fed,
-     * so that is the common path rather than a corner case.
-     *
-     * Hence: normalize by the actual sum rather than by an assumed convention.
-     * Identical whenever the QE/Q3 invariant does hold, correct by construction
-     * when it does not.
-     */
-    void write_kpoint_weights_record(std::ofstream& output_file) const {
-        std::vector<double> weights(record_.number_of_kpoints());
-        Real weight_sum = 0.0;
-        for (int kpoint_index = 0; kpoint_index < record_.number_of_kpoints(); kpoint_index++) {
-            weights[kpoint_index] = record_.kpoint_weights[kpoint_index];
-            weight_sum += weights[kpoint_index];
-        }
-        if (weight_sum <= 0.0) {
-            throw std::runtime_error(
-                "BerkeleyGWWavefunctionFile: k-point weights sum to " + std::to_string(weight_sum) +
-                ", so they cannot be normalized to BerkeleyGW's required sum of 1. "
-                "Check control.kpoints_list.");
-        }
-        for (auto& weight : weights) {
-            weight /= weight_sum;
-        }
-        record_format_.write_record(
-            output_file, weights.data(), static_cast<int32_t>(weights.size() * sizeof(double)));
-    }
-
-    /**
-     * Record 11: kpt(3,nk), crystal (fractional) coordinates. Q3's
-     * KPoint::coordinates are already stored in crystal coordinates
-     * throughout (kpoint.hpp's docstring; PlaneWaveSelector::select()
-     * converts them to Cartesian only locally, for its own G-vector
-     * bookkeeping) -- unlike pw2bgw.x, which must convert to crystal
-     * coordinates before writing because QE holds its k-points in Cartesian
-     * coordinates internally, Q3 needs no conversion here.
-     */
-    void write_kpoint_coordinates_record(std::ofstream& output_file) const {
-        std::vector<double> coordinates(3 * record_.number_of_kpoints());
-        for (int kpoint_index = 0; kpoint_index < record_.number_of_kpoints(); kpoint_index++) {
-            const Vector3D& point = record_.kpoint_coordinates[kpoint_index];
-            coordinates[3 * kpoint_index + 0] = point.x;
-            coordinates[3 * kpoint_index + 1] = point.y;
-            coordinates[3 * kpoint_index + 2] = point.z;
-        }
-        record_format_.write_record(output_file,
-                                    coordinates.data(),
-                                    static_cast<int32_t>(coordinates.size() * sizeof(double)));
-    }
 
     /// Records 12-13: ifmin[nk*ns], ifmax[nk*ns], both 1-based (write_wfng records 12-13).
     void write_occupied_band_bounds_records(std::ofstream& output_file) const {
@@ -226,7 +156,7 @@ class BerkeleyGWWavefunctionFile {
      * specification requires. write_wfng writes QE's eigenvalues with NO
      * unit conversion (unlike vxc.dat's explicit conversion to eV) -- QE's
      * eigenvalues are already Rydberg internally, matching Q3's own convention (AGENTS.md § Units:
-     * "use the same units as Quantum ESPRESSO"; FlavorResult's `_in_ry`-suffixed fields), so
+     * "use the same units as Quantum ESPRESSO"; results.json's "Ry" units), so
      * eigenvalue() is copied as-is. Band is the fast (first) Fortran index, so for each
      * k-point-state all nbands values are written contiguously before moving to the next state --
      * same spin-major state ordering as records 12-13 (see write_occupied_band_bounds_records).
@@ -262,26 +192,6 @@ class BerkeleyGWWavefunctionFile {
             output_file, values.data(), static_cast<int32_t>(values.size() * sizeof(double)));
     }
 
-    /// Records 16-18: nrecord=1, ng, gvec(3,ng) -- the charge-density G-set.
-    void write_charge_density_gvectors_records(std::ofstream& output_file) const {
-        const auto& g_vectors = record_.charge_density_miller_indices;
-
-        int32_t nrecord = 1;
-        record_format_.write_record(output_file, &nrecord, sizeof(nrecord));
-        int32_t number_of_g_vectors = static_cast<int32_t>(g_vectors.size());
-        record_format_.write_record(output_file, &number_of_g_vectors, sizeof(number_of_g_vectors));
-
-        std::vector<int32_t> miller_indices(3 * g_vectors.size());
-        for (size_t g_index = 0; g_index < g_vectors.size(); g_index++) {
-            miller_indices[3 * g_index + 0] = g_vectors[g_index].x;
-            miller_indices[3 * g_index + 1] = g_vectors[g_index].y;
-            miller_indices[3 * g_index + 2] = g_vectors[g_index].z;
-        }
-        record_format_.write_record(output_file,
-                                    miller_indices.data(),
-                                    static_cast<int32_t>(miller_indices.size() * sizeof(int32_t)));
-    }
-
     /**
      * Body (the BerkeleyGW specification's per-k-point G-vector list, then
      * the coefficients of each band, as write_wfng writes them -- the
@@ -293,46 +203,21 @@ class BerkeleyGWWavefunctionFile {
      * kpoint_state_index == kpoint_index unconditionally (spin_index is
      * always 0).
      */
-    void write_body(std::ofstream& output_file) const {
-        const auto& g_vectors = record_.charge_density_miller_indices;
-        const auto& kpoint_g_vector_indices = record_.kpoint_g_vector_indices;
-        const auto& plane_waves_per_kpoint = record_.plane_waves_per_kpoint;
+    void write_body(std::ofstream& output_file, const BerkeleyGWRecordWriter& record_writer) const {
         int number_of_kpoints = record_.number_of_kpoints();
         int number_of_bands = record_.number_of_bands;
-        int32_t nrecord = 1;
 
         for (int kpoint_index = 0; kpoint_index < number_of_kpoints; kpoint_index++) {
-            int32_t number_of_plane_waves = plane_waves_per_kpoint[kpoint_index];
-            const auto& g_vector_indices = kpoint_g_vector_indices[kpoint_index];
+            record_writer.write_kpoint_gvectors(output_file, kpoint_index);
 
-            record_format_.write_record(output_file, &nrecord, sizeof(nrecord));
-            record_format_.write_record(
-                output_file, &number_of_plane_waves, sizeof(number_of_plane_waves));
-
-            std::vector<int32_t> miller_indices(3 * number_of_plane_waves);
-            for (int plane_wave_index = 0; plane_wave_index < number_of_plane_waves;
-                 plane_wave_index++) {
-                const auto& miller = g_vectors[g_vector_indices[plane_wave_index]];
-                miller_indices[3 * plane_wave_index + 0] = miller.x;
-                miller_indices[3 * plane_wave_index + 1] = miller.y;
-                miller_indices[3 * plane_wave_index + 2] = miller.z;
-            }
-            record_format_.write_record(
-                output_file,
-                miller_indices.data(),
-                static_cast<int32_t>(miller_indices.size() * sizeof(int32_t)));
-
+            int32_t number_of_plane_waves = record_.plane_waves_per_kpoint[kpoint_index];
             for (int band_index = 0; band_index < number_of_bands; band_index++) {
                 int kpoint_state_index = kpoint_index; // spin_index is always 0 here (ns=1)
-                record_format_.write_record(output_file, &nrecord, sizeof(nrecord));
-                record_format_.write_record(
-                    output_file, &number_of_plane_waves, sizeof(number_of_plane_waves));
-                const Complex* coefficients =
-                    record_.band_source->coefficients(kpoint_state_index, band_index);
-                record_format_.write_record(
+                record_writer.write_complex_block(
                     output_file,
-                    coefficients,
-                    static_cast<int32_t>(number_of_plane_waves * sizeof(Complex)));
+                    number_of_plane_waves,
+                    record_.band_source->coefficients(kpoint_state_index, band_index),
+                    number_of_plane_waves);
             }
         }
     }

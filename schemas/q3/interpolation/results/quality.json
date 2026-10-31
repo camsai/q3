@@ -1,0 +1,42 @@
+{
+    "$id": "q3/interpolation/results/quality",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Interpolation results quality",
+    "type": "object",
+    "required": ["hamiltonian_decay"],
+    "additionalProperties": false,
+    "description": "What the model says about itself with no reference calculation, and — added afterwards by q3.workflows.wannier, which runs the calculation they need — the band distance against a direct one and the verdict it earned.",
+    "properties": {
+        "spread": {
+            "$ref": "./quality/spread.json"
+        },
+        "centers": {
+            "$ref": "./quality/centers.json"
+        },
+        "hamiltonian_decay": {
+            "$ref": "./quality/hamiltonian_decay.json"
+        },
+        "localization_converged": {
+            "type": "boolean",
+            "description": "Repeated from spread.localization_converged when the gauge was minimised, so the block a driver judges by is complete on its own."
+        },
+        "status": {
+            "type": "string",
+            "description": "Added by q3.workflows.wannier: \"accept\" or \"reject\", the verdict of the retry ladder on this model."
+        },
+        "reason": {
+            "type": "string",
+            "description": "Added by q3.workflows.wannier: why the verdict was reached, in words."
+        },
+        "ladder": {
+            "type": "array",
+            "description": "Added by q3.workflows.wannier: every evaluation the retry ladder made of the saved record, in order, ending with the one this file describes.",
+            "items": {
+                "$ref": "./quality/ladder.json"
+            }
+        },
+        "band_distance": {
+            "$ref": "./quality/band_distance.json"
+        }
+    }
+}

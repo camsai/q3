@@ -15,17 +15,17 @@ Example::
     from q3.flavors import run_scf
 
     results = run_scf("path/to/input.yml", q3_binary="./build/q3")
-    print(f"Total energy: {results['total_energy_ry']} Ry")
+    print(f"Total energy: {results.properties.total_energy.value} Ry")
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from q3.binary import run_q3
+from q3.binary import ExecutionPolicy, execution_policy_or_serial, run_q3
 from q3.io.input_writer import ensure_calculation_type
 from q3.io.output_writer import raise_if_not_converged
+from q3.io.results.classes import Results
 
 try:
     import q3_core
@@ -37,8 +37,9 @@ def run_scf(
     input_path: str | Path,
     *,
     q3_binary: str | Path | None = None,
+    execution_policy: ExecutionPolicy | None = None,
     capture_output: bool = True,
-) -> dict:
+) -> Results:
     """Run a self-consistent field calculation.
 
     Parameters
@@ -49,14 +50,18 @@ def run_scf(
     q3_binary:
         Explicit path to the ``q3`` binary.  Used only in Mode A (subprocess).
         Auto-detected when ``None``.
+    execution_policy:
+        The execution policy the binary is started with (ranks, pools, the
+        launcher).  Anything but the serial policy runs Mode A, since the
+        in-process bindings can honour neither a launcher nor a binary option.
     capture_output:
         Pass ``False`` to stream binary stdout/stderr to the terminal.
         Used only in Mode A (subprocess).
 
     Returns
     -------
-    dict
-        Parsed results (same schema as ``results.json``).
+    Results
+        The run's ``results.json``.
 
     Raises
     ------
@@ -72,9 +77,11 @@ def run_scf(
         input_path, expected="self_consistent_field", aliases=("scf",)
     )
 
+    execution_policy = execution_policy_or_serial(execution_policy)
+
     # ── Mode B: in-process via nanobind extension ─────────────────────────────
-    if q3_core is not None:
-        results = json.loads(q3_core.run_scf(str(input_path)))
+    if q3_core is not None and execution_policy.is_default:
+        results = Results.model_validate_json(q3_core.run_scf(str(input_path)))
         # The engine returns normally from a run that did not converge, and
         # run_q3 refuses such a result in Mode A. Which mode runs depends only
         # on whether the extension was built, so the refusal cannot depend on
@@ -84,4 +91,9 @@ def run_scf(
         return results
 
     # ── Mode A: subprocess ────────────────────────────────────────────────────
-    return run_q3(input_path, q3_binary=q3_binary, capture_output=capture_output)
+    return run_q3(
+        input_path,
+        q3_binary=q3_binary,
+        execution_policy=execution_policy,
+        capture_output=capture_output,
+    )

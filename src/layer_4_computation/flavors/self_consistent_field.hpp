@@ -6,7 +6,7 @@
  * Runs a full self-consistent field calculation: builds the iterator,
  * iterates to convergence, computes Hellmann-Feynman forces and stress tensor,
  * writes binary checkpoints when the execution topology owns complete state,
- * and returns a FlavorResult with all quantities as raw types.
+ * and returns its results as results.json's own struct.
  *
  * The Python layer reads results.json and is responsible for any further
  * per-property formatting or output.  No per-property JSON files are written
@@ -15,17 +15,25 @@
 
 #include <chrono>
 #include <cstddef>
+#include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
+#include "generated/esse/properties/scalar/magnetization_absolute.hpp"
+#include "generated/esse/properties/scalar/magnetization_total.hpp"
+#include "generated/esse/properties/scalar/pressure.hpp"
+#include "generated/esse/properties/workflow/convergence_electronic.hpp"
 #include "io/mean_field_export/factory.hpp"
 #include "io/mean_field_export/record_and_export.hpp"
 #include "io/mean_field_record/from_scf_state.hpp"
+#include "io/output/results.hpp"
 #include "io/quantum_system/kohn_sham/planewave/checkpoint/q3.hpp"
 #include "layer_0_core/profiling/counters.hpp"
 #include "layer_4_computation/flavors/base.hpp"
-#include "layer_4_computation/flavors/result.hpp"
 #include "layer_4_computation/iterator/factory.hpp"
+#include "layer_4_computation/iterator/kohn_sham/planewave/execution/kpoint_states.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/pseudopotential/init.hpp"
 #include "layer_5_properties/forces/planewave/init.hpp"
 #include "layer_5_properties/isolated_system_correction/planewave/factory.hpp"
@@ -35,38 +43,32 @@ namespace q3 {
 
 class SelfConsistentFieldFlavor : public Flavor {
   public:
-    SelfConsistentFieldFlavor(std::unique_ptr<PlanewaveKohnShamSCFIterator> iterator = nullptr)
-        : iterator_(std::move(iterator)) {}
+    /**
+     * `iterator_factory` carries the entry point's execution policy (see
+     * IteratorFactory); empty runs serially on the CPU.
+     */
+    explicit SelfConsistentFieldFlavor(IteratorFactory iterator_factory = {})
+        : iterator_factory_(std::move(iterator_factory)) {}
 
   protected:
-    FlavorResult run_calculation(const InputData& input) override {
-        /**
-         * When the iterator was pre-set via the constructor, keep it alive in
-         * iterator_ for the full lifetime of this flavor. Only take a temporary
-         * unique_ptr when we create the iterator on demand (scratch path).
-         */
-        std::unique_ptr<PlanewaveKohnShamSCFIterator> temp_iterator;
-        PlanewaveKohnShamSCFIterator* iterator = nullptr;
-        if (iterator_) {
-            iterator = iterator_.get(); // borrow — ownership stays in iterator_
-        } else {
-            temp_iterator = create_iterator(input);
-            iterator = temp_iterator.get();
-        }
-        if (input.start_from_saved_charge_density) {
-            offer_saved_charge_density(*iterator, input);
-        }
-        iterator->run();
-
-        const bool converged = iterator->is_converged();
-        auto scf_state = iterator->result();
-
+    generated::Results run_calculation(const InputData& input) override {
+        std::unique_ptr<PlanewaveKohnShamSCFIterator> owned_iterator =
+            create_iterator(input, iterator_factory_);
+        PlanewaveKohnShamSCFIterator* iterator = owned_iterator.get();
         auto* planewave_iterator =
             dynamic_cast<PlanewavePseudopotentialKohnShamSCFIterator*>(iterator);
         if (!planewave_iterator) {
             throw std::runtime_error(
                 "SelfConsistentFieldFlavor: expected a planewave pseudopotential iterator.");
         }
+        if (input.start_from_saved_charge_density) {
+            offer_saved_charge_density(*iterator, input);
+            offer_saved_wavefunctions(*planewave_iterator, input);
+        }
+        iterator->run();
+
+        const bool converged = iterator->is_converged();
+        auto scf_state = iterator->result();
 
         // Write binary checkpoints.
         planewave_iterator->write_checkpoints(input.output_directory, input.prefix);
@@ -80,34 +82,34 @@ class SelfConsistentFieldFlavor : public Flavor {
          * itself (see non_self_consistent_field.hpp), but the export is wired
          * into both flavors so either can be used directly. Which rank (if
          * any) writes is decided by the execution topology -- see
-         * export_and_record_mean_field_under_topology()'s comment.
+         * export_and_record_mean_field_under_topology()'s comment. The exported
+         * Vxc is the valence one, not the state's own, which includes any core
+         * charge -- see valence_exchange_correlation_potential_g_of().
          */
         export_and_record_mean_field_under_topology(
             planewave_iterator->execution_policy(),
-            [&scf_state] { return build_mean_field_record(scf_state); },
+            [&scf_state, &input, planewave_iterator] {
+                auto record = build_mean_field_record(scf_state);
+                record.exchange_correlation_potential_g =
+                    planewave_iterator->valence_exchange_correlation_potential_g_of(
+                        scf_state.charge_density_real);
+                if (input.mean_field_export_kleinman_bylander_projectors)
+                    add_kleinman_bylander_projectors_to_mean_field_record(record, scf_state);
+                return record;
+            },
             input,
             input.output_directory);
 
-        // ─── Populate FlavorResult ────────────────────────────────────────────
-        FlavorResult flavor_result;
-        flavor_result.flavor = "self_consistent_field";
-        flavor_result.converged = converged;
-        flavor_result.number_of_self_consistent_field_iterations = iterator->iteration();
-        flavor_result.number_of_processes = iterator->execution_policy().number_of_processes();
-        flavor_result.number_of_kpoint_pools = iterator->execution_policy().number_of_pools();
-        flavor_result.band_group_size =
-            flavor_result.number_of_processes / flavor_result.number_of_kpoint_pools;
-        flavor_result.reciprocal_space_vectors_are_distributed =
-            iterator->execution_policy().band_size() > 1;
+        // ─── Results ──────────────────────────────────────────────────────────
+        generated::Results results = new_results("self_consistent_field");
+        results.runtime_log.converged = converged;
+        results.runtime_log.self_consistent_field_iterations = iterator->iteration();
         /**
-         * Called on every rank, not just the writing one: reduce_scalar_max is
-         * collective, and guarding it behind the root would hang the others.
+         * Called on every rank, not just the writing one: the memory reduction
+         * inside is collective, and guarding it behind the root would hang the
+         * others.
          */
-        Real peak_resident_megabytes =
-            static_cast<Real>(ProfilingCounters::instance().peak_resident_bytes_now()) / 1048576.0;
-        iterator->execution_policy().reduce_scalar_max(peak_resident_megabytes);
-        flavor_result.peak_resident_memory_bytes =
-            static_cast<std::uint64_t>(peak_resident_megabytes * 1048576.0);
+        results.runtime_log.execution = iterator->execution_policy().execution_record();
         /**
          * Carry the timing breakdown into the result, so a measurement does not
          * have to be scraped back out of the log. Counts go alongside the
@@ -117,36 +119,25 @@ class SelfConsistentFieldFlavor : public Flavor {
          */
         {
             const auto& counters = ProfilingCounters::instance();
-            flavor_result.timings = counters.davidson_timing.as_map();
-            flavor_result.timings["fft_calls"] =
-                static_cast<double>(counters.fft_call_count.load());
-            flavor_result.timings["davidson_iterations"] =
+            nlohmann::json timings = counters.davidson_timing.as_map();
+            timings["fft_calls"] = static_cast<double>(counters.fft_call_count.load());
+            timings["davidson_iterations"] =
                 static_cast<double>(counters.davidson_iteration_count.load());
-            flavor_result.timings["hamiltonian_applications"] =
+            timings["hamiltonian_applications"] =
                 static_cast<double>(counters.hamiltonian_application_count.load());
+            if (!timings.empty()) {
+                results.runtime_log.timings_ms = timings;
+            }
             /**
              * total_solve_calls is deliberately not emitted: it is declared in
              * DavidsonTimingAccumulator but never incremented anywhere, so it
              * would publish a constant zero that reads as "no solves happened".
              */
         }
-        for (const auto& record : iterator->scf_history())
-            flavor_result.scf_iterations.push_back({record.iteration,
-                                                    record.total_energy_in_ry,
-                                                    record.energy_change_in_ry,
-                                                    record.density_residual});
-
         const auto& energies = scf_state.energies();
-        flavor_result.total_energy_in_ry = energies.total();
-        flavor_result.band_energy_in_ry = energies.band_energy;
-        flavor_result.hartree_energy_in_ry = energies.hartree_energy;
-        flavor_result.exchange_correlation_energy_in_ry = energies.exchange_correlation_energy;
-        flavor_result.ewald_energy_in_ry = energies.ewald_energy;
-        flavor_result.double_counting_correction_in_ry = energies.double_counting_correction;
-        flavor_result.smearing_entropy_contribution_in_ry = energies.smearing_entropy_contribution;
-        flavor_result.hubbard_energy_in_ry = energies.hubbard_energy_contribution();
-        flavor_result.dispersion_energy_in_ry = energies.dispersion_energy();
-        flavor_result.one_center_energy_in_ry = energies.one_center_energy_contribution();
+        set_energy_records(results, energies.total(), energies);
+        set_fermi_energy(results, planewave_iterator->quantum_system().fermi_energy());
+        record_convergence(results, iterator->scf_history());
 
         /**
          * Magnetization and the DFT+U occupation traces come from the iterator
@@ -154,17 +145,9 @@ class SelfConsistentFieldFlavor : public Flavor {
          * SCF releases a few lines below, and both are already printed, so a
          * second derivation would be a second definition of the same number.
          */
-        flavor_result.magnetization = planewave_iterator->magnetization();
-        const auto& hubbard_occupation_traces = planewave_iterator->hubbard_occupation_traces();
-        for (std::size_t manifold_index = 0; manifold_index < hubbard_occupation_traces.size() &&
-                                             manifold_index < scf_state.hubbard_manifolds.size();
-             ++manifold_index) {
-            flavor_result.hubbard_occupations.push_back(
-                {scf_state.hubbard_manifolds[manifold_index].atom_index,
-                 hubbard_occupation_traces[manifold_index]});
-        }
-
-        flavor_result.fermi_energy_in_ry = planewave_iterator->quantum_system().fermi_energy();
+        record_magnetization(results, planewave_iterator->magnetization());
+        record_hubbard_occupations(
+            results, planewave_iterator->hubbard_occupation_traces(), scf_state.hubbard_manifolds);
 
         /**
          * ─── Isolated-system correction (if SCF converged) ─────────────────────
@@ -176,17 +159,23 @@ class SelfConsistentFieldFlavor : public Flavor {
             auto correction_calculator =
                 create_isolated_system_correction_calculator(input.isolated_system_correction);
             auto correction = correction_calculator->compute(scf_state);
-            flavor_result.isolated_system_correction_applied = correction.applied;
-            flavor_result.isolated_system_correction_method = correction.method;
-            flavor_result.isolated_system_correction_terms_in_ry = correction.terms_in_ry;
             if (correction.applied) {
+                generated::ResultsIsolatedSystemCorrection block;
+                block.method = correction.method;
+                for (const auto& [label, value_in_ry] : correction.terms_in_ry) {
+                    block.terms[label] = energy(label, value_in_ry);
+                }
+                block.total = energy("total", correction.total_in_ry());
+                block.corrected_total_energy =
+                    energy("corrected_total_energy", energies.total() + correction.total_in_ry());
+                results.properties.isolated_system_correction = block;
                 log::info("{} isolated-system correction:", correction.method);
                 for (const auto& [label, value] : correction.terms_in_ry) {
                     log::info("     {:<24} = {:.8f} Ry", label, value);
                 }
                 log::info("     {:<24} = {:.8f} Ry",
                           "corrected total energy",
-                          flavor_result.total_energy_in_ry + correction.total_in_ry());
+                          energies.total() + correction.total_in_ry());
             }
         }
 
@@ -204,16 +193,7 @@ class SelfConsistentFieldFlavor : public Flavor {
                 scf_state, input.dispersion_correction, input.disable_symmetry);
             auto timer_forces_end = std::chrono::high_resolution_clock::now();
 
-            // Copy raw values into FlavorResult.
-            flavor_result.forces_in_ry_per_bohr = total_forces;
-            flavor_result.add_force_contribution("local", forces_contributions.local);
-            flavor_result.add_force_contribution("ewald", forces_contributions.ewald);
-            flavor_result.add_force_contribution("nonlocal", forces_contributions.nonlocal);
-            flavor_result.add_force_contribution("core_correction",
-                                                 forces_contributions.core_correction);
-            flavor_result.add_force_contribution("augmentation", forces_contributions.augmentation);
-            flavor_result.add_force_contribution("dispersion", forces_contributions.dispersion);
-            flavor_result.add_force_contribution("hubbard", forces_contributions.hubbard);
+            record_forces(results, total_forces, forces_contributions);
 
             /**
              * Record the derivative terms Q3 knows it left out, in the result
@@ -227,10 +207,10 @@ class SelfConsistentFieldFlavor : public Flavor {
              * every dataset family. Keep this metadata guard for future projector types.
              */
             if (!HubbardStressTensorCalculator::supports(scf_state)) {
-                flavor_result.stress_is_incomplete = true;
-                flavor_result.stress_incomplete_reason =
+                record_incomplete_stress(
+                    results,
                     "no DFT+U stress term is implemented for Hubbard projector type '" +
-                    scf_state.hubbard_projector_type + "'";
+                        scf_state.hubbard_projector_type + "'");
             }
 
             /**
@@ -248,40 +228,14 @@ class SelfConsistentFieldFlavor : public Flavor {
                                    input.dispersion_correction,
                                    input.disable_symmetry);
 
-                // Copy raw values into FlavorResult.
-                for (int row_index = 0; row_index < 3; row_index++) {
-                    for (int column_index = 0; column_index < 3; column_index++) {
-                        flavor_result.stress_in_kbar[row_index][column_index] =
-                            stress_total.values[row_index][column_index];
-                    }
-                }
-                flavor_result.pressure_in_kbar = stress_total.pressure;
-                flavor_result.add_stress_contribution("kinetic", stress_contributions.kinetic);
-                flavor_result.add_stress_contribution("hartree", stress_contributions.hartree);
-                flavor_result.add_stress_contribution("exchange_correlation",
-                                                      stress_contributions.exchange_correlation);
-                flavor_result.add_stress_contribution("ewald", stress_contributions.ewald);
-                flavor_result.add_stress_contribution("local_pseudopotential",
-                                                      stress_contributions.local);
-                flavor_result.add_stress_contribution("nonlocal_pseudopotential",
-                                                      stress_contributions.nonlocal);
-                flavor_result.add_stress_contribution("core_correction",
-                                                      stress_contributions.core_correction);
-                flavor_result.add_stress_contribution("augmentation",
-                                                      stress_contributions.augmentation);
-                flavor_result.add_stress_contribution("hubbard", stress_contributions.hubbard);
-                flavor_result.add_stress_contribution("dispersion",
-                                                      stress_contributions.dispersion);
+                record_stress(results, stress_total, stress_contributions);
             } else {
                 log::warn(
                     "     Stress tensor skipped (not yet supported with G-vector distribution)");
-                flavor_result.stress_is_incomplete = true;
-                if (!flavor_result.stress_incomplete_reason.empty()) {
-                    flavor_result.stress_incomplete_reason += "; ";
-                }
-                flavor_result.stress_incomplete_reason +=
+                record_incomplete_stress(
+                    results,
                     "stress is not implemented when wavefunctions are distributed across an "
-                    "MPI band group, so the reported zero tensor is not a physical result";
+                    "MPI band group, so the reported zero tensor is not a physical result");
             }
             auto timer_stress_end = std::chrono::high_resolution_clock::now();
 
@@ -300,75 +254,147 @@ class SelfConsistentFieldFlavor : public Flavor {
         }
 
         // ─── Eigenvalues ──────────────────────────────────────────────────────
-        const auto& eigenvalue_matrix = planewave_iterator->eigenvalues();
-        int local_number_of_kpoint_states = eigenvalue_matrix.rows();
-        int number_of_bands = eigenvalue_matrix.cols();
-        /**
-         * kpoint_grid() holds one entry per PHYSICAL k-point; eigenvalue_matrix /
-         * occupation() are indexed by k-point STATE (physical kpoint * spin, see
-         * build_global_kpoint_grid_from_input / accumulator.hpp for the same
-         * convention) -- for a spin-polarized run number_of_kpoints above is the
-         * state count, so kpoint_grid() lookups need the physical index instead.
-         */
-        int local_number_of_physical_kpoints =
-            planewave_iterator->kpoint_grid().number_of_kpoints();
-        int number_of_spin_components =
-            planewave_iterator->quantum_system().number_of_spin_components;
-        int number_of_values_per_state = 2 * number_of_bands + 4;
-        std::vector<Real> local_state_data(static_cast<std::size_t>(local_number_of_kpoint_states) *
-                                           number_of_values_per_state);
-        for (int kpoint_index_state = 0; kpoint_index_state < local_number_of_kpoint_states;
-             ++kpoint_index_state) {
-            int local_physical_kpoint_index = kpoint_index_state % local_number_of_physical_kpoints;
-            std::size_t state_offset =
-                static_cast<std::size_t>(kpoint_index_state) * number_of_values_per_state;
-            for (int band_index = 0; band_index < number_of_bands; band_index++) {
-                local_state_data[state_offset + band_index] =
-                    eigenvalue_matrix(kpoint_index_state, band_index);
-                local_state_data[state_offset + number_of_bands + band_index] =
-                    planewave_iterator->occupation(kpoint_index_state, band_index);
-            }
-            const auto& kpoint = planewave_iterator->kpoint_grid()[local_physical_kpoint_index];
-            local_state_data[state_offset + 2 * number_of_bands] = kpoint.weight;
-            local_state_data[state_offset + 2 * number_of_bands + 1] = kpoint.coordinates.x;
-            local_state_data[state_offset + 2 * number_of_bands + 2] = kpoint.coordinates.y;
-            local_state_data[state_offset + 2 * number_of_bands + 3] = kpoint.coordinates.z;
-        }
+        set_record(results, assemble_global_eigenvalues_at_kpoints(*planewave_iterator));
 
-        std::vector<Real> global_state_data =
-            planewave_iterator->execution_policy().assemble_global_kpoint_state_data(
-                local_state_data,
-                local_number_of_physical_kpoints,
-                number_of_spin_components,
-                number_of_values_per_state);
-        int global_number_of_kpoint_states =
-            static_cast<int>(global_state_data.size()) / number_of_values_per_state;
-        flavor_result.eigenvalues_in_ry.resize(global_number_of_kpoint_states);
-        flavor_result.occupations.resize(global_number_of_kpoint_states);
-        flavor_result.kpoint_weights.resize(global_number_of_kpoint_states);
-        flavor_result.kpoint_coordinates.resize(global_number_of_kpoint_states);
-        for (int kpoint_index_state = 0; kpoint_index_state < global_number_of_kpoint_states;
-             ++kpoint_index_state) {
-            std::size_t state_offset =
-                static_cast<std::size_t>(kpoint_index_state) * number_of_values_per_state;
-            flavor_result.eigenvalues_in_ry[kpoint_index_state].resize(1);
-            flavor_result.eigenvalues_in_ry[kpoint_index_state][0].assign(
-                global_state_data.begin() + state_offset,
-                global_state_data.begin() + state_offset + number_of_bands);
-            flavor_result.occupations[kpoint_index_state].resize(1);
-            flavor_result.occupations[kpoint_index_state][0].assign(
-                global_state_data.begin() + state_offset + number_of_bands,
-                global_state_data.begin() + state_offset + 2 * number_of_bands);
-            flavor_result.kpoint_weights[kpoint_index_state] =
-                global_state_data[state_offset + 2 * number_of_bands];
-            flavor_result.kpoint_coordinates[kpoint_index_state] = {
-                global_state_data[state_offset + 2 * number_of_bands + 1],
-                global_state_data[state_offset + 2 * number_of_bands + 2],
-                global_state_data[state_offset + 2 * number_of_bands + 3],
-            };
-        }
+        return results;
+    }
 
-        return flavor_result;
+  public:
+    /**
+     * ─── The SCF's results, shared with the bindings' SCFSolver ──────────────
+     *
+     * The bindings run the same calculation without this flavor, so what an SCF
+     * reports is filled here once, and both report it the same way.
+     */
+
+    /**
+     * The total energy after each iteration, as ESSE's convergence_electronic
+     * record (one row: this run's only ionic step), and the density residual
+     * after each, as runtime_log.density_residuals.
+     */
+    template <typename History>
+    static void record_convergence(generated::Results& results, const History& history) {
+        if (history.empty()) {
+            return;
+        }
+        std::vector<double> energies_in_ry;
+        std::vector<double> density_residuals;
+        for (const auto& iteration : history) {
+            energies_in_ry.push_back(iteration.total_energy_in_ry);
+            density_residuals.push_back(iteration.density_residual);
+        }
+        set_record(results,
+                   generated::ConvergenceElectronic{
+                       generated::ConvergenceElectronicNameEnum::CONVERGENCE_ELECTRONIC,
+                       generated::ConvergenceElectronicUnitsEnum::RY,
+                       {energies_in_ry}});
+        results.runtime_log.density_residuals = density_residuals;
+    }
+
+    /**
+     * Both of the numbers the convergence report prints, ∫(ρ↑−ρ↓) and
+     * ∫|ρ↑−ρ↓|, as ESSE's magnetization_total and magnetization_absolute
+     * records. The total alone cannot describe an antiferromagnet -- it is zero
+     * both for a converged AFM state and for one that collapsed to
+     * non-magnetic -- so both are listed, and neither for a run without them
+     * (spin-unpolarized, or one that never reached the convergence block):
+     * absent rather than a zero that reads as a collapsed moment.
+     */
+    static void record_magnetization(generated::Results& results,
+                                     const std::optional<Magnetization>& magnetization) {
+        if (!magnetization) {
+            return;
+        }
+        set_record(results,
+                   generated::MagnetizationTotal{
+                       generated::MagnetizationTotalNameEnum::MAGNETIZATION_TOTAL,
+                       generated::MagnetizationTotalUnitsEnum::UB,
+                       magnetization->total_in_bohr_magneton});
+        set_record(results,
+                   generated::MagnetizationAbsolute{
+                       generated::MagnetizationAbsoluteNameEnum::MAGNETIZATION_ABSOLUTE,
+                       generated::MagnetizationAbsoluteUnitsEnum::UB,
+                       magnetization->absolute_in_bohr_magneton});
+    }
+
+    /**
+     * Tr[n] per Hubbard manifold, per spin channel: the number of electrons the
+     * manifold's projectors see, and the first thing to look at when a DFT+U
+     * result looks wrong. Nothing when the run has no Hubbard manifolds.
+     * `atom_index` is 0-based, matching the orbital projections' labels.
+     */
+    template <typename Manifolds>
+    static void record_hubbard_occupations(generated::Results& results,
+                                           const std::vector<std::vector<Real>>& traces,
+                                           const Manifolds& manifolds) {
+        std::vector<generated::ResultsPropertiesHubbardOccupationsItem> occupations;
+        for (std::size_t manifold_index = 0;
+             manifold_index < traces.size() && manifold_index < manifolds.size();
+             ++manifold_index) {
+            occupations.push_back({manifolds[manifold_index].atom_index,
+                                   std::vector<double>(traces[manifold_index].begin(),
+                                                       traces[manifold_index].end())});
+        }
+        if (!occupations.empty()) {
+            results.properties.hubbard_occupations = occupations;
+        }
+    }
+
+    /// ESSE's atomic_forces record, and beside it the share of each mechanism, in Ry/bohr.
+    static void record_forces(generated::Results& results,
+                              const std::vector<Vector3D>& total_forces,
+                              const AtomicForcesContributions& contributions) {
+        set_record(results, atomic_forces(total_forces));
+        results.properties.force_contributions = std::map<std::string, generated::AtomicForces>{
+            {"local", atomic_forces(contributions.local)},
+            {"ewald", atomic_forces(contributions.ewald)},
+            {"nonlocal", atomic_forces(contributions.nonlocal)},
+            {"core_correction", atomic_forces(contributions.core_correction)},
+            {"augmentation", atomic_forces(contributions.augmentation)},
+            {"dispersion", atomic_forces(contributions.dispersion)},
+            {"hubbard", atomic_forces(contributions.hubbard)},
+        };
+    }
+
+    /**
+     * ESSE's stress_tensor and pressure records, and beside them the share of
+     * each mechanism, in kbar. Listed only by a run that computed the stress,
+     * so absent is never read as a measured zero.
+     */
+    static void record_stress(generated::Results& results,
+                              const StressTensorTotal& total,
+                              const StressTensorContributions& contributions) {
+        set_record(results, stress_tensor(total.values));
+        set_record(results,
+                   generated::Pressure{generated::PressureNameEnum::PRESSURE,
+                                       generated::PressureUnitsEnum::KBAR,
+                                       total.pressure});
+        results.properties.stress_contributions = std::map<std::string, generated::StressTensor>{
+            {"kinetic", stress_tensor(contributions.kinetic)},
+            {"hartree", stress_tensor(contributions.hartree)},
+            {"exchange_correlation", stress_tensor(contributions.exchange_correlation)},
+            {"ewald", stress_tensor(contributions.ewald)},
+            {"local_pseudopotential", stress_tensor(contributions.local)},
+            {"nonlocal_pseudopotential", stress_tensor(contributions.nonlocal)},
+            {"core_correction", stress_tensor(contributions.core_correction)},
+            {"augmentation", stress_tensor(contributions.augmentation)},
+            {"hubbard", stress_tensor(contributions.hubbard)},
+            {"dispersion", stress_tensor(contributions.dispersion)},
+        };
+    }
+
+    /**
+     * Name a term the stress leaves out, in runtime_log.incomplete, rather than
+     * only in the log: a variable-cell relaxation driven by a stress with a
+     * term missing converges to the wrong cell without anything in its output
+     * saying so, and the Python vc-relax workflow reads this and stops.
+     */
+    static void record_incomplete_stress(generated::Results& results, const std::string& reason) {
+        auto& incomplete = results.runtime_log.incomplete;
+        if (!incomplete) {
+            incomplete.emplace();
+        }
+        incomplete->stress = incomplete->stress ? *incomplete->stress + "; " + reason : reason;
     }
 
   private:
@@ -393,7 +419,20 @@ class SelfConsistentFieldFlavor : public Flavor {
         iterator.offer_starting_charge_density(std::move(snapshot.charge_density_real));
     }
 
-    std::unique_ptr<PlanewaveKohnShamSCFIterator> iterator_;
+    /**
+     * Offer the bands the same previous run saved (pw.x keeps the last ionic
+     * step's wavefunctions as the next one's guess). Without them every
+     * geometry of a relaxation starts the eigensolver from the atomic +
+     * random guess -- for a dataset with no atomic orbitals, from random
+     * vectors alone. The iterator takes each k-point's file only if it fits.
+     */
+    static void offer_saved_wavefunctions(PlanewavePseudopotentialKohnShamSCFIterator& iterator,
+                                          const InputData& input) {
+        iterator.offer_starting_wavefunctions(input.output_directory + "/" + input.prefix +
+                                              ".save");
+    }
+
+    IteratorFactory iterator_factory_;
 };
 
 } // namespace q3

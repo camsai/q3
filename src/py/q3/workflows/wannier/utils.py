@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 import re
 
-from q3.io.interpolation_results import InterpolationResults
+from q3.io.interpolation.results.classes import InterpolationResults
 from q3.workflows.interpolation import Grid, KPoint, mesh_for_spacing, validated_grid
 from q3.workflows.wannier.settings import (
     BAND_WINDOW_EXTRA,
@@ -85,7 +85,7 @@ def threshold_walk(tried: frozenset[tuple[float, float]]) -> list[tuple[float, f
 
 def window_holds_unrepresentable_states(results: InterpolationResults) -> bool:
     """Whether the classifier reported bands it kept out of an automatic metal window."""
-    verdict = results.interpolation.disentanglement if results.interpolation else None
+    verdict = results.construction.disentanglement if results.construction else None
     return verdict is not None and bool(
         verdict.frozen_window_automatic and verdict.metallic and verdict.bands_excluded_from_freeze
     )

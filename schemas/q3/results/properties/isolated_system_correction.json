@@ -1,0 +1,26 @@
+{
+    "$id": "q3/results/properties/isolated_system_correction",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "isolated system correction",
+    "type": "object",
+    "description": "The charged/isolated-cell correction, when one was applied: the scheme's own labelled terms (Makov-Payne: first_order, second_order; Martyna-Tuckerman: energy), all signed so that corrected_total_energy = total_energy + total.",
+    "required": ["method", "terms", "total", "corrected_total_energy"],
+    "additionalProperties": false,
+    "properties": {
+        "method": {
+            "type": "string"
+        },
+        "terms": {
+            "type": "object",
+            "additionalProperties": {
+                "$ref": "../../../esse/core/reusable/energy.json"
+            }
+        },
+        "total": {
+            "$ref": "../../../esse/core/reusable/energy.json"
+        },
+        "corrected_total_energy": {
+            "$ref": "../../../esse/core/reusable/energy.json"
+        }
+    }
+}

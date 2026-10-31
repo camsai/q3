@@ -38,14 +38,16 @@ PUBLIC_NAMES = {
     ],
     "q3.io": [
         "ensure_calculation_type",
+        "write_nscf_input",
+        "write_scf_input",
+        "write_supercell_scf_input",
+    ],
+    "q3.io.output_writer": [
         "extract_band_structure",
         "extract_dos",
         "extract_lowdin_charges",
         "extract_pdos",
         "extract_total_energy",
-        "write_nscf_input",
-        "write_scf_input",
-        "write_supercell_scf_input",
     ],
     "q3.workflows": [
         "run_band_structure_workflow",

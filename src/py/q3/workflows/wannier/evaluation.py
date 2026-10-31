@@ -10,7 +10,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict
 
 from q3.errors import Q3Error, Q3RuntimeError
-from q3.io.interpolation_results import InterpolationResults, LadderAttempt
+from q3.io.interpolation.results.classes import InterpolationResults, LadderAttempt
 from q3.io.interpolation_settings import EvaluationSettings
 from q3.workflows.interpolation import EngineChain, Grid, KPoint
 from q3.workflows.wannier.accept_gate import AcceptGate
@@ -151,7 +151,7 @@ class Evaluation(BaseModel):
         it was told. If the two ever read a dataset differently, every number
         downstream describes a model other than the one judged.
         """
-        built = results.interpolation.number_of_bands if results.interpolation else None
+        built = results.construction.number_of_bands if results.construction else None
         if built is not None and int(built) != self.wannier_functions:
             raise Q3Error(
                 f"the engine built {int(built)} Wannier functions where the trial-orbital rule "

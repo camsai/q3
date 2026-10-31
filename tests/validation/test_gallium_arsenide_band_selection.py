@@ -20,8 +20,9 @@ import numpy as np
 import pytest
 import yaml
 from q3.constants import RYDBERG_TO_ELECTRONVOLT
+from q3.io.results.classes import Results
 
-from helpers import EXAMPLES_DIRECTORY
+from helpers import EXAMPLES_DIRECTORY, density_of_states_ry, eigenvalues_ry, evaluated_kpoints
 
 EXAMPLE = EXAMPLES_DIRECTORY / "band_structure--semiconductor--gallium-arsenide--wannier"
 FIRST_BAND, LAST_BAND = 19, 22
@@ -85,7 +86,7 @@ def chain(tmp_path_factory, q3_command, q3_utility_command) -> dict:
 
     # The same path, computed directly, with enough bands to hold the window.
     direct_manifest = _stage(workspace, "nc_interpolate.yml")
-    kpoints = interpolated["kpoints"]
+    kpoints = evaluated_kpoints(interpolated)
     direct_manifest["control"] = {
         "calculation": "nscf",
         "outdir": str(workspace / "output"),
@@ -98,25 +99,24 @@ def chain(tmp_path_factory, q3_command, q3_utility_command) -> dict:
         workspace,
         "direct bands",
     )
-    direct = json.loads((workspace / "output" / "gaas_results.json").read_text())
+    direct = Results.read(workspace / "output" / "gaas_results.json")
     return {"interpolated": interpolated, "direct": direct}
 
 
 def test_the_model_holds_four_wannier_functions(chain):
-    interpolation = chain["interpolated"]["interpolation"]
+    interpolation = chain["interpolated"]["construction"]
     assert interpolation["number_of_bands"] == 4
     assert interpolation["total_bloch_sum_weight"] == pytest.approx(64.0, abs=1e-6)
 
-    density = chain["interpolated"]["density_of_states"]
-    energies = np.array(density["energies_ry"])
-    values = np.array(density["dos"])
+    density = chain["interpolated"]["properties"]["density_of_states"]
+    energies, values = density_of_states_ry(density)
     integral = float(np.sum(0.5 * (values[1:] + values[:-1]) * np.diff(energies)))
     assert integral == pytest.approx(4.0, abs=0.05)
 
 
 def test_it_tracks_the_selected_window_and_not_the_lowest_bands(chain):
-    model = np.sort(np.array(chain["interpolated"]["eigenvalues_ry"])[:, 0, :], axis=1)
-    reference = np.sort(np.array(chain["direct"]["eigenvalues_ry"])[:, 0, :], axis=1)
+    model = np.sort(np.array(eigenvalues_ry(chain["interpolated"]))[:, 0, :], axis=1)
+    reference = np.sort(np.array(eigenvalues_ry(chain["direct"]))[:, 0, :], axis=1)
 
     selected = reference[:, FIRST_BAND - 1 : LAST_BAND]
     deviation = np.abs(model - selected).max() * RYDBERG_TO_ELECTRONVOLT
@@ -136,8 +136,8 @@ def test_the_manifold_is_reproduced_to_the_grid_s_accuracy(chain):
     bond makes a symmetric s orbital at the midpoint a cruder starting gauge,
     and without a spread minimiser the starting gauge is the final one.
     """
-    model = np.sort(np.array(chain["interpolated"]["eigenvalues_ry"])[:, 0, :], axis=1)
-    reference = np.sort(np.array(chain["direct"]["eigenvalues_ry"])[:, 0, :], axis=1)
+    model = np.sort(np.array(eigenvalues_ry(chain["interpolated"]))[:, 0, :], axis=1)
+    reference = np.sort(np.array(eigenvalues_ry(chain["direct"]))[:, 0, :], axis=1)
     difference = (model - reference[:, FIRST_BAND - 1 : LAST_BAND]) * RYDBERG_TO_ELECTRONVOLT
 
     root_mean_square = float(np.sqrt(np.mean(difference**2))) * 1000.0

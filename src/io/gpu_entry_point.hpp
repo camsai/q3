@@ -8,9 +8,9 @@
  * main_gpu*.cpp builds a GPUEntryPointDescriptor and delegates to
  * run_gpu_entry_point(), which owns the shared flow:
  *
- *   parse CLI → init logging → create + validate backends → build serial
- *   iterator → inject GPU Davidson → run SCF flavor → write results →
- *   print profiling summary.
+ *   parse CLI → init logging → create + validate backends → run the input's
+ *   flavor on serial iterators with the GPU Davidson injected → write
+ *   results → print profiling summary.
  *
  * Backend factories are passed as std::function so this header stays free of
  * vendor headers; the factories are resolved at link time in each binary.
@@ -37,7 +37,7 @@
 #include "layer_0_core/profiling/counters.hpp"
 #include "layer_3_representation/basis/planewave/internal/fft/gpu/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/davidson.hpp"
-#include "layer_4_computation/flavors/self_consistent_field.hpp"
+#include "layer_4_computation/flavors/factory.hpp"
 #include "layer_4_computation/iterator/kohn_sham/factory.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/execution/serial.hpp"
 
@@ -125,7 +125,7 @@ inline void validate_gpu_eigensolver(execution::gpu::lapack::GPUEigensolver& gpu
 // ─── Shared entry point ───────────────────────────────────────────────────────
 
 /**
- * Run the full GPU SCF entry-point flow for the backend described by
+ * Run the full GPU entry-point flow for the backend described by
  * 'descriptor'. Returns the process exit code.
  */
 inline int run_gpu_entry_point(int argc, char* argv[], const GPUEntryPointDescriptor& descriptor) {
@@ -205,21 +205,6 @@ inline int run_gpu_entry_point(int argc, char* argv[], const GPUEntryPointDescri
     int exit_code = 0;
     try {
         auto input = read_input(options, descriptor.binary_name);
-        /**
-         * Step 4 below runs the self-consistent field flavor whatever the
-         * input asks for, so an NSCF deck came back as an SCF under the
-         * NSCF's name -- the mistake q3_mpi and q3_mpi_gpu_cuda already
-         * refuse. It matters more now that a GPU image runs this binary as
-         * plain `q3` (#316), where a workflow cannot tell it from the serial
-         * build by name. Refuse before any device is touched.
-         */
-        if (input.calculation != "self_consistent_field") {
-            throw std::runtime_error(descriptor.binary_name +
-                                     " runs self_consistent_field only, but this input asks for '" +
-                                     input.calculation +
-                                     "'. Run this input with the serial q3 build, which supports "
-                                     "every flavor.");
-        }
         if (!input.hubbard.empty()) {
             log::error("DFT+U (hubbard) is not yet supported on GPU. Run on CPU instead.");
             return 1;
@@ -250,33 +235,37 @@ inline int run_gpu_entry_point(int argc, char* argv[], const GPUEntryPointDescri
                   use_mixed_precision ? descriptor.mixed_precision_description : "double (FP64)");
         log::info("");
 
-        // ── Step 2: Create serial execution policy and iterator ───────────
-        auto execution_policy = std::make_unique<execution::PlanewaveSerialExecutionPolicy>();
-        const execution::PlanewaveSerialExecutionPolicy& policy_ref = *execution_policy;
-        auto iterator = create_kohn_sham_iterator(input, policy_ref);
-        iterator->set_owned_execution_policy(std::move(execution_policy));
+        /**
+         * ── Step 2: Every flavor's iterator: serial policy, GPU Davidson ─────
+         * Handed to the flavor rather than built here, so whichever flavor the
+         * input names -- the SCF, or the non-self-consistent pass of a band
+         * structure or a DOS -- diagonalizes on this device in this precision.
+         */
+        IteratorFactory iterator_factory = [&](const InputData& run_input) {
+            auto execution_policy = std::make_unique<execution::PlanewaveSerialExecutionPolicy>();
+            const execution::PlanewaveSerialExecutionPolicy& policy_ref = *execution_policy;
+            auto iterator = create_kohn_sham_iterator(run_input, policy_ref);
+            iterator->set_owned_execution_policy(std::move(execution_policy));
 
-        // ── Step 3: Create GPU Davidson diagonalizer and inject ───────────
-        auto gpu_davidson = std::make_unique<PlanewaveDavidsonDiagonalizer>(
-            PlanewaveDavidsonDiagonalizer::default_serial_execution_policy,
-            *gpu_blas,
-            gpu_fft_grid.get(),
-            *gpu_eigensolver,
-            device_backend);
+            auto gpu_davidson = std::make_unique<PlanewaveDavidsonDiagonalizer>(
+                PlanewaveDavidsonDiagonalizer::default_serial_execution_policy,
+                *gpu_blas,
+                gpu_fft_grid.get(),
+                *gpu_eigensolver,
+                device_backend);
+            if (use_mixed_precision) {
+                gpu_davidson->set_use_mixed_precision(true);
+            }
+            iterator->set_diagonalizer(std::move(gpu_davidson));
+            return iterator;
+        };
 
-        if (use_mixed_precision) {
-            gpu_davidson->set_use_mixed_precision(true);
-        }
-
-        iterator->set_diagonalizer(std::move(gpu_davidson));
-
-        // ── Step 4: Run SCF through the flavor system ─────────────────────
+        // ── Step 3: Run the input's flavor ────────────────────────────────
         log::info("     Calculation type: {}", input.calculation);
-        auto flavor = std::make_unique<SelfConsistentFieldFlavor>(std::move(iterator));
-        auto flavor_result = flavor->run(input);
-        flavor_result.write_results_json(input.output_directory + "/" + input.prefix +
-                                         "_results.json");
-        write_companion_outputs(input, flavor_result);
+        auto flavor = create_flavor(input.calculation, std::move(iterator_factory));
+        generated::Results results = flavor->run(input);
+        write_results_json(results, input.output_directory + "/" + input.prefix + "_results.json");
+        write_companion_outputs(input, results);
 
     } catch (const std::exception& exception) {
         log::error("Error: {}", exception.what());

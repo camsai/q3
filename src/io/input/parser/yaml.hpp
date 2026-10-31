@@ -1155,6 +1155,9 @@ class YAMLInputParser : public InputParser {
                     mean_field_export + "'");
             data.mean_field_export = mean_field_export;
         }
+        if (control_node["mean_field_export_kleinman_bylander_projectors"])
+            data.mean_field_export_kleinman_bylander_projectors =
+                control_node["mean_field_export_kleinman_bylander_projectors"].as<bool>();
 
         /**
          * Band path specification: list of high-symmetry point labels.

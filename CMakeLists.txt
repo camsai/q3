@@ -501,41 +501,45 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(Q3_PYTHON "${Python3_EXECUTABLE}")
 message(STATUS "Python for schema code generation: ${Q3_PYTHON}")
 
-# The generator needs jinja2, jsonref and pyyaml. They are build inputs, not
-# runtime dependencies of the q3 package, so a fresh clone rarely has them and
-# the failure arrives mid-build as a bare ModuleNotFoundError. Probe here, and
-# say what to install. src/generated is committed and a pre-commit hook keeps it
-# fresh, so a build without the generator is correct as long as the schemas have
-# not changed -- which also lets a clone without the schemas/esse submodule
-# build. Pass -DQ3_REQUIRE_SCHEMA_CODEGEN=ON (as CI does) to refuse instead.
+# The generator needs jinja2, jsonref and pyyaml, and reads ESSE's schemas from
+# the mat3ra-esse package (written to the untracked schemas/esse by
+# scripts/repo/schemas.py). They are build inputs, not runtime
+# dependencies of the q3 package, so a fresh clone rarely has them and the
+# failure arrives mid-build as a bare ModuleNotFoundError. Probe here, and say
+# what to install. src/generated is committed and a pre-commit hook keeps it
+# fresh, so a build without the generator is correct as long as the schemas
+# have not changed. Pass -DQ3_REQUIRE_SCHEMA_CODEGEN=ON (as CI does) to refuse
+# instead.
 option(Q3_REQUIRE_SCHEMA_CODEGEN
        "Fail configuration when the schema generator's Python modules are missing" OFF)
 set(Q3_SCHEMA_CODEGEN_INSTALL_HINT
-    "${Q3_PYTHON} -m pip install jinja2 jsonref pyyaml   (or: pip install -e \".[build]\")")
-execute_process(COMMAND "${Q3_PYTHON}" -c "import jinja2, jsonref, yaml"
+    "${Q3_PYTHON} -m pip install \"${CMAKE_SOURCE_DIR}[build]\"")
+execute_process(COMMAND "${Q3_PYTHON}" -c "import jinja2, jsonref, yaml, mat3ra.esse"
                 RESULT_VARIABLE Q3_SCHEMA_CODEGEN_PROBE_RESULT
                 OUTPUT_QUIET ERROR_QUIET)
-if(Q3_SCHEMA_CODEGEN_PROBE_RESULT EQUAL 0
-   AND EXISTS "${CMAKE_SOURCE_DIR}/schemas/esse/dist")
+if(Q3_SCHEMA_CODEGEN_PROBE_RESULT EQUAL 0)
+    # Written here, at configure time, so the glob below sees ESSE's schemas.
+    execute_process(COMMAND "${Q3_PYTHON}" ${CMAKE_SOURCE_DIR}/scripts/repo/schemas.py
+                    RESULT_VARIABLE Q3_ESSE_SCHEMAS_RESULT)
+endif()
+if(Q3_SCHEMA_CODEGEN_PROBE_RESULT EQUAL 0 AND Q3_ESSE_SCHEMAS_RESULT EQUAL 0)
     set(Q3_SCHEMA_CODEGEN_ENABLED ON)
 elseif(Q3_REQUIRE_SCHEMA_CODEGEN)
     message(FATAL_ERROR
         "Schema code generation is unavailable and Q3_REQUIRE_SCHEMA_CODEGEN=ON.\n"
-        "  Python modules (jinja2, jsonref, pyyaml): install with\n"
-        "    ${Q3_SCHEMA_CODEGEN_INSTALL_HINT}\n"
-        "  Schemas submodule: git submodule update --init")
+        "  Python modules (jinja2, jsonref, pyyaml, mat3ra-esse): install with\n"
+        "    ${Q3_SCHEMA_CODEGEN_INSTALL_HINT}")
 else()
     set(Q3_SCHEMA_CODEGEN_ENABLED OFF)
     message(WARNING
         "Schema code generation skipped -- the committed src/generated headers are "
         "used as-is. This is fine unless you are changing schemas/. To enable it:\n"
-        "  ${Q3_SCHEMA_CODEGEN_INSTALL_HINT}\n"
-        "  git submodule update --init")
+        "  ${Q3_SCHEMA_CODEGEN_INSTALL_HINT}")
 endif()
 
 file(GLOB_RECURSE Q3_SCHEMA_FILES
     ${CMAKE_SOURCE_DIR}/schemas/q3/*.json
-    ${CMAKE_SOURCE_DIR}/schemas/esse/dist/js/schema/*.json)
+    ${CMAKE_SOURCE_DIR}/schemas/esse/*.json)
 # The target exists either way so the add_dependencies() calls below need no
 # condition of their own.
 if(Q3_SCHEMA_CODEGEN_ENABLED)
@@ -864,7 +868,7 @@ if(Q3_BUILD_TESTS)
         tests/unit/layer_4_computation/effective_potential/planewave/test_result.cpp
         tests/unit/layer_4_computation/effective_potential/planewave/internal/exchange_correlation_potential/test_factory.cpp
         tests/unit/layer_4_computation/flavors/test_non_self_consistent_field.cpp
-        tests/unit/layer_4_computation/flavors/test_result.cpp
+        tests/unit/layer_4_computation/flavors/test_self_consistent_field.cpp
         tests/unit/layer_4_computation/flavors/test_verification.cpp
         tests/unit/layer_4_computation/iterator/test_config.cpp
         tests/unit/layer_4_computation/iterator/test_energy_history.cpp
@@ -911,6 +915,7 @@ if(Q3_BUILD_TESTS)
         tests/unit/io/input/parser/test_yaml.cpp
         tests/unit/io/output/material/test_init.cpp
         tests/unit/io/output/test_companion_outputs.cpp
+        tests/unit/io/output/test_results.cpp
         tests/unit/io/pseudopotential/test_upf_reader.cpp
         tests/unit/io/pseudopotential/test_paw_upf_reader.cpp
         tests/unit/io/pseudopotential/test_functional_label.cpp
@@ -922,6 +927,10 @@ if(Q3_BUILD_TESTS)
         tests/unit/io/mean_field_export/berkeleygw/test_wavefunction.cpp
         tests/unit/io/mean_field_export/berkeleygw/test_charge_density.cpp
         tests/unit/io/mean_field_export/berkeleygw/test_exchange_correlation.cpp
+        tests/unit/io/mean_field_export/berkeleygw/test_exchange_correlation_potential.cpp
+        tests/unit/io/mean_field_export/berkeleygw/test_self_consistent_potential.cpp
+        tests/unit/io/mean_field_export/berkeleygw/test_field.cpp
+        tests/unit/io/mean_field_export/berkeleygw/test_kleinman_bylander_projectors.cpp
         tests/unit/io/mean_field_export/berkeleygw/test_init.cpp
         tests/unit/io/mean_field_record/test_checkpoint.cpp
         tests/unit/io/quantum_system/kohn_sham/planewave/checkpoint/test_q3.cpp
@@ -987,6 +996,7 @@ if(Q3_BUILD_TESTS)
         tests/unit/layer_4_computation/interpolator/method/wannier/planewave/internal/test_overlaps.cpp
         tests/unit/layer_4_computation/interpolator/method/wannier/planewave/internal/test_overlaps_augmentation.cpp
         # layer_5_properties: local-orbital band structure and DOS
+        tests/unit/layer_5_properties/band_structure/test_band_edges.cpp
         tests/unit/layer_5_properties/band_structure/interpolated/test_init.cpp
         tests/unit/layer_5_properties/density_of_states/interpolated/test_init.cpp
         # layer_5_properties: Ewald force and stress

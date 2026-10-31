@@ -109,7 +109,7 @@ def run_config(q3_command, config, run_directory):
     )
     results = load_results_json(run_directory / "output", PREFIX)
     return {
-        "energy": float(results["total_energy_ry"]),
+        "energy": float(results.properties.total_energy.value),
         "net_moment": last_float(r"[Tt]otal magnetization\s*=\s*(-?\d+\.\d+)", result.stdout),
         "absolute_moment": last_float(r"absolute magnetization\s*=\s*(-?\d+\.\d+)", result.stdout),
     }

@@ -32,7 +32,7 @@ from pathlib import Path
 
 import yaml
 
-from q3.binary import find_binary, run_q3
+from q3.binary import ExecutionPolicy, find_binary, run_q3
 from q3.io.input_writer import write_nscf_input
 from q3.io.output_writer import extract_lowdin_charges, extract_pdos
 
@@ -134,6 +134,7 @@ def run_pdos_workflow(
     energy_max_ry: float | None = None,
     energy_steps: int = 1000,
     q3_binary: str | Path | None = None,
+    execution_policy: ExecutionPolicy | None = None,
     skip_scf: bool = False,
     capture_output: bool = True,
     nscf_input_path: str | Path | None = None,
@@ -160,6 +161,11 @@ def run_pdos_workflow(
         Forwarded to ``extract_pdos`` for the Gaussian-broadened PDOS curves.
     q3_binary:
         Path to the ``q3`` binary. Auto-detected when ``None``.
+    execution_policy:
+        The execution policy every engine run of the workflow starts the
+        binary with: ranks, k-point pools, the launcher (see
+        :class:`q3.binary.ExecutionPolicy`).  ``None`` runs one process with
+        the binary's defaults.
     skip_scf:
         When ``True``, assume the SCF has already been run and a checkpoint
         exists in the output directory. Skip straight to NSCF.
@@ -207,7 +213,10 @@ def run_pdos_workflow(
     try:
         if not skip_scf:
             scf_results = run_q3(
-                effective_scf_path, q3_binary=binary, capture_output=capture_output
+                effective_scf_path,
+                q3_binary=binary,
+                execution_policy=execution_policy,
+                capture_output=capture_output,
             )
 
         # ── Step 2: Full-BZ Monkhorst-Pack grid for PDOS ────────────────────────
@@ -241,7 +250,12 @@ def run_pdos_workflow(
 
     # ── Step 4: NSCF run ─────────────────────────────────────────────────────
     try:
-        nscf_results = run_q3(nscf_path, q3_binary=binary, capture_output=capture_output)
+        nscf_results = run_q3(
+            nscf_path,
+            q3_binary=binary,
+            execution_policy=execution_policy,
+            capture_output=capture_output,
+        )
     finally:
         if cleanup_nscf_path:
             nscf_path.unlink(missing_ok=True)
@@ -253,10 +267,10 @@ def run_pdos_workflow(
     # fermi_energy_ry is also meaningful -- used only when skip_scf=True (no SCF
     # results). Löwdin charges don't need this: they're built directly from the
     # NSCF run's own occupations, which already reflect its own Fermi bisection.
-    if scf_results is not None:
-        fermi_energy_ry = scf_results.get("fermi_energy_ry")
-    else:
-        fermi_energy_ry = nscf_results.get("fermi_energy_ry")
+    fermi_energy = (
+        scf_results if scf_results is not None else nscf_results
+    ).properties.fermi_energy
+    fermi_energy_ry = fermi_energy.value if fermi_energy is not None else None
 
     lowdin_charges = extract_lowdin_charges(nscf_results)
     pdos = extract_pdos(

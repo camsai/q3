@@ -15,6 +15,8 @@
  */
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <limits>
 #include <memory>
@@ -22,12 +24,14 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <vector>
 
 #include "io/charge_density/kohn_sham/planewave/checkpoint/factory.hpp"
 #include "io/logger.hpp"
 #include "io/quantum_system/kohn_sham/planewave/checkpoint/q3.hpp"
 #include "io/wavefunction/kohn_sham/planewave/checkpoint/factory.hpp"
+#include "io/wavefunction/kohn_sham/planewave/checkpoint/qe_reader.hpp"
 
 #include "layer_0_core/math/linear_algebra/blas.hpp"
 #include "layer_0_core/math/phase_factor.hpp"
@@ -315,20 +319,42 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
     }
 
     /**
-     * Vxc(G) of a given density -- the exchange-correlation potential (core
-     * charge included) that update_effective_potential() would leave in
-     * exchange_correlation_potential_g() had the SCF stopped at this density.
+     * Vxc(G) of a given valence density alone -- without the nonlinear core
+     * correction's core charge, which the Hamiltonian's own Vxc includes.
      *
-     * For a fixed-potential pass, which loads V_eff from the checkpoint and so
-     * never evaluates XC itself: the mean-field export's vxc.dat needs Vxc of
-     * the converged SCF density, as pw2bgw takes it from QE's saved density.
-     * Touches none of the iterator's own potentials or energies.
+     * For the mean-field export, whose VXC and vxc.dat need Vxc of the
+     * converged SCF density: a GW self-energy is built from the valence
+     * electrons, so the Vxc it replaces is the valence one. pw2bgw computes its
+     * VXC and vxc.dat the same way unless told otherwise, and its manual warns
+     * that keeping the core charge "will produce incorrect results"
+     * (`vxc_zero_rho_core`, default .TRUE., INPUT_pw2bgw). Measured on silicon
+     * with an NLCC dataset at 25 Ry: with the core charge, V_xc(G = 0) was
+     * -0.6750 Ry against pw2bgw's -0.6524 Ry. The base calculator is the one
+     * that adds no core charge (see
+     * NormConservingPlanewaveEffectivePotentialCalculator); without NLCC the
+     * two coincide. Touches none of the iterator's own potentials or energies.
      */
-    [[nodiscard]] std::vector<Complex>
-    exchange_correlation_potential_g_of(const std::vector<std::vector<Real>>& charge_density_real) {
-        return effective_potential_calculator()
+    [[nodiscard]] std::vector<Complex> valence_exchange_correlation_potential_g_of(
+        const std::vector<std::vector<Real>>& charge_density_real) {
+        PlanewaveEffectivePotentialCalculator valence_calculator(
+            planewave_basis_, crystal_structure(), *exchange_correlation_, execution_policy());
+        return valence_calculator
             .compute(charge_density_real, number_of_spin_components(), local_ionic_potential_g())
             .exchange_correlation_potential_g;
+    }
+
+    /**
+     * Offer the bands a previous geometry saved in `save_directory` as this
+     * run's starting wavefunctions, as pw.x's next ionic step starts from the
+     * last one's. Each k-point whose wfc<k>.dat fits this run's basis starts
+     * from those bands, passed through the same Rayleigh-Ritz step as the
+     * atomic guess, so they are re-orthonormalized in this geometry's overlap
+     * and given eigenvalues before the eigensolver sees them. Any other k-point
+     * falls back to the atomic + random guess. Only the starting point changes,
+     * never what the SCF converges to.
+     */
+    void offer_starting_wavefunctions(std::string save_directory) {
+        starting_wavefunction_directory_ = std::move(save_directory);
     }
 
   protected:
@@ -356,6 +382,8 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
     /// Persistent effective potential calculator (caches real-space core charge density).
     std::unique_ptr<NormConservingPlanewaveEffectivePotentialCalculator>
         effective_potential_calculator_;
+    /// Set by offer_starting_wavefunctions(): where a previous geometry left its wfc<k>.dat.
+    std::string starting_wavefunction_directory_;
 
   public:
     /**
@@ -834,6 +862,23 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
         }
 
         int number_of_kpoint_states = number_of_kpoints * number_of_spin_components();
+
+        /**
+         * A previous geometry's bands, when offered, replace the atomic guess
+         * as the starting set the Rayleigh-Ritz step below rotates. The
+         * checkpoint writer stores one spin channel only, so a spin-polarized
+         * run keeps the atomic guess.
+         */
+        const bool reuse_saved_wavefunctions =
+            !starting_wavefunction_directory_.empty() && number_of_spin_components() == 1;
+        if (!starting_wavefunction_directory_.empty() && !reuse_saved_wavefunctions) {
+            log::info("     Saved bands at '{}' not reused: the checkpoint holds one spin "
+                      "channel and this run has {}",
+                      starting_wavefunction_directory_,
+                      number_of_spin_components());
+        }
+        int kpoint_states_from_saved_bands = 0;
+
         double atomic_wfc_ms = 0.0;
         double rotate_ms = 0.0;
         for (int kpoint_index_state = 0; kpoint_index_state < number_of_kpoint_states;
@@ -842,17 +887,23 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
             int kpoint_index = kpoint_index_state % number_of_kpoints;
 
             auto timer_awfc_start = std::chrono::high_resolution_clock::now();
+            // The starting set: saved bands when they fit, else atomic orbitals + random.
             std::vector<std::vector<Complex>> atomic_wavefunctions;
-            atomic_wavefunction_initializer.compute_atomic_wavefunctions(
-                kpoint_index,
-                number_of_plane_waves(kpoint_index),
-                number_of_bands_,
-                g_vector_indices(kpoint_index),
-                crystal_structure(),
-                kpoint_grid(),
-                planewave_basis_,
-                quantum_system_snapshot_->pseudopotential_basis().pseudopotential_set(),
-                atomic_wavefunctions);
+            if (reuse_saved_wavefunctions &&
+                take_saved_starting_wavefunctions(kpoint_index, atomic_wavefunctions)) {
+                ++kpoint_states_from_saved_bands;
+            } else {
+                atomic_wavefunction_initializer.compute_atomic_wavefunctions(
+                    kpoint_index,
+                    number_of_plane_waves(kpoint_index),
+                    number_of_bands_,
+                    g_vector_indices(kpoint_index),
+                    crystal_structure(),
+                    kpoint_grid(),
+                    planewave_basis_,
+                    quantum_system_snapshot_->pseudopotential_basis().pseudopotential_set(),
+                    atomic_wavefunctions);
+            }
             auto timer_awfc_end = std::chrono::high_resolution_clock::now();
             atomic_wfc_ms +=
                 std::chrono::duration<double, std::milli>(timer_awfc_end - timer_awfc_start)
@@ -882,6 +933,18 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
             ProfilingCounters::instance().log_resident_checkpoint_debug("orbital rotation");
         }
         auto timer_4 = std::chrono::high_resolution_clock::now();
+        if (reuse_saved_wavefunctions) {
+            // Counted once per pool: reduce_scalar runs across pools.
+            Real reused_states = kpoint_states_from_saved_bands;
+            Real all_states = number_of_kpoint_states;
+            execution_policy_->reduce_scalar(reused_states);
+            execution_policy_->reduce_scalar(all_states);
+            log::info("     Starting wavefunctions    = saved bands at {} of {} k-point(s) from "
+                      "'{}'",
+                      std::lround(reused_states),
+                      std::lround(all_states),
+                      starting_wavefunction_directory_);
+        }
         ProfilingCounters::instance().release_unused_heap("wavefunction init");
         ProfilingCounters::instance().log_resident_checkpoint("wavefunction init");
 
@@ -1811,6 +1874,120 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
         inputs.davidson_basis_expansion_factor = config().davidson_basis_expansion_factor;
         PlanewaveKohnShamSCFReporter::report_memory_estimate(
             PlanewaveMemoryEstimate::compute(inputs));
+    }
+
+    /**
+     * The saved bands of one local k-point as this run's starting set, decided
+     * the same way on every rank of the pool: the Rayleigh-Ritz step that
+     * follows sums its subspace matrices across the pool, so its ranks must
+     * agree on how many starting vectors there are. False, and the set left
+     * alone, when any rank of the pool cannot use its share of the file.
+     */
+    bool take_saved_starting_wavefunctions(
+        int kpoint_index, std::vector<std::vector<Complex>>& starting_wavefunctions) const {
+        std::vector<std::vector<Complex>> saved_bands = read_saved_bands(kpoint_index);
+        Real ranks_without_saved_bands = saved_bands.empty() ? 1.0 : 0.0;
+        execution_policy_->reduce_within_pool_scalar(ranks_without_saved_bands);
+        if (ranks_without_saved_bands > 0.0) {
+            return false;
+        }
+        starting_wavefunctions = std::move(saved_bands);
+        return true;
+    }
+
+    /**
+     * The first number_of_bands_ bands of wfc<global k + 1>.dat in the offered
+     * directory, on this rank's plane waves, matched by Miller index. Empty
+     * when the file is missing or unreadable, or was written for a different
+     * basis: another gamma treatment, cell or k-point (a vc-relax step moves
+     * the cell), fewer bands, or a plane wave of this rank's it does not hold.
+     *
+     * Files are matched by k-point index, and the k-point checked. Within a
+     * relaxation the symmetry is held fixed, so the irreducible k-points and
+     * their order are the same from step to step; a geometry whose symmetry
+     * changes them starts the k-points that moved from the atomic guess.
+     */
+    [[nodiscard]] std::vector<std::vector<Complex>> read_saved_bands(int kpoint_index) const {
+        const int global_kpoint_index = execution_policy_->global_kpoint_index(kpoint_index);
+        const std::string path = starting_wavefunction_directory_ + "/wfc" +
+                                 std::to_string(global_kpoint_index + 1) + ".dat";
+        std::error_code exists_error;
+        if (!std::filesystem::exists(path, exists_error)) {
+            return {};
+        }
+        QEPlanewaveKohnShamWavefunctionReader reader;
+        try {
+            reader.read(path);
+        } catch (const std::exception& error) {
+            log::debug("     Saved bands not used: {}", error.what());
+            return {};
+        }
+        if (reader.number_of_bands() < number_of_bands_ ||
+            reader.is_gamma_only() != planewave_basis_.is_gamma_only()) {
+            return {};
+        }
+
+        // The writer's own quantities, so an unchanged cell and k-point match exactly.
+        const Matrix3x3 reciprocal_vectors_bohr = crystal_structure().reciprocal_vectors_bohr();
+        const auto& kpoint = kpoint_grid()[kpoint_index];
+        constexpr Real tolerance_inverse_bohr = 1.0e-10;
+        for (int dimension = 0; dimension < 3; dimension++) {
+            const Real kpoint_cartesian =
+                kpoint.coordinates.x * reciprocal_vectors_bohr[0][dimension] +
+                kpoint.coordinates.y * reciprocal_vectors_bohr[1][dimension] +
+                kpoint.coordinates.z * reciprocal_vectors_bohr[2][dimension];
+            if (std::abs(reader.kpoint_coordinates()[dimension] - kpoint_cartesian) >
+                tolerance_inverse_bohr) {
+                return {};
+            }
+            for (int vector_index = 0; vector_index < 3; vector_index++) {
+                if (std::abs(reader.reciprocal_lattice_vectors()[vector_index][dimension] -
+                             reciprocal_vectors_bohr[vector_index][dimension]) >
+                    tolerance_inverse_bohr) {
+                    return {};
+                }
+            }
+        }
+
+        // Miller indices are bounded by the cutoff sphere; 2^20 per axis is far beyond any grid.
+        auto miller_key = [](std::int64_t h, std::int64_t k, std::int64_t l) {
+            constexpr std::int64_t offset = 1 << 20;
+            constexpr std::int64_t span = 1 << 21;
+            return ((h + offset) * span + (k + offset)) * span + (l + offset);
+        };
+        const auto& saved_millers = reader.miller_indices();
+        std::unordered_map<std::int64_t, int> saved_position;
+        saved_position.reserve(saved_millers.size());
+        for (int position = 0; position < static_cast<int>(saved_millers.size()); position++) {
+            saved_position.emplace(miller_key(saved_millers[position].x,
+                                              saved_millers[position].y,
+                                              saved_millers[position].z),
+                                   position);
+        }
+        const auto& g_vectors = planewave_basis_.g_vectors();
+        const auto& local_g_indices = g_vector_indices(kpoint_index);
+        const int local_plane_waves = number_of_plane_waves(kpoint_index);
+        std::vector<int> source_position(static_cast<std::size_t>(local_plane_waves));
+        for (int plane_wave = 0; plane_wave < local_plane_waves; plane_wave++) {
+            const auto& miller = g_vectors[local_g_indices[plane_wave]].miller;
+            const auto found = saved_position.find(
+                miller_key(std::lround(miller.x), std::lround(miller.y), std::lround(miller.z)));
+            if (found == saved_position.end()) {
+                return {};
+            }
+            source_position[static_cast<std::size_t>(plane_wave)] = found->second;
+        }
+
+        std::vector<std::vector<Complex>> bands(
+            static_cast<std::size_t>(number_of_bands_),
+            std::vector<Complex>(static_cast<std::size_t>(local_plane_waves)));
+        for (int band = 0; band < number_of_bands_; band++) {
+            const auto& coefficients = reader.band_coefficients(band);
+            for (int plane_wave = 0; plane_wave < local_plane_waves; plane_wave++) {
+                bands[band][plane_wave] = coefficients[source_position[plane_wave]];
+            }
+        }
+        return bands;
     }
 
     void log_pseudopotential_summary(int number_of_atomic_wavefunctions) const {

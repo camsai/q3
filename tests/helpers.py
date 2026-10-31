@@ -14,15 +14,25 @@ read both engines' console output side by side.
 """
 
 import copy
+import functools
+import importlib.util
 import json
 import math
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
+import jsonschema
+import numpy as np
 import pytest
 import yaml
+from mat3ra.esse.models.properties_directory.non_scalar.density_of_states import (
+    DensityOfStatesPropertySchema,
+)
+from q3.io.interpolation.results.classes import InterpolationResults
+from q3.io.results.classes import Results, eigenvalue_arrays
 
 # ── Canonical paths ──────────────────────────────────────────────────
 
@@ -92,6 +102,36 @@ QE_AVAILABLE = os.path.isfile(QE_PW) and os.access(QE_PW, os.X_OK)
 requires_qe = pytest.mark.skipif(
     not QE_AVAILABLE,
     reason=f"QE LibXC reference build not available at {QE_PW} (override: $Q3_QE_BIN_DIR)",
+)
+
+# pw2bgw.x, the converter the BerkeleyGW export is compared against, from the
+# same reference build. Tests that run it wear requires_qe as well.
+QE_PW2BGW = str(QE_BIN_DIR / "pw2bgw.x")
+requires_pw2bgw = pytest.mark.skipif(
+    not (os.path.isfile(QE_PW2BGW) and os.access(QE_PW2BGW, os.X_OK)),
+    reason=f"pw2bgw.x not available at {QE_PW2BGW} (override: $Q3_QE_BIN_DIR)",
+)
+
+# ── BerkeleyGW ────────────────────────────────────────────────────────
+
+# BerkeleyGW's own executables, for tests that feed it Q3's mean-field files.
+# Never on a CI runner: $Q3_BERKELEYGW_BIN_DIR names the build's `bin/`, and
+# without it the executables are looked for on PATH (e.g. after `module load
+# berkeleygw` on NERSC Perlmutter).
+
+
+def _resolve_berkeleygw_executable(name):
+    override = os.environ.get("Q3_BERKELEYGW_BIN_DIR")
+    if override:
+        return Path(override).expanduser() / name
+    found = shutil.which(name)
+    return Path(found) if found else Path(name)
+
+
+BERKELEYGW_PARABANDS = _resolve_berkeleygw_executable("parabands.cplx.x")
+requires_parabands = pytest.mark.skipif(
+    not (BERKELEYGW_PARABANDS.is_file() and os.access(BERKELEYGW_PARABANDS, os.X_OK)),
+    reason="BerkeleyGW parabands.cplx.x not found (set $Q3_BERKELEYGW_BIN_DIR or put it on PATH)",
 )
 
 # Matching Q3's constants.hpp: BOHR_RADIUS_SI = 0.529177210903e-10
@@ -358,7 +398,7 @@ def run_overlay_and_read_energy(
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     results = load_results_json(Path(run_directory) / "output", prefix)
-    return float(results["total_energy_ry"])
+    return float(results.properties.total_energy.value)
 
 
 def run_overlay_and_read_stdout(
@@ -404,20 +444,146 @@ def run_q3_and_load_results(q3_command, input_path, prefix, working_directory=No
 # ── Result loading ───────────────────────────────────────────────────
 
 
+@functools.cache
+def repository_schemas():
+    """``scripts/repo/schemas.py``, or ``None`` when mat3ra-esse, which it reads, is not installed."""
+    try:
+        if importlib.util.find_spec("mat3ra.esse") is None:
+            return None
+    except ModuleNotFoundError:  # no mat3ra namespace at all
+        return None
+    spec = importlib.util.spec_from_file_location(
+        "schemas", Q3_ROOT / "scripts" / "repo" / "schemas.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@functools.cache
+def results_schema():
+    """``schemas/q3/results.json`` with every ``$ref`` inlined, ESSE's included."""
+    return repository_schemas().resolved("results.json")
+
+
+def results_schema_errors(document):
+    """Every way *document* breaks the results schema, as ``path: message`` lines.
+
+    Empty when mat3ra-esse, which supplies the ESSE schemas it references, is
+    not installed: nothing can be checked then, and the schema tests skip.
+    """
+    if repository_schemas() is None:
+        return []
+    validator = jsonschema.Draft7Validator(results_schema())
+    return [
+        f"/{'/'.join(str(step) for step in error.absolute_path)}: {error.message}"
+        for error in validator.iter_errors(document)
+    ]
+
+
 def load_results_json(output_directory, prefix):
-    """Load the JSON results file produced by q3.
+    """Load the JSON results file produced by q3, failing if it breaks its schema.
+
+    Every test that reads a run's numbers comes through here, so validating
+    here checks each file a test suite produces -- every system, flavor and
+    option it exercises -- against ``schemas/q3/results.json``, not only the
+    two runs ``test_results_schema.py`` makes for that purpose.
 
     Args:
         output_directory: The output directory (value of control.outdir).
         prefix: The prefix used in control.prefix.
 
     Returns:
-        Parsed JSON dict.
+        The file, as :class:`q3.io.results.classes.Results`.
     """
     path = Path(output_directory) / f"{prefix}_results.json"
     if not path.exists():
         pytest.fail(f"Results file not found: {path}")
-    return json.loads(path.read_text())
+    document = json.loads(path.read_text())
+    errors = results_schema_errors(document)
+    if errors:
+        pytest.fail(f"{path} does not match schemas/q3/results.json:\n" + "\n".join(errors[:20]))
+    return Results.model_validate(document)
+
+
+def energy_contribution(results, name):
+    """The energy contribution *name* of results.json's ``energy_contributions``, in Ry."""
+    return getattr(results.properties.energy_contributions, name).value
+
+
+def atomic_forces(results):
+    """The ESSE ``atomic_forces`` record's vectors in Ry/bohr, one per atom in id order."""
+    return _vectors(results.properties.atomic_forces)
+
+
+def stress_tensor(results):
+    """The ESSE ``stress_tensor`` record's 3x3 tensor in kbar."""
+    return _tensor(results.properties.stress_tensor)
+
+
+def _vectors(record):
+    return [atom.value for atom in record.values]
+
+
+def _tensor(record):
+    return [row.root for row in record.value]
+
+
+def stress_contributions(results):
+    """results.json's ``stress_contributions`` as ``{name: 3x3 tensor in kbar}``."""
+    contributions = results.properties.stress_contributions or {}
+    return {name: _tensor(tensor) for name, tensor in contributions.items()}
+
+
+def force_contributions(results):
+    """results.json's ``force_contributions`` as ``{name: per-atom vectors in Ry/bohr}``."""
+    contributions = results.properties.force_contributions or {}
+    return {name: _vectors(forces) for name, forces in contributions.items()}
+
+
+def _eigenvalue_record(results):
+    """The eigenvalues_at_kpoints record of a run's results, or of an interpolation results file."""
+    if isinstance(results, dict):
+        interpolated = results.get("calculation") == "interpolation"
+        results = (InterpolationResults if interpolated else Results).model_validate(results)
+    return results.properties.eigenvalues_at_kpoints
+
+
+def _eigenvalue_arrays(results):
+    """The eigenvalue arrays of a run's results, or of an interpolation results file."""
+    return eigenvalue_arrays(_eigenvalue_record(results))
+
+
+def eigenvalues_ry(results):
+    """results.json's eigenvalues in Ry, indexed [k-point state][spin channel][band]."""
+    return _eigenvalue_arrays(results)[0]
+
+
+def occupations(results):
+    """results.json's occupations, indexed as eigenvalues_ry(); None when it recorded none."""
+    return _eigenvalue_arrays(results)[1]
+
+
+def kpoint_weights(results):
+    """results.json's k-point weights, one per k-point state, summing to 2.0."""
+    return _eigenvalue_arrays(results)[2]
+
+
+def evaluated_kpoints(results):
+    """The crystal coordinates of each k-point a results file lists eigenvalues at.
+
+    Both list them in ESSE's ``eigenvalues_at_kpoints`` record: an engine
+    results file among its ``properties.records``, an interpolation results
+    file under ``properties``.
+    """
+    return [entry.kpoint for entry in _eigenvalue_record(results).values]
+
+
+def density_of_states_ry(density):
+    """An ESSE density_of_states record's (energies in Ry, density) as numpy arrays."""
+    record = DensityOfStatesPropertySchema.model_validate(density)
+    (values,) = record.yDataSeries
+    return np.array(record.xDataArray), np.array(values)
 
 
 def pressure_from_tensor(tensor_3x3):
@@ -425,8 +591,8 @@ def pressure_from_tensor(tensor_3x3):
 
     Q3's stdout report prints exactly this quantity per contribution (the
     "(P=...)" part of each stress-tensor line) and for the total ("Pressure =
-    ... kbar"); results.json carries the full tensors (stress_kbar,
-    stress_contributions_kbar[name]) but no separate scalar pressure key.
+    ... kbar"); results.json carries the full tensors (the ESSE stress_tensor
+    record, stress_contributions[name]), and a scalar only for the total.
     This is the shared derivation for tests migrated off stdout parsing --
     see total_pressure_kbar() for the top-level-stress convenience wrapper.
     """
@@ -434,8 +600,8 @@ def pressure_from_tensor(tensor_3x3):
 
 
 def total_pressure_kbar(results):
-    """The scalar total pressure (trace/3) implied by results["stress_kbar"]."""
-    return pressure_from_tensor(results["stress_kbar"])
+    """The scalar total pressure (trace/3) of the results' ESSE stress_tensor record."""
+    return pressure_from_tensor(stress_tensor(results))
 
 
 def birch_murnaghan_pressure_gpa(volume_angstrom3, equation_of_state):

@@ -28,16 +28,13 @@
  * fully; only WFN rejects them.
  */
 
-#include <cstdint>
 #include <fstream>
 #include <string>
 #include <vector>
 
-#include "io/checkpoint/qe.hpp"
 #include "io/logger.hpp"
-#include "io/mean_field_export/berkeleygw/header.hpp"
+#include "io/mean_field_export/berkeleygw/field.hpp"
 #include "io/mean_field_record/init.hpp"
-#include "layer_3_representation/basis/planewave/init.hpp"
 
 namespace q3 {
 
@@ -54,73 +51,20 @@ class BerkeleyGWChargeDensityFile {
     explicit BerkeleyGWChargeDensityFile(const MeanFieldRecord&&) = delete;
 
     void write_to_file(const std::string& file_path) const {
-
         std::ofstream output_file(file_path, std::ios::binary);
         if (!output_file.is_open()) {
             log::warn("BerkeleyGWChargeDensityFile: cannot open {} for writing", file_path);
             return;
         }
 
-        BerkeleyGWCommonHeader header(record_, "RHO-Complex", /*include_kpoint_fields=*/false);
-        header.write(output_file);
-
-        write_gvectors_record(output_file);
-        write_density_record(output_file);
+        BerkeleyGWFieldFile(record_, "RHO-Complex", record_.charge_density_g, record_.cell_volume)
+            .write(output_file);
 
         log::info("     Wrote BerkeleyGW charge density file: {}", file_path);
     }
 
   private:
     const MeanFieldRecord& record_;
-    QEBinaryRecordFormat record_format_;
-
-    /// [nrecord=1][ng][gvec(3,ng)] -- the same charge-density G-set as WFN records 16-18.
-    void write_gvectors_record(std::ofstream& output_file) const {
-        const auto& g_vectors = record_.charge_density_miller_indices;
-
-        int32_t nrecord = 1;
-        record_format_.write_record(output_file, &nrecord, sizeof(nrecord));
-        int32_t number_of_g_vectors = static_cast<int32_t>(g_vectors.size());
-        record_format_.write_record(output_file, &number_of_g_vectors, sizeof(number_of_g_vectors));
-
-        std::vector<int32_t> miller_indices(3 * g_vectors.size());
-        for (size_t g_index = 0; g_index < g_vectors.size(); g_index++) {
-            miller_indices[3 * g_index + 0] = g_vectors[g_index].x;
-            miller_indices[3 * g_index + 1] = g_vectors[g_index].y;
-            miller_indices[3 * g_index + 2] = g_vectors[g_index].z;
-        }
-        record_format_.write_record(output_file,
-                                    miller_indices.data(),
-                                    static_cast<int32_t>(miller_indices.size() * sizeof(int32_t)));
-    }
-
-    /// [nrecord=1][ng][rho(ng,ns)] -- per-spin density in G-space, scaled by the cell volume.
-    void write_density_record(std::ofstream& output_file) const {
-        int number_of_g_vectors = record_.number_of_g_vectors();
-        int number_of_spin_components = record_.number_of_spin_components;
-        Real cell_volume = record_.cell_volume;
-
-        int32_t nrecord = 1;
-        record_format_.write_record(output_file, &nrecord, sizeof(nrecord));
-        int32_t number_of_g_vectors_i32 = number_of_g_vectors;
-        record_format_.write_record(
-            output_file, &number_of_g_vectors_i32, sizeof(number_of_g_vectors_i32));
-
-        std::vector<Complex> density_g_scaled(static_cast<size_t>(number_of_g_vectors) *
-                                              number_of_spin_components);
-        for (int spin_index = 0; spin_index < number_of_spin_components; spin_index++) {
-            const std::vector<Complex>& density_g_for_spin = record_.charge_density_g[spin_index];
-            for (int g_index = 0; g_index < number_of_g_vectors; g_index++) {
-                density_g_scaled[static_cast<size_t>(spin_index) * number_of_g_vectors + g_index] =
-                    density_g_for_spin[g_index] * cell_volume;
-            }
-        }
-
-        record_format_.write_record(
-            output_file,
-            density_g_scaled.data(),
-            static_cast<int32_t>(density_g_scaled.size() * sizeof(Complex)));
-    }
 };
 
 } // namespace q3

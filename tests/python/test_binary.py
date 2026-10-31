@@ -65,9 +65,11 @@ def test_run_q3_reports_how_many_iterations_a_failed_run_performed(tmp_path):
     input_path, binary = _stage_finished_run(
         tmp_path,
         {
-            "flavor": "self_consistent_field",
-            "converged": False,
-            "self_consistent_field_iterations": 100,
+            "runtime_log": {
+                "flavor": "self_consistent_field",
+                "converged": False,
+                "self_consistent_field_iterations": 100,
+            },
             "provenance": {"precision": {"maximum_self_consistent_field_iterations": 100}},
         },
     )
@@ -84,8 +86,7 @@ def test_run_q3_states_the_limit_when_an_older_binary_reports_no_count(tmp_path)
     input_path, binary = _stage_finished_run(
         tmp_path,
         {
-            "flavor": "self_consistent_field",
-            "converged": False,
+            "runtime_log": {"flavor": "self_consistent_field", "converged": False},
             "provenance": {"precision": {"maximum_self_consistent_field_iterations": 100}},
         },
     )
@@ -99,10 +100,10 @@ def test_run_q3_states_the_limit_when_an_older_binary_reports_no_count(tmp_path)
 
 
 def test_run_q3_returns_a_converged_result(tmp_path):
-    converged_results = {"flavor": "self_consistent_field", "converged": True}
+    converged_results = {"runtime_log": {"flavor": "self_consistent_field", "converged": True}}
     input_path, binary = _stage_finished_run(tmp_path, converged_results)
 
-    assert run_q3(input_path, q3_binary=binary) == converged_results
+    assert run_q3(input_path, q3_binary=binary).to_document() == converged_results
 
 
 # ── q3_utility failures when the output is shown ────────────────────────────────

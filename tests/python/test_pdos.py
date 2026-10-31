@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from q3.io.results.classes import Results
 from q3.workflows import pdos
 from q3.workflows.pdos import monkhorst_pack_grid, monkhorst_pack_kpoints_list
 
@@ -100,7 +101,10 @@ def test_grid_matches_direct_formula():
             for k in range(1):
                 expected.append((fold(i / 3), fold(j / 2), fold(k / 1)))
 
-    assert monkhorst_pack_grid(dimensions) == pytest.approx(expected)
+    grid = monkhorst_pack_grid(dimensions)
+    assert len(grid) == len(expected)
+    for point, expected_point in zip(grid, expected, strict=True):
+        assert point == pytest.approx(expected_point)
 
 
 # ── run_pdos_workflow ─────────────────────────────────────────────────────────
@@ -118,7 +122,9 @@ def test_the_pdos_nscf_from_a_band_structure_manifest_carries_no_band_path(
 
     def record_the_manifest(input_path, **_):
         written_manifests.append(yaml.safe_load(Path(input_path).read_text()))
-        return {"fermi_energy_ry": 0.0}
+        return Results.model_validate(
+            {"properties": {"records": [{"name": "fermi_energy", "units": "Ry", "value": 0.0}]}}
+        )
 
     monkeypatch.setattr(pdos, "find_binary", lambda binary: "q3")
     monkeypatch.setattr(pdos, "run_q3", record_the_manifest)

@@ -317,6 +317,18 @@ def prepare_input(deck, run_directory):
     return prepared_path
 
 
+def total_energy_ry(results: dict) -> float | None:
+    """The value of the results' ESSE ``total_energy`` record, if it is in Ry.
+
+    Read from the JSON rather than through ``q3.io.results``: this script runs
+    without the package installed.
+    """
+    for record in results.get("properties", {}).get("records", []):
+        if record.get("name") == "total_energy" and record.get("units") == "Ry":
+            return record["value"]
+    return None
+
+
 def split_timings(timings):
     """Separate the stage milliseconds from the work counts."""
     stage_times = {key: float(value) for key, value in timings.items() if key not in COUNT_KEYS}
@@ -353,7 +365,8 @@ def run_once(binary_path, deck, repetition_index, run_directory, timeout_seconds
     with results_path.open(encoding="utf-8") as file_handle:
         results = json.load(file_handle)
 
-    timings = results.get("timings_ms")
+    runtime_log = results.get("runtime_log", {})
+    timings = runtime_log.get("timings_ms")
     if not timings:
         raise RuntimeError(
             f"Deck '{deck['identifier']}' wrote no timings_ms block. The binary predates the "
@@ -367,10 +380,10 @@ def run_once(binary_path, deck, repetition_index, run_directory, timeout_seconds
         "wall_seconds": wall_seconds,
         "timings_ms": stage_times,
         "counts": counts,
-        "converged": bool(results.get("converged")),
-        "self_consistent_field_iterations": results.get("self_consistent_field_iterations"),
-        "total_energy_ry": results.get("total_energy_ry"),
-        "peak_resident_memory_bytes": (results.get("execution") or {}).get(
+        "converged": bool(runtime_log.get("converged")),
+        "self_consistent_field_iterations": runtime_log.get("self_consistent_field_iterations"),
+        "total_energy_ry": total_energy_ry(results),
+        "peak_resident_memory_bytes": (runtime_log.get("execution") or {}).get(
             "peak_resident_memory_bytes"
         ),
     }

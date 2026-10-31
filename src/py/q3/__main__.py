@@ -49,7 +49,7 @@ def main() -> int:
             q3_binary=args.binary,
             capture_output=not args.no_capture,
         )
-        print(json.dumps(results, indent=4))
+        print(json.dumps(results.to_document(), indent=4))
         return 0
     except Q3Error as exc:
         print(f"Error: {exc}", file=sys.stderr)

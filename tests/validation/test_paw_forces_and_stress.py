@@ -25,6 +25,9 @@ from pathlib import Path
 
 import pytest
 from force_helpers import BOHR_TO_ANGSTROM, Q3Run, force_contribution_on_atom, force_on_atom
+from q3.io.results.classes import Incomplete, Results
+
+from helpers import stress_contributions
 
 # ─── DFT+U with ultrasoft and PAW ───────────────────────────────────────────
 
@@ -142,10 +145,10 @@ def test_paw_hubbard_occupations_include_the_augmentation_charge(
     )
     assert completed.returncode == 0, completed.stdout[-3000:]
 
-    results = json.loads((tmp_path / "output" / "ni_results.json").read_text())
-    occupations = results["hubbard_occupations"]
+    results = Results.read(tmp_path / "output" / "ni_results.json")
+    occupations = results.properties.hubbard_occupations
     assert occupations, "no Tr[n] reported for any Hubbard manifold"
-    traces = occupations[-1]["occupation_trace"]
+    traces = occupations[-1].occupation_trace
     total_trace = sum(traces)
     print(f"\n  Tr[n] = {' + '.join(f'{trace:.4f}' for trace in traces)} = {total_trace:.4f}")
     assert abs(total_trace - NICKEL_D_ELECTRON_COUNT) < 0.5, (
@@ -188,23 +191,24 @@ def test_paw_hubbard_derivatives_are_both_computed(q3_bin, tmp_path, nickel_paw_
     # this used to grep for: a run that leaves a derivative term out says so in
     # its results, which is where the relaxation workflows look, and a flag
     # cannot start passing merely because the wording of a warning drifted.
-    results = json.loads((tmp_path / "output" / "ni_results.json").read_text())
-    assert "forces_are_incomplete" not in results, (
+    results = Results.read(tmp_path / "output" / "ni_results.json")
+    incomplete = results.runtime_log.incomplete or Incomplete()
+    assert incomplete.forces is None, (
         f"the PAW DFT+U force is implemented, but the run reports it incomplete: "
-        f"{results.get('forces_incomplete_reason')}"
+        f"{incomplete.forces}"
     )
-    assert "stress_is_incomplete" not in results, (
+    assert incomplete.stress is None, (
         f"the PAW DFT+U stress is implemented, but the run reports it incomplete: "
-        f"{results.get('stress_incomplete_reason')}"
+        f"{incomplete.stress}"
     )
-    hubbard_stress = results["stress_contributions_kbar"]["hubbard"]
+    hubbard_stress = stress_contributions(results)["hubbard"]
     diagonal = [hubbard_stress[index][index] for index in range(3)]
     assert max(abs(value) for value in diagonal) > 1.0, (
         f"the PAW Hubbard stress diagonal is {diagonal} kbar, effectively zero -- which "
         "is what the term returned before it existed"
     )
     # The run still produces an energy: nothing about the derivatives changed it.
-    assert math.isfinite(results["total_energy_ry"])
+    assert math.isfinite(results.properties.total_energy.value)
 
 
 # ── DFT+U forces through the overlap operator ────────────────────────────────
@@ -290,7 +294,7 @@ def hubbard_ultrasoft_runs(q3_bin, tmp_path_factory):
         assert completed.returncode == 0, (
             f"q3 exited {completed.returncode} on the {label} run\n{completed.stdout[-3000:]}"
         )
-        results = json.loads((directory / "tmp" / "qe_us_hubbard_results.json").read_text())
+        results = Results.read(directory / "tmp" / "qe_us_hubbard_results.json")
         outputs[label] = Q3Run(results, completed.stdout)
     return outputs
 
@@ -317,8 +321,8 @@ def test_hubbard_force_is_the_gradient_of_q3s_own_energy_for_ultrasoft(hubbard_u
     force = force_on_atom(hubbard_ultrasoft_runs["baseline"], 1)
     analytic = sum(force[i] * unit_axis[i] for i in range(3))
     numerical = -(
-        hubbard_ultrasoft_runs["plus"].results["total_energy_ry"]
-        - hubbard_ultrasoft_runs["minus"].results["total_energy_ry"]
+        hubbard_ultrasoft_runs["plus"].results.properties.total_energy.value
+        - hubbard_ultrasoft_runs["minus"].results.properties.total_energy.value
     ) / (2.0 * step_bohr)
 
     assert abs(numerical) > 1e-3, "the displacement is not producing a resolvable force"
@@ -450,8 +454,8 @@ def sic_hubbard_runs(q3_bin, tmp_path_factory):
         assert completed.returncode == 0, (
             f"q3 exited {completed.returncode} on the {label} run\n{completed.stdout[-3000:]}"
         )
-        results = json.loads((directory / "out" / "sic_results.json").read_text())
-        assert results["converged"], f"the {label} run did not converge"
+        results = Results.read(directory / "out" / "sic_results.json")
+        assert results.runtime_log.converged, f"the {label} run did not converge"
         outputs[label] = Q3Run(results, completed.stdout)
     return outputs
 
@@ -475,7 +479,8 @@ def _force_against_its_own_gradient(runs):
     force = force_on_atom(runs["baseline"], 1)
     analytic = sum(force[i] * unit_axis[i] for i in range(3))
     numerical = -(
-        runs["plus"].results["total_energy_ry"] - runs["minus"].results["total_energy_ry"]
+        runs["plus"].results.properties.total_energy.value
+        - runs["minus"].results.properties.total_energy.value
     ) / (2.0 * step_bohr)
     return analytic, numerical
 
@@ -592,8 +597,8 @@ def sic_hubbard_symmetry_runs(q3_bin, tmp_path_factory):
         assert completed.returncode == 0, (
             f"q3 exited {completed.returncode} on the {label} run\n{completed.stdout[-3000:]}"
         )
-        results = json.loads((directory / "out" / "sic_results.json").read_text())
-        assert results["converged"], f"the {label} run did not converge"
+        results = Results.read(directory / "out" / "sic_results.json")
+        assert results.runtime_log.converged, f"the {label} run did not converge"
         reduction = re.search(r"IBZ reduction[^:]*:\s*(\d+) -> (\d+) k-points", completed.stdout)
         assert reduction and int(reduction.group(2)) < int(reduction.group(1)), (
             "the k-point set was not reduced, so this fixture is not testing the wedge"
@@ -786,8 +791,8 @@ def run_ortho_atomic_force_set(q3_bin, tmp_path_factory, label, lattice_vectors,
         assert completed.returncode == 0, (
             f"q3 exited {completed.returncode} on the {name} run\n{completed.stdout[-3000:]}"
         )
-        results = json.loads((directory / "out" / "scf_results.json").read_text())
-        assert results["converged"], f"the {name} run did not converge"
+        results = Results.read(directory / "out" / "scf_results.json")
+        assert results.runtime_log.converged, f"the {name} run did not converge"
         outputs[name] = Q3Run(results, completed.stdout)
     return outputs
 
@@ -796,8 +801,8 @@ def numerical_force_from_axis_differences(outputs, lattice_vectors):
     """Solve F . a_i = -dE/dq_i for the Cartesian force on the displaced atom."""
     projections = [
         -(
-            outputs[f"plus{axis}"].results["total_energy_ry"]
-            - outputs[f"minus{axis}"].results["total_energy_ry"]
+            outputs[f"plus{axis}"].results.properties.total_energy.value
+            - outputs[f"minus{axis}"].results.properties.total_energy.value
         )
         / (2.0 * ORTHO_ATOMIC_STEP)
         for axis in range(3)

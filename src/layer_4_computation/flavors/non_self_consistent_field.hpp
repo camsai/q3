@@ -12,9 +12,9 @@
  *   3. Inject V_eff via load_effective_potential() (bypasses SCF reconstruction).
  *   4. Set maximum_iterations = 1 so the iterator performs a single diagonalization.
  *   5. Run the iterator.
- *   6. Return eigenvalues + occupations in FlavorResult.
+ *   6. Return eigenvalues + occupations as results.json's own struct.
  *
- * The resulting FlavorResult contains the eigenvalues (and, since the shared
+ * The results contain the eigenvalues (and, since the shared
  * per-iteration flow always calls update_occupations(), occupations too) at
  * all requested k-points, but no total energy (which is meaningless for a
  * non-self-consistent calculation). Occupations reflect a Fermi bisection
@@ -34,15 +34,16 @@
 #include "io/mean_field_export/factory.hpp"
 #include "io/mean_field_export/record_and_export.hpp"
 #include "io/mean_field_record/from_scf_state.hpp"
+#include "io/output/results.hpp"
 #include "io/quantum_system/kohn_sham/planewave/checkpoint/q3.hpp"
 #include "layer_0_core/types/constants.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/overlap/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/overlap/pseudopotential/factory.hpp"
 #include "layer_4_computation/flavors/base.hpp"
-#include "layer_4_computation/flavors/result.hpp"
 #include "layer_4_computation/interpolator/capture.hpp"
 #include "layer_4_computation/iterator/factory.hpp"
+#include "layer_4_computation/iterator/kohn_sham/planewave/execution/kpoint_states.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/pseudopotential/init.hpp"
 #include "layer_5_properties/projections/planewave/init.hpp"
 
@@ -65,8 +66,16 @@ inline int non_self_consistent_field_davidson_basis_expansion_factor(int factor,
 }
 
 class NonSelfConsistentFieldFlavor : public Flavor {
+  public:
+    /**
+     * `iterator_factory` carries the entry point's execution policy (see
+     * IteratorFactory); empty runs serially on the CPU.
+     */
+    explicit NonSelfConsistentFieldFlavor(IteratorFactory iterator_factory = {})
+        : iterator_factory_(std::move(iterator_factory)) {}
+
   protected:
-    FlavorResult run_calculation(const InputData& input) override {
+    generated::Results run_calculation(const InputData& input) override {
         if (input.kpoints_list.empty()) {
             throw std::runtime_error(
                 "NonSelfConsistentFieldFlavor: 'kpoints_list' is required in the input "
@@ -134,13 +143,31 @@ class NonSelfConsistentFieldFlavor : public Flavor {
                       constants::non_self_consistent_field_minimum_davidson_basis_expansion_factor);
         }
 
-        auto iterator = create_iterator(nscf_input);
+        auto iterator = create_iterator(nscf_input, iterator_factory_);
 
         auto* planewave_iterator =
             dynamic_cast<PlanewavePseudopotentialKohnShamSCFIterator*>(iterator.get());
         if (!planewave_iterator) {
             throw std::runtime_error(
                 "NonSelfConsistentFieldFlavor: expected a planewave pseudopotential iterator.");
+        }
+
+        /**
+         * The potential below is loaded whole, onto every rank, as the SCF
+         * saved it. That fits a rank holding whole k-points -- one rank per
+         * pool, the topology the SCF itself needs to write the checkpoint at
+         * all -- and nothing else: ranks sharing a pool split the density grid
+         * between them, and nothing scatters a whole grid onto that split. Asked
+         * after the iterator exists, because building it is where a pool count
+         * above the k-point count is clamped back into shared pools.
+         */
+        if (!planewave_iterator->execution_policy().each_process_owns_whole_kpoints()) {
+            throw std::runtime_error(
+                "NonSelfConsistentFieldFlavor: ranks share a k-point pool here, and a "
+                "non-self-consistent run needs one rank per pool: it loads the SCF's "
+                "potential whole onto every rank, which ranks splitting the density grid "
+                "cannot take. Run it with --pools equal to the rank count (at most the number "
+                "of k-points listed), or with fewer ranks.");
         }
 
         /**
@@ -232,105 +259,91 @@ class NonSelfConsistentFieldFlavor : public Flavor {
          * computes it at all: the potential came from the checkpoint whole, so
          * without this the state carries an empty Vxc(G) and BerkeleyGW's
          * vxc.dat cannot be written. pw2bgw evaluates Vxc from the same saved
-         * density (its `vxc_flag` path).
+         * density (its `vxc_flag` path), and from the valence part of it: see
+         * valence_exchange_correlation_potential_g_of().
          */
         mean_field_state.exchange_correlation_potential_g =
-            planewave_iterator->exchange_correlation_potential_g_of(
+            planewave_iterator->valence_exchange_correlation_potential_g_of(
                 effective_potential_snapshot.charge_density_real);
         /**
          * Which rank (if any) writes is decided by the execution topology --
-         * see export_and_record_mean_field_under_topology()'s comment. This
-         * flavor currently only runs from the serial entry points, but routing
-         * it through the same guard keeps one code path if that ever changes.
+         * see export_and_record_mean_field_under_topology()'s comment, which
+         * the MPI entry points reach through this flavor as the SCF's do.
          */
         export_and_record_mean_field_under_topology(
             planewave_iterator->execution_policy(),
-            [&mean_field_state] { return build_mean_field_record(mean_field_state); },
+            [&mean_field_state, &input] {
+                auto record = build_mean_field_record(mean_field_state);
+                if (input.mean_field_export_kleinman_bylander_projectors)
+                    add_kleinman_bylander_projectors_to_mean_field_record(record, mean_field_state);
+                return record;
+            },
             input,
             input.output_directory);
 
-        // ─── Step 5: Populate FlavorResult ───────────────────────────────────────
-        FlavorResult flavor_result;
-        flavor_result.flavor = "non_self_consistent_field";
+        // ─── Step 5: Results ─────────────────────────────────────────────────────
+        generated::Results results = new_results("non_self_consistent_field");
         /**
-         * NSCF total_energy_in_ry is meaningless — leave at 0 to signal this.
+         * An NSCF total energy is meaningless — list it as 0 to signal this.
          * A single-pass NSCF is always "converged" — there is no iterative convergence
          * criterion applicable. The SCF iterator reports is_converged()=false because
          * the KohnShamSCFIterator convergence check requires iteration_>1 (which is
          * never reached with maximum_iterations=1). Override to true so that the Python
          * layer does not raise SCFNotConvergedError on a valid NSCF result.
          */
-        flavor_result.converged = true;
-        flavor_result.fermi_energy_in_ry = planewave_iterator->quantum_system().fermi_energy();
+        results.runtime_log.converged = true;
+        results.runtime_log.execution = planewave_iterator->execution_policy().execution_record();
+        set_energy_records(results, 0.0, PlanewaveKohnShamEnergies{});
+        set_fermi_energy(results, planewave_iterator->quantum_system().fermi_energy());
 
-        const auto& eigenvalue_matrix = planewave_iterator->eigenvalues();
-        int number_of_kpoints = eigenvalue_matrix.rows();
-        int number_of_bands = eigenvalue_matrix.cols();
         /**
-         * kpoint_grid() (and the physical-domain accessors used by Step 6 below)
-         * holds one entry per PHYSICAL k-point; eigenvalue_matrix / occupation()
-         * are indexed by k-point STATE (physical kpoint * spin) -- for a
-         * spin-polarized run number_of_kpoints above is the state count. See the
-         * identical convention in self_consistent_field.hpp / accumulator.hpp.
+         * Every k-point state of the run, gathered across pools -- each pool
+         * diagonalized only its own share of the list -- in the list's order.
          */
-        int number_of_physical_kpoints = planewave_iterator->kpoint_grid().number_of_kpoints();
-
-        flavor_result.eigenvalues_in_ry.resize(number_of_kpoints);
-        flavor_result.occupations.resize(number_of_kpoints);
-        flavor_result.kpoint_weights.resize(number_of_kpoints);
-        for (int kpoint_index = 0; kpoint_index < number_of_kpoints; kpoint_index++) {
-            flavor_result.eigenvalues_in_ry[kpoint_index].resize(1);
-            flavor_result.eigenvalues_in_ry[kpoint_index][0].resize(number_of_bands);
-            flavor_result.occupations[kpoint_index].resize(1);
-            flavor_result.occupations[kpoint_index][0].resize(number_of_bands);
-            for (int band_index = 0; band_index < number_of_bands; band_index++) {
-                flavor_result.eigenvalues_in_ry[kpoint_index][0][band_index] =
-                    eigenvalue_matrix(kpoint_index, band_index);
-                /**
-                 * NSCF's single perform_iteration() pass unconditionally calls
-                 * update_occupations() (same generic per-iteration flow as SCF),
-                 * so this is a real Fermi-bisected occupation -- computed over
-                 * *this run's* k-point set. Meaningful for a proper dense
-                 * Monkhorst-Pack PDOS grid; not reliable for a non-uniform set
-                 * like a band path (same caveat q3.workflows.band_structure
-                 * already documents for NSCF's fermi_energy_in_ry).
-                 */
-                flavor_result.occupations[kpoint_index][0][band_index] =
-                    planewave_iterator->occupation(kpoint_index, band_index);
-            }
-            flavor_result.kpoint_weights[kpoint_index] =
-                planewave_iterator->kpoint_grid()[kpoint_index % number_of_physical_kpoints].weight;
-        }
+        set_record(results, assemble_global_eigenvalues_at_kpoints(*planewave_iterator));
+        const std::size_t number_of_kpoint_states =
+            find_record<generated::EigenvaluesAtKpoints>(results)->values.size();
+        const int number_of_bands = static_cast<int>(planewave_iterator->eigenvalues().cols());
 
         // ─── Step 6: Atomic-orbital (ortho-atomic/Löwdin) projections (opt-in) ──
         if (input.compute_projections) {
+            /**
+             * This pool's k-point states: the projections are taken where the
+             * wavefunctions are, then gathered like the eigenvalues above. The
+             * state index is spin-major over the pool's physical k-points, so a
+             * state splits into the physical k-point (G-space basis,
+             * spin-independent) and the state (wavefunction storage,
+             * spin-dependent).
+             */
+            const int local_number_of_kpoint_states =
+                static_cast<int>(planewave_iterator->eigenvalues().rows());
+            const int local_number_of_physical_kpoints =
+                planewave_iterator->kpoint_grid().number_of_kpoints();
             log::info("     NSCF: computing ortho-atomic projections at {} k-points{}",
-                      number_of_kpoints,
+                      static_cast<int>(number_of_kpoint_states),
                       planewave_iterator->pseudopotential_set().has_augmentation_charges()
                           ? " in the S metric (ultrasoft/PAW augmentation)"
                           : "");
             PlanewaveWavefunctionProjectionCalculator projection_calculator(
                 planewave_iterator->crystal_structure(), planewave_iterator->pseudopotential_set());
 
+            generated::ResultsOrbitalProjections orbital_projections;
             for (const auto& orbital_label : projection_calculator.orbital_labels()) {
-                flavor_result.orbital_atom_index.push_back(orbital_label.atom_index);
-                flavor_result.orbital_species_type_index.push_back(
-                    orbital_label.species_type_index);
-                flavor_result.orbital_shell_label.push_back(orbital_label.shell_label);
-                flavor_result.orbital_angular_momentum.push_back(orbital_label.angular_momentum);
-                flavor_result.orbital_magnetic_quantum_number.push_back(
-                    orbital_label.magnetic_quantum_number);
+                generated::ResultsOrbitalProjectionsLabelsItem label;
+                label.atom_index = orbital_label.atom_index;
+                label.species_type_index = orbital_label.species_type_index;
+                label.shell_label = orbital_label.shell_label;
+                label.angular_momentum = orbital_label.angular_momentum;
+                label.magnetic_quantum_number = orbital_label.magnetic_quantum_number;
+                orbital_projections.labels.push_back(label);
             }
+            const int number_of_orbitals = static_cast<int>(orbital_projections.labels.size());
 
-            flavor_result.orbital_projections.resize(number_of_kpoints);
-            for (int kpoint_state_index = 0; kpoint_state_index < number_of_kpoints;
+            // One flat [band][orbital] block per local k-point state.
+            std::vector<std::vector<Real>> local_projections(local_number_of_kpoint_states);
+            for (int kpoint_state_index = 0; kpoint_state_index < local_number_of_kpoint_states;
                  kpoint_state_index++) {
-                /**
-                 * Split into the physical k-point (G-space basis, spin-independent)
-                 * and the k-point state (wavefunction storage, spin-dependent) --
-                 * see the number_of_physical_kpoints comment above.
-                 */
-                int physical_kpoint_index = kpoint_state_index % number_of_physical_kpoints;
+                int physical_kpoint_index = kpoint_state_index % local_number_of_physical_kpoints;
                 /**
                  * Kept alive alongside the operator that reads it: the ultrasoft
                  * overlap holds the matrix by reference.
@@ -339,7 +352,7 @@ class NonSelfConsistentFieldFlavor : public Flavor {
                 std::unique_ptr<OverlapOperator> overlap_operator =
                     build_projection_overlap_operator(
                         *planewave_iterator, physical_kpoint_index, kleinman_bylander_projectors);
-                flavor_result.orbital_projections[kpoint_state_index] =
+                const std::vector<std::vector<Real>> projections =
                     projection_calculator.compute_projections_at_kpoint(
                         physical_kpoint_index,
                         kpoint_state_index,
@@ -352,7 +365,33 @@ class NonSelfConsistentFieldFlavor : public Flavor {
                         planewave_iterator->pseudopotential_set(),
                         planewave_iterator->quantum_system(),
                         overlap_operator.get());
+                for (const auto& band_projections : projections) {
+                    local_projections[kpoint_state_index].insert(
+                        local_projections[kpoint_state_index].end(),
+                        band_projections.begin(),
+                        band_projections.end());
+                }
             }
+
+            orbital_projections.values.assign(number_of_kpoint_states,
+                                              std::vector<std::vector<double>>(number_of_bands));
+            if (number_of_orbitals > 0) {
+                const std::vector<std::vector<Real>> global_projections =
+                    assemble_global_kpoint_state_blocks(*planewave_iterator,
+                                                        local_projections,
+                                                        number_of_bands * number_of_orbitals);
+                for (std::size_t state_index = 0; state_index < global_projections.size();
+                     ++state_index) {
+                    for (int band_index = 0; band_index < number_of_bands; ++band_index) {
+                        const auto band_begin =
+                            global_projections[state_index].begin() +
+                            static_cast<std::ptrdiff_t>(band_index) * number_of_orbitals;
+                        orbital_projections.values[state_index][band_index].assign(
+                            band_begin, band_begin + number_of_orbitals);
+                    }
+                }
+            }
+            results.properties.orbital_projections = orbital_projections;
         }
 
         // ─── Step 7: interpolation model (opt-in) ──────────────────────────────
@@ -362,7 +401,7 @@ class NonSelfConsistentFieldFlavor : public Flavor {
             write_and_export_interpolation_record(record, input);
         }
 
-        return flavor_result;
+        return results;
     }
 
   private:
@@ -463,6 +502,8 @@ class NonSelfConsistentFieldFlavor : public Flavor {
         }
         state.planewave_basis->rho_r_to_g(total_charge_density_real, state.charge_density_g);
     }
+
+    IteratorFactory iterator_factory_;
 };
 
 } // namespace q3

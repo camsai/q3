@@ -33,15 +33,17 @@ def _load_comparator():
 comparator = _load_comparator()
 
 BASELINE_RESULTS = {
-    "flavor": "scf",
-    "converged": True,
     "total_energy_ry": -15.793461234567,
     "fermi_energy_ry": 0.4312,
     "forces_ry_per_bohr": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
     "stress_kbar": [[1.5, 0.0, 0.0], [0.0, 1.5, 0.0], [0.0, 0.0, 1.5]],
     "eigenvalues_ry": [[-0.2, 0.1, 0.3, 0.3]],
-    "timings_ms": {"total": 1234.5, "davidson": 900.1},
-    "execution": {"number_of_processes": 1, "peak_resident_memory_bytes": 104857600},
+    "runtime_log": {
+        "flavor": "scf",
+        "converged": True,
+        "timings_ms": {"total": 1234.5, "davidson": 900.1},
+        "execution": {"number_of_processes": 1, "peak_resident_memory_bytes": 104857600},
+    },
     "provenance": {"generator": {"engine_name": "q3", "engine_commit": "abc123"}},
 }
 
@@ -94,8 +96,8 @@ def test_a_difference_deep_in_an_array_is_found_by_pointer():
 @pytest.mark.parametrize(
     ("pointer_path", "replacement"),
     [
-        (("timings_ms", "total"), 9999.9),
-        (("execution", "peak_resident_memory_bytes"), 209715200),
+        (("runtime_log", "timings_ms", "total"), 9999.9),
+        (("runtime_log", "execution", "peak_resident_memory_bytes"), 209715200),
         (("provenance", "generator", "engine_commit"), "def456"),
     ],
 )
@@ -112,7 +114,7 @@ def test_volatile_leaves_do_not_break_parity(pointer_path, replacement):
 def test_a_non_volatile_execution_leaf_still_breaks_parity():
     """The volatile list is per-leaf, not per-subtree: topology still has to match."""
     moved = json.loads(json.dumps(BASELINE_RESULTS))
-    moved["execution"]["number_of_processes"] = 4
+    moved["runtime_log"]["execution"]["number_of_processes"] = 4
     assert comparator.compare_documents(BASELINE_RESULTS, moved, 0.0) != []
 
 
@@ -153,7 +155,7 @@ def test_an_emptied_array_is_a_difference():
 def test_a_boolean_is_not_a_number():
     """``True == 1.0`` in Python; a flag turning into a count is still a difference."""
     moved = json.loads(json.dumps(BASELINE_RESULTS))
-    moved["converged"] = 1
+    moved["runtime_log"]["converged"] = 1
     assert comparator.compare_documents(BASELINE_RESULTS, moved, 0.0) != []
 
 

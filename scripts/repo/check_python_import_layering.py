@@ -47,6 +47,7 @@ TIERS: dict[str, int] = {
     "errors": 0,
     "binary": 1,
     "io": 1,
+    "generated": 1,
     "structure": 1,
     "properties": 1,
     "calculators": 2,

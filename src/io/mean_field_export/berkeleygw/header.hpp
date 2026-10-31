@@ -55,6 +55,13 @@
  *   6. mtrx[3,3,ntran]                                    -- int32
  *   7. tnp[3,ntran]                                       -- float64
  *   8. (apos[3], Z) per atom, for each of the nat atoms   -- mixed, interleaved
+ *
+ * The Kleinman-Bylander projector file VKB, which the specification does not
+ * cover, carries the WFN header with one change: record 2's nbands is replaced
+ * by the projector dimensions, `... nk nsp nkb nhm ngkmax ecutwfc` -- the
+ * record BerkeleyGW 4.0's ParaBands reads (`pp_read_header` in
+ * `MeanField/ParaBands/pseudopot_vkb.f90`). See the projector-dimensions
+ * constructor below.
  */
 
 #include <algorithm>
@@ -65,6 +72,7 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -108,8 +116,25 @@ class BerkeleyGWCommonHeader {
         , stitle_(std::move(stitle))
         , include_kpoint_fields_(include_kpoint_fields) {}
 
+    /**
+     * The VKB header: the WFN header with record 2's nbands replaced by
+     * `projector_dimensions` = {nsp, nkb, nhm} -- the number of species, of
+     * projector channels over all atoms, and the most channels any one atom
+     * has.
+     */
+    BerkeleyGWCommonHeader(const MeanFieldRecord& record,
+                           std::string stitle,
+                           const std::array<int32_t, 3>& projector_dimensions)
+        : record_(record)
+        , stitle_(std::move(stitle))
+        , include_kpoint_fields_(true)
+        , projector_dimensions_(projector_dimensions) {}
+
     /// See the writers' own deleted rvalue constructors: this holds a reference.
     BerkeleyGWCommonHeader(const MeanFieldRecord&&, std::string, bool) = delete;
+    BerkeleyGWCommonHeader(const MeanFieldRecord&&,
+                           std::string,
+                           const std::array<int32_t, 3>&) = delete;
 
     /**
      * kgrid and kshift for an explicit k-point list (crystal coordinates) --
@@ -245,6 +270,8 @@ class BerkeleyGWCommonHeader {
     const MeanFieldRecord& record_;
     std::string stitle_;
     bool include_kpoint_fields_;
+    /// Set for VKB only: nsp, nkb, nhm, written in place of nbands.
+    std::optional<std::array<int32_t, 3>> projector_dimensions_;
     QEBinaryRecordFormat record_format_;
 
     /**
@@ -332,6 +359,9 @@ class BerkeleyGWCommonHeader {
         size_t fixed_size = 4 * sizeof(int32_t) + sizeof(int32_t) + sizeof(double);
         size_t kpoint_fields_size =
             include_kpoint_fields_ ? (3 * sizeof(int32_t) + sizeof(double)) : 0;
+        if (projector_dimensions_) {
+            kpoint_fields_size += 2 * sizeof(int32_t); // nsp nkb nhm in place of nbands
+        }
         std::vector<char> buffer(fixed_size + kpoint_fields_size);
 
         size_t offset = 0;
@@ -357,7 +387,11 @@ class BerkeleyGWCommonHeader {
             double wavefunction_cutoff_ry = record_.wavefunction_energy_cutoff;
 
             append(&number_of_kpoints, sizeof(int32_t));
-            append(&number_of_bands, sizeof(int32_t));
+            if (projector_dimensions_) {
+                append(projector_dimensions_->data(), 3 * sizeof(int32_t));
+            } else {
+                append(&number_of_bands, sizeof(int32_t));
+            }
             append(&maximum_plane_waves, sizeof(int32_t));
             append(&wavefunction_cutoff_ry, sizeof(double));
         }

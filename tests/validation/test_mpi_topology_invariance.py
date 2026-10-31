@@ -18,12 +18,17 @@ from pathlib import Path
 
 import pytest
 import yaml
+from q3.io.results.classes import Incomplete
 
 from helpers import (
     EXAMPLES_DIRECTORY,
     apply_config_overlay,
+    atomic_forces,
+    energy_contribution,
     load_results_json,
     run_q3_and_load_results,
+    stress_contributions,
+    stress_tensor,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -46,6 +51,7 @@ SILICON_CARBON_LATTICE_VECTORS_BOHR = (
     (0.0, 4.119180301160476, 4.119180301160476),
     (-4.119180301160476, 4.119180301160476, 0.0),
 )
+
 SILICON_CARBON_ATOMIC_POSITIONS_CRYSTAL = ((0.0, 0.0, 0.0), (0.27, 0.263, 0.257))
 
 PAW_POOL_STRESS_TOLERANCE_KBAR = 1.0e-4
@@ -108,7 +114,7 @@ def run_si_scf_on_n_ranks(
         working_directory=str(working_directory),
         timeout=600,
     )
-    return float(results["total_energy_ry"])
+    return float(results.properties.total_energy.value)
 
 
 def run_ni_lsda_scf_on_n_ranks(
@@ -159,7 +165,7 @@ def run_ni_lsda_scf_on_n_ranks(
         working_directory=str(working_directory),
         timeout=600,
     )
-    return float(results["total_energy_ry"])
+    return float(results.properties.total_energy.value)
 
 
 def run_paw_properties_with_topology(
@@ -306,26 +312,30 @@ def test_forces_are_the_same_when_ranks_share_a_kpoint_pool(q3_bin, tmp_path):
     one_rank = run_paw_properties_with_topology(q3_bin, 1, 1, tmp_path / "ranks_1_pools_1")
     shared_pool = run_paw_properties_with_topology(q3_bin, 2, 1, tmp_path / "ranks_2_pools_1")
 
-    assert shared_pool["execution"]["reciprocal_space_vectors_are_distributed"], (
+    assert shared_pool.runtime_log.execution.reciprocal_space_vectors_are_distributed, (
         "two ranks in one pool should split the plane waves, or this compares nothing"
     )
-    assert not shared_pool.get("forces_are_incomplete", False)
-    assert abs(shared_pool["total_energy_ry"] - one_rank["total_energy_ry"]) < 1.0e-8
-    assert max(
-        abs(component) for force in one_rank["forces_ry_per_bohr"] for component in force
-    ) > (1.0e-3)
+    assert (shared_pool.runtime_log.incomplete or Incomplete()).forces is None
+    assert (
+        abs(shared_pool.properties.total_energy.value - one_rank.properties.total_energy.value)
+        < 1.0e-8
+    )
+    assert max(abs(component) for force in atomic_forces(one_rank) for component in force) > (
+        1.0e-3
+    )
 
     worst = max(
         abs(shared - single)
         for shared_force, single_force in zip(
-            shared_pool["forces_ry_per_bohr"], one_rank["forces_ry_per_bohr"]
+            atomic_forces(shared_pool),
+            atomic_forces(one_rank),
         )
         for shared, single in zip(shared_force, single_force)
     )
     assert worst < SHARED_POOL_FORCE_TOLERANCE_RY_PER_BOHR, (
         f"forces moved by {worst:.3e} Ry/bohr when two ranks shared the k-point pool\n"
-        f"  one rank:    {one_rank['forces_ry_per_bohr']}\n"
-        f"  shared pool: {shared_pool['forces_ry_per_bohr']}"
+        f"  one rank:    {atomic_forces(one_rank)}\n"
+        f"  shared pool: {atomic_forces(shared_pool)}"
     )
 
 
@@ -341,49 +351,54 @@ def test_paw_energy_force_and_stress_are_kpoint_pool_invariant(q3_bin, tmp_path)
         for number_of_pools in (1, 2, 4)
     }
     baseline = results_by_number_of_pools[1]
-    assert not baseline.get("forces_are_incomplete", False)
-    assert not baseline.get("stress_is_incomplete", False)
+    assert not baseline.runtime_log.incomplete
+    assert max(abs(component) for force in atomic_forces(baseline) for component in force) > (
+        1.0e-3
+    )
     assert max(
-        abs(component) for force in baseline["forces_ry_per_bohr"] for component in force
-    ) > (1.0e-3)
-    assert max(
-        abs(baseline["stress_kbar"][row][column]) for row in range(3) for column in range(3)
+        abs(stress_tensor(baseline)[row][column]) for row in range(3) for column in range(3)
     ) > (1.0)
 
     for number_of_pools in (2, 4):
         candidate = results_by_number_of_pools[number_of_pools]
-        assert abs(candidate["total_energy_ry"] - baseline["total_energy_ry"]) < 1.0e-8
-        assert abs(candidate["one_center_energy_ry"] - baseline["one_center_energy_ry"]) < 1.0e-8
+        assert (
+            abs(candidate.properties.total_energy.value - baseline.properties.total_energy.value)
+            < 1.0e-8
+        )
+        assert (
+            abs(
+                energy_contribution(candidate, "one_center")
+                - energy_contribution(baseline, "one_center")
+            )
+            < 1.0e-8
+        )
         assert (
             max(
                 abs(
-                    candidate["forces_ry_per_bohr"][atom][direction]
-                    - baseline["forces_ry_per_bohr"][atom][direction]
+                    atomic_forces(candidate)[atom][direction]
+                    - atomic_forces(baseline)[atom][direction]
                 )
-                for atom in range(len(baseline["forces_ry_per_bohr"]))
+                for atom in range(len(atomic_forces(baseline)))
                 for direction in range(3)
             )
             < 1.0e-8
         )
         assert (
             max(
-                abs(candidate["stress_kbar"][row][column] - baseline["stress_kbar"][row][column])
+                abs(stress_tensor(candidate)[row][column] - stress_tensor(baseline)[row][column])
                 for row in range(3)
                 for column in range(3)
             )
             < PAW_POOL_STRESS_TOLERANCE_KBAR
         )
-        assert (
-            candidate["stress_contributions_kbar"].keys()
-            == baseline["stress_contributions_kbar"].keys()
-        )
+        assert stress_contributions(candidate).keys() == stress_contributions(baseline).keys()
         assert (
             max(
                 abs(
-                    candidate["stress_contributions_kbar"][contribution][row][column]
-                    - baseline["stress_contributions_kbar"][contribution][row][column]
+                    stress_contributions(candidate)[contribution][row][column]
+                    - stress_contributions(baseline)[contribution][row][column]
                 )
-                for contribution in baseline["stress_contributions_kbar"]
+                for contribution in stress_contributions(baseline)
                 for row in range(3)
                 for column in range(3)
             )
@@ -434,7 +449,7 @@ def run_si_with_local_thomas_fermi(
         timeout=300,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    return float(load_results_json(output_directory, "qe_nc")["total_energy_ry"])
+    return float(load_results_json(output_directory, "qe_nc").properties.total_energy.value)
 
 
 def test_local_thomas_fermi_preconditioning_under_a_shared_pool(q3_bin, tmp_path):
@@ -567,7 +582,7 @@ def run_ni_fermi_dirac_scf_deterministic(q3_bin: str, working_directory: Path) -
         working_directory=str(working_directory),
         timeout=600,
     )
-    return float(results["total_energy_ry"])
+    return float(results.properties.total_energy.value)
 
 
 # ── The starting guess under a shared pool ────────────────────────────────────
@@ -607,8 +622,8 @@ def test_first_scf_iteration_is_the_same_on_a_shared_pool(q3_bin, example, tmp_p
         )
         assert completed.returncode == 0, completed.stdout + completed.stderr
         results = load_results_json(working_directory / "output", "first_iteration")
-        assert results["self_consistent_field_iterations"] == 1
-        energies.append(float(results["total_energy_ry"]))
+        assert results.runtime_log.self_consistent_field_iterations == 1
+        energies.append(float(results.properties.total_energy.value))
     assert abs(energies[1] - energies[0]) < 1.0e-9, (
         f"after one iteration: serial {energies[0]:.12f} Ry, 2 ranks {energies[1]:.12f} Ry"
     )
@@ -862,39 +877,6 @@ def test_sharing_a_pool_is_allowed_when_requested(q3_bin, tmp_path):
     assert energy < 0.0
 
 
-def test_a_non_scf_calculation_is_refused_rather_than_run_as_scf(q3_bin, tmp_path):
-    """
-    q3_mpi builds its own iterator so it can inject the MPI execution policy,
-    and SelfConsistentFieldFlavor is the only flavor that accepts one. Until
-    this guard it wrapped that flavor around the iterator unconditionally --
-    so an input asking for a non-self-consistent run got a self-consistent one,
-    reported under the name it did not ask for.
-
-    Refusing is the whole point: the serial binary runs every flavor, and the
-    error says so. Lifting the restriction needs a composition root that can
-    hand any flavor its execution policy, which is separate work.
-    """
-    working_directory = tmp_path / "nscf_refused"
-    working_directory.mkdir(parents=True, exist_ok=True)
-
-    configuration = silicon_configuration_with_absolute_paths()
-    configuration["control"]["calculation"] = "non_self_consistent_field"
-    probe_input = working_directory / "nscf.yml"
-    probe_input.write_text(yaml.safe_dump(configuration))
-
-    completed = subprocess.run(
-        ["mpirun", "-np", "2", q3_bin, "--pools", "2", str(probe_input)],
-        capture_output=True,
-        text=True,
-        cwd=str(working_directory),
-        timeout=600,
-    )
-    assert completed.returncode != 0, "an NSCF input must not be run as an SCF"
-    combined_output = completed.stdout + completed.stderr
-    assert "self_consistent_field only" in combined_output, combined_output
-    assert "serial q3" in combined_output, combined_output
-
-
 # ── Gamma-only under a shared pool ────────────────────────────────────────────
 
 GAMMA_ONLY_PREFIX = "si_gamma"
@@ -941,7 +923,7 @@ def run_si_gamma_only_scf(
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     results = load_results_json(working_directory / "output", GAMMA_ONLY_PREFIX)
-    return float(results["total_energy_ry"]), completed.stdout
+    return float(results.properties.total_energy.value), completed.stdout
 
 
 @pytest.mark.parametrize(
@@ -1036,7 +1018,7 @@ def run_si_with_equal_grids(
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     results = load_results_json(working_directory / "output", EQUAL_GRIDS_PREFIX)
-    return float(results["total_energy_ry"]), completed.stdout
+    return float(results.properties.total_energy.value), completed.stdout
 
 
 @pytest.mark.parametrize(
@@ -1183,11 +1165,12 @@ def test_isolated_system_corrections_under_a_shared_pool(
     shared = run_off_centre_silicon_atom(
         q3_bin, correction, lattice_overrides, 2, tmp_path / "shared"
     )
-    serial_correction = serial["isolated_system_correction"]
-    shared_correction = shared["isolated_system_correction"]
-    assert serial_correction["method"] == correction
-    assert abs(shared["total_energy_ry"] - serial["total_energy_ry"]) < 1.0e-8
-    assert abs(shared_correction["total_ry"] - serial_correction["total_ry"]) < 1.0e-8, (
-        f"{correction}: serial {serial_correction['total_ry']:.10f} Ry, "
-        f"2 ranks {shared_correction['total_ry']:.10f} Ry"
+    serial_correction = serial.properties.isolated_system_correction
+    shared_correction = shared.properties.isolated_system_correction
+    assert serial_correction.method == correction
+    assert abs(shared.properties.total_energy.value - serial.properties.total_energy.value) < 1.0e-8
+    serial_total = serial_correction.total.value
+    shared_total = shared_correction.total.value
+    assert abs(shared_total - serial_total) < 1.0e-8, (
+        f"{correction}: serial {serial_total:.10f} Ry, 2 ranks {shared_total:.10f} Ry"
     )

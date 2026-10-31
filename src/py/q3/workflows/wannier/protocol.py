@@ -11,9 +11,10 @@ from __future__ import annotations
 from typing import Literal
 
 from q3.constants import RYDBERG_TO_ELECTRONVOLT
-from q3.io.interpolation_results import InterpolationResults, LadderAttempt
+from q3.io.interpolation.results.classes import InterpolationResults, LadderAttempt
 from q3.io.interpolation_settings import CaptureSettings
-from q3.workflows.band_distance import eigenvalues_electronvolt
+from q3.io.results.classes import Results
+from q3.workflows.band_distance import eigenvalues_ev
 from q3.workflows.interpolation import EngineChain, Grid, KPoint, fermi_energy_ry
 from q3.workflows.wannier.attempt_status import AttemptStatus
 from q3.workflows.wannier.evaluation import Evaluation
@@ -121,7 +122,7 @@ class WannierProtocol:
             fermi_energy_ry=fermi_energy_ry(nscf_results, scf_results),
         )
 
-    def _captured_on(self, mesh: Grid) -> dict:
+    def _captured_on(self, mesh: Grid) -> Results:
         """The full-grid NSCF on *mesh* that saves the record every rung re-evaluates."""
         return self.chain.capture(
             CaptureSettings(
@@ -133,7 +134,11 @@ class WannierProtocol:
         )
 
     def _evaluation(
-        self, mesh: Grid, reference_set: list[KPoint], reference_results: dict, nscf_results: dict
+        self,
+        mesh: Grid,
+        reference_set: list[KPoint],
+        reference_results: Results,
+        nscf_results: Results,
     ) -> Evaluation:
         """What one mesh's record is evaluated and judged against.
 
@@ -147,7 +152,7 @@ class WannierProtocol:
             mesh=mesh,
             wannier_functions=self.wannier_functions,
             reference_set=reference_set,
-            reference_ev=eigenvalues_electronvolt(reference_results),
+            reference_ev=eigenvalues_ev(reference_results),
             fermi_energy_ev=fermi_energy_ry(nscf_results) * RYDBERG_TO_ELECTRONVOLT,
             gate=self.options.gate,
             fixed_reference=self.fixed_reference is not None,

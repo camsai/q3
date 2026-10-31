@@ -1,0 +1,59 @@
+{
+    "$id": "q3/results/properties/orbital_projections",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "orbital projections",
+    "type": "object",
+    "description": "Present only when a non-self-consistent run was asked for projections.",
+    "required": ["values", "labels"],
+    "additionalProperties": false,
+    "properties": {
+        "values": {
+            "type": "array",
+            "description": "|<phi'_i|psi_nk>|^2, indexed [k-point state][band][orbital]. Present only when a non-self-consistent run was asked for projections.",
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "number"
+                    }
+                }
+            }
+        },
+        "labels": {
+            "type": "array",
+            "description": "What each orbital index of orbital_projections is, in the same order.",
+            "items": {
+                "type": "object",
+                "required": [
+                    "atom_index",
+                    "species_type_index",
+                    "shell_label",
+                    "angular_momentum",
+                    "magnetic_quantum_number"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "atom_index": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "species_type_index": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "shell_label": {
+                        "type": "string"
+                    },
+                    "angular_momentum": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "magnetic_quantum_number": {
+                        "type": "integer"
+                    }
+                }
+            }
+        }
+    }
+}

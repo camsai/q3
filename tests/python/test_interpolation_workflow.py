@@ -22,7 +22,9 @@ from pathlib import Path
 import pytest
 import yaml
 from q3.errors import Q3RuntimeError
+from q3.io.interpolation.results.classes import InterpolationResults
 from q3.io.interpolation_settings import CaptureSettings, EvaluationSettings
+from q3.io.results.classes import eigenvalue_arrays
 from q3.structure.lattice import reciprocal_lattice_vectors_inverse_angstrom
 from q3.workflows.interpolation import (
     evaluate_interpolation,
@@ -126,12 +128,23 @@ if arguments and arguments[0] == "interpolate":
     outdir.mkdir(parents=True, exist_ok=True)
     results = {{
         "arguments": arguments,
-        "kpoints": [row[:3] for row in control.get("kpoints_list", [])],
-        "eigenvalues_ry": [[[-0.5, 0.25]] for _ in control.get("kpoints_list", [])],
-        "fermi_energy_ry": 0.125,
+        "properties": {{
+            "eigenvalues_at_kpoints": {{"name": "eigenvalues_at_kpoints", "units": "Ry", "values": [
+                {{"kpoint": row[:3], "eigenvalues": [{{"energies": [-0.5, 0.25]}}]}}
+                for row in control.get("kpoints_list", [])
+            ]}},
+            "fermi_energy": {{"name": "fermi_energy", "units": "Ry", "value": 0.125}},
+        }},
     }}
     if "dos_mesh" in control["interpolation"]:
-        results["density_of_states"] = {{"energies_ry": [0.0, 0.1], "dos": [1.0, 2.0]}}
+        results["properties"]["density_of_states"] = {{
+            "name": "density_of_states",
+            "xAxis": {{"label": "energy", "units": "Ry"}},
+            "yAxis": {{"label": "density of states", "units": "states/unitcell"}},
+            "xDataArray": [0.0, 0.1],
+            "yDataSeries": [[1.0, 2.0]],
+            "legend": [],
+        }}
     (outdir / (control["prefix"] + "_interpolation_results.json")).write_text(json.dumps(results))
 """
     Path(body_path).write_text(script)
@@ -172,10 +185,16 @@ if not outdir.is_absolute():
 outdir.mkdir(parents=True, exist_ok=True)
 kpoints = control.get("kpoints_list") or [[0.0, 0.0, 0.0, 2.0]]
 results = {{
-    "converged": True,
-    "fermi_energy_ry": 0.1,
-    "kpoints": [row[:3] for row in kpoints],
-    "eigenvalues_ry": [[[-0.5, 0.25]] for _ in kpoints],
+    "runtime_log": {{"converged": True}},
+    "properties": {{
+        "records": [
+            {{"name": "fermi_energy", "units": "Ry", "value": 0.1}},
+            {{"name": "eigenvalues_at_kpoints", "units": "Ry", "values": [
+                {{"kpoint": row[:3], "weight": row[3], "eigenvalues": [{{"energies": [-0.5, 0.25]}}]}}
+                for row in kpoints
+            ]}},
+        ],
+    }},
 }}
 (outdir / (control.get("prefix", "q3") + "_results.json")).write_text(json.dumps(results))
 """
@@ -377,8 +396,10 @@ def test_evaluate_runs_the_utility_and_reads_its_results(tmp_path):
     )
     results = evaluate_interpolation(manifest, q3_utility_binary=stub)
     assert _recorded_arguments(stub) == ["interpolate", str(manifest)]
-    assert results["eigenvalues_ry"] == [[[-0.5, 0.25]]]
-    assert results["density_of_states"]["dos"] == [1.0, 2.0]
+    model = InterpolationResults.model_validate(results)
+    assert eigenvalue_arrays(model.properties.eigenvalues_at_kpoints)[0] == [[[-0.5, 0.25]]]
+    assert model.properties.density_of_states.xDataArray == [0.0, 0.1]
+    assert model.properties.density_of_states.yDataSeries == [[1.0, 2.0]]
 
 
 def test_import_forms_the_convert_arguments_and_names_the_record(tmp_path):

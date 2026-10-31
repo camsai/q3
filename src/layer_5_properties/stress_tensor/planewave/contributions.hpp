@@ -9,8 +9,8 @@
  * All values are in kbar (converted from Ry/bohr³ inside
  * assemble_total_stress_and_log() before being returned).
  *
- * This type has no JSON serialization dependency. FlavorResult copies these
- * primitive tensors into its own diagnostic representation for results.json.
+ * This type has no JSON serialization dependency. The SCF flavor copies these
+ * primitive tensors into ESSE stress_tensor records for results.json.
  */
 
 #include "layer_0_core/types/init.hpp"

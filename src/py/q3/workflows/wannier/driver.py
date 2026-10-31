@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from q3.binary import ExecutionPolicy
 from q3.workflows.band_distance import DEFAULT_ENERGY_OFFSET_EV, DEFAULT_SMEARING_EV
 from q3.workflows.interpolation import (
     DEFAULT_KPOINT_SPACING_INVERSE_ANGSTROM,
@@ -50,6 +51,7 @@ def run_automatic_wannier_workflow(
     export_formats: list[str] | tuple[str, ...] = (),
     q3_binary: str | Path | None = None,
     q3_utility_binary: str | Path | None = None,
+    execution_policy: ExecutionPolicy | None = None,
     skip_scf: bool = False,
     capture_output: bool = True,
 ) -> dict:
@@ -83,6 +85,9 @@ def run_automatic_wannier_workflow(
         that would rather report than spend an hour on one structure.
     dos_mesh, dos_broadening_ry, export_formats:
         Passed through to the evaluation and the capture.
+    execution_policy:
+        The execution policy every engine run starts the binary with; see
+        :func:`q3.workflows.interpolation.run_interpolation_workflow`.
     skip_scf:
         Reuse an existing SCF checkpoint in the outdir.
 
@@ -123,5 +128,6 @@ def run_automatic_wannier_workflow(
         q3_binary=q3_binary,
         q3_utility_binary=q3_utility_binary,
         capture_output=capture_output,
+        execution_policy=execution_policy,
     ) as chain:
         return WannierProtocol(chain, options).run().as_dict()

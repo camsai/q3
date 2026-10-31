@@ -69,7 +69,7 @@ WORKDIR /opt/q3-src
 COPY . /opt/q3-src
 
 RUN python3 -m venv /opt/q3-src/.venv \
-    && /opt/q3-src/.venv/bin/pip install --no-cache-dir pyyaml jinja2 jsonref
+    && /opt/q3-src/.venv/bin/pip install --no-cache-dir ".[build]"
 
 # One engine binary ships: the CUDA build, installed as q3 with q3_gpu_cuda as a
 # symlink to it, so the image is invoked like every other one (#316). The

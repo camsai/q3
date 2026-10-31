@@ -1,0 +1,7 @@
+{
+    "$id": "q3/results/provenance",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "provenance",
+    "type": "object",
+    "description": "How this result was produced: engine build, the model/method/precision asked for, and the pseudopotential identities. Deliberately left open — it is metadata about the run rather than part of the physics record."
+}

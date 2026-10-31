@@ -34,17 +34,17 @@ def test_makov_payne_correction_matches_qe_reference(q3_command, tmp_path):
         q3_command, input_path, "si_nc_charged", working_directory=str(tmp_path)
     )
 
-    correction = results.get("isolated_system_correction")
+    correction = results.properties.isolated_system_correction
     assert correction is not None, (
         "results.json is missing the isolated_system_correction object -- "
         "control.isolated_system_correction: makov-payne should have populated it"
     )
-    assert correction["method"] == "makov-payne"
+    assert correction.method == "makov-payne"
 
-    first_order = float(correction["first_order_ry"])
-    second_order = float(correction["second_order_ry"])
-    corrected_total = float(correction["corrected_total_energy_ry"])
-    total_energy = float(results["total_energy_ry"])
+    first_order = correction.terms["first_order"].value
+    second_order = correction.terms["second_order"].value
+    corrected_total = correction.corrected_total_energy.value
+    total_energy = float(results.properties.total_energy.value)
 
     assert abs(first_order - QE_FIRST_ORDER_RYDBERG) < FIRST_ORDER_TOLERANCE_RYDBERG, (
         f"1st order (monopole) term = {first_order:.8f} Ry, "
@@ -55,10 +55,10 @@ def test_makov_payne_correction_matches_qe_reference(q3_command, tmp_path):
         f"expected {QE_SECOND_ORDER_RYDBERG:.8f} Ry (QE reference, ~1e-3 Ry tolerance "
         f"for expected cross-code SCF/ionic-gauge differences)"
     )
-    assert abs(float(correction["total_ry"]) - (first_order + second_order)) < 1.0e-12
+    assert abs(correction.total.value - (first_order + second_order)) < 1.0e-12
     assert abs(corrected_total - (total_energy + first_order + second_order)) < 1.0e-9, (
-        "isolated_system_correction.corrected_total_energy_ry must equal "
-        "total_energy_ry + first_order + second_order"
+        "isolated_system_correction.corrected_total_energy must equal "
+        "total_energy + first_order + second_order"
     )
 
 
@@ -68,4 +68,4 @@ def test_makov_payne_not_applied_without_opt_in(q3_command, tmp_path):
     results, _ = run_q3_and_load_results(
         q3_command, input_path, "si_nc_charged", working_directory=str(tmp_path)
     )
-    assert "isolated_system_correction" not in results
+    assert results.properties.isolated_system_correction is None

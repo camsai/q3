@@ -26,11 +26,15 @@
  * planewave/execution/serial.hpp and planewave/execution/mpi.hpp.
  */
 
+#include "generated/q3/results/runtime_log/execution.hpp"
+#include "layer_0_core/execution/threading.hpp"
+#include "layer_0_core/profiling/counters.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_1_structure/reciprocal_space/kpoints_grid.hpp"
 #include "layer_2_quantum_system/execution/init.hpp"
 #include "layer_3_representation/basis/planewave/internal/fft/fft_grid_factory.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -242,6 +246,29 @@ class PlanewaveExecutionPolicy : public virtual QuantumSystemExecutionPolicy,
                                       int local_number_of_physical_kpoints,
                                       int number_of_spin_components,
                                       int number_of_values_per_state) const = 0;
+
+    /**
+     * What the run executed on -- processes, k-point pools, ranks per pool,
+     * the threads each process may use, whether reciprocal space was split,
+     * and the peak resident memory of the largest rank -- as results.json's
+     * runtime_log.execution, so a results file says which policy produced it.
+     *
+     * Collective under MPI: every rank must call it, for the memory reduction.
+     */
+    [[nodiscard]] generated::ResultsExecution execution_record() const {
+        generated::ResultsExecution record;
+        record.number_of_processes = number_of_processes();
+        record.number_of_threads_per_process = threading::maximum_threads();
+        record.number_of_kpoint_pools = number_of_pools();
+        record.band_group_size = record.number_of_processes / record.number_of_kpoint_pools;
+        record.reciprocal_space_vectors_are_distributed = band_size() > 1;
+        Real peak_resident_megabytes =
+            static_cast<Real>(ProfilingCounters::instance().peak_resident_bytes_now()) / 1048576.0;
+        reduce_scalar_max(peak_resident_megabytes);
+        record.peak_resident_memory_bytes =
+            static_cast<int64_t>(static_cast<std::uint64_t>(peak_resident_megabytes * 1048576.0));
+        return record;
+    }
 };
 
 } // namespace execution

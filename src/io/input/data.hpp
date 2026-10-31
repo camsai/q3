@@ -218,6 +218,16 @@ struct InputData {
      */
     std::string mean_field_export = "none";
 
+    /**
+     * With mean_field_export "berkeleygw", also write the nonlocal
+     * pseudopotential at every k-point as BerkeleyGW's VKB file -- the
+     * projectors ParaBands needs, with VSC, to add bands to WFN. Off by
+     * default: VKB holds one plane-wave vector per projector channel per
+     * k-point, usually more than WFN's own bands. Norm-conserving runs only
+     * (see add_kleinman_bylander_projectors_to_mean_field_record()).
+     */
+    bool mean_field_export_kleinman_bylander_projectors = false;
+
     // DOS parameters (used when calculation == "density_of_states")
     Real dos_broadening = 0.02;   // Gaussian broadening in Ry
     Real dos_energy_min = -100.0; // Energy range lower bound in Ry (auto-set if 0)
@@ -243,6 +253,9 @@ struct InputData {
      * from overlapping atoms. A relaxation driven step by step sets it, so
      * each geometry starts from the last one's density. A density that does
      * not fit this run's grid, or a missing one, falls back to the atoms.
+     * The saved bands are offered the same way, as the starting
+     * wavefunctions; a k-point whose file does not fit this basis starts from
+     * the atomic + random guess.
      */
     bool start_from_saved_charge_density = false;
 

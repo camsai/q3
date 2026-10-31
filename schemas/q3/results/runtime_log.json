@@ -1,0 +1,45 @@
+{
+    "$id": "q3/results/runtime_log",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "runtime log",
+    "type": "object",
+    "description": "How the calculation ran: which flavor, whether it converged and in how many iterations, the parallel topology and where the time went, and which derivatives are incomplete.",
+    "required": ["flavor", "converged", "execution"],
+    "additionalProperties": false,
+    "properties": {
+        "flavor": {
+            "type": "string",
+            "description": "Which calculation produced this record: 'self_consistent_field', 'non_self_consistent_field' or 'verification'."
+        },
+        "converged": {
+            "type": "boolean",
+            "description": "Whether the run met its convergence criterion. A non-self-consistent pass reports true, having no criterion to miss."
+        },
+        "self_consistent_field_iterations": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Iterations actually performed: the one it converged on, or the whole budget when it did not. Absent for a flavor that does not iterate."
+        },
+        "density_residuals": {
+            "type": "array",
+            "items": {
+                "type": "number",
+                "minimum": 0
+            },
+            "description": "The density residual after each self-consistent field iteration, in order, the convergence test's own measure (the squared norm of the change in the density); its energies are the convergence_electronic record. Absent for a flavor that does not iterate to self-consistency."
+        },
+        "timings_ms": {
+            "type": "object",
+            "description": "Where the run spent its time, in milliseconds, plus the call counts those times divide. Absent when nothing ran.",
+            "additionalProperties": {
+                "type": "number"
+            }
+        },
+        "execution": {
+            "$ref": "./runtime_log/execution.json"
+        },
+        "incomplete": {
+            "$ref": "./runtime_log/incomplete.json"
+        }
+    }
+}

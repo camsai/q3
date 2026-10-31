@@ -88,9 +88,9 @@ def test_supercell_full_scf(q3_command, system_key, tmp_path):
         timeout=1800,  # Allow up to 30 minutes for slow supercells
     )
 
-    assert results.get("converged", False) is True, f"SCF failed to converge for {system_key}"
+    assert results.runtime_log.converged is True, f"SCF failed to converge for {system_key}"
 
-    computed_energy = results["total_energy_ry"]
+    computed_energy = results.properties.total_energy.value
     expected_energy = reference["q3_energy"]
 
     difference = abs(computed_energy - expected_energy)

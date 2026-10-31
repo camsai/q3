@@ -971,7 +971,7 @@ subspace path. Remaining work:
         `utils` the helpers with no state. What is file I/O sits a tier down: the UPF shell
         reader is `q3.io.pseudo_atomic_shells`, the manifest's file references are
         `q3.io.input_reader`, and the two blocks are `q3.io.interpolation_settings` and
-        `q3.io.interpolation_results`. The engine chain stayed in
+        `q3.io.interpolation.results`. The engine chain stayed in
         `workflows/interpolation.py` with the mesh and k-path derivations both workflows
         share.
 
@@ -1122,7 +1122,9 @@ subspace path. Remaining work:
         `RY` enum value in its `TotalEnergyUnitsEnum` (not hardcoded to `eV` as its one example
         fixture might suggest) -- no fix needed there; whenever it's wired up (see below), it
         should simply emit `RY` to match this file.
--   [ ] **[S]** **Consolidate duplicate energy serialization** — `FlavorResult::write_results_json()`
+-   [x] **[S]** **Consolidate duplicate energy serialization** — done: flavors now return
+        `generated::Results` itself, and `write_results_json()` and `results_json_string()` both
+        serialize that one struct. Original item: `FlavorResult::write_results_json()`
         ([flavors/result.hpp](src/layer_4_computation/flavors/result.hpp)) and `to_json_string()`
         are two hand-synced copies of the identical schema in the same file (confirmed
         2026-07-28 while adding the `units` field above -- both needed updating together, by
@@ -1137,7 +1139,7 @@ subspace path. Remaining work:
 -   [x] **[S]** **Parse-time validation: reject unknown YAML manifest keys** — `YAMLInputParser` previously read each known key with a plain `if (node["key"])` check and silently ignored anything else, so a misspelled or unsupported field (e.g. `convergance_threshold`, `smearing.scheme` instead of `smearing.type`) fell back to its default with no error at all -- the setting the user thought they'd changed simply never applied. Fixed by adding `reject_unknown_keys()` (`yaml.hpp`) and calling it at every manifest level Q3 fully owns the key set for: root, `model`, `method` (+ `cutoffs`, `self_consistent_field`/`scf` and its `mixing`/`smearing`/`kgrid` sub-objects and each `hubbard` list entry, `band_structure`), and `control` (+ each `band_path` list entry). Cross-checked the allow-lists against every real key-path actually used across `examples/**/*.yml` and `tests/**/*.yml` (via a one-off script, not committed) before writing the fixed lists -- this caught `model.type`/`model.subtype`/`method.type` as accepted-but-currently-unused keys present in every single example (self-documenting the calculation even though DFT/Kohn-Sham + planewave-pseudopotential are Q3's only supported model/method today); missing these from the allow-list would have made every existing example throw on its very first field.
     -   **Real bug found and fixed by this same audit**: `q3.io.input_writer.write_scf_input()` wrote `method.scf.smearing.{scheme,width}`, but the parser only ever read `.{type,degauss}` -- so any caller passing `smearing=`/`smearing_width=` got an SCF run with NO smearing applied at all, silently. Not caught earlier because no validation/integration test exercised `write_scf_input`'s smearing parameters end-to-end (only `tests/python/test_input_writer.py`'s structural assertions, which didn't check smearing). Fixed the writer to emit the correct keys; added `test_write_scf_input_smearing_uses_parser_keys` as a regression guard.
     -   **Deliberately not covered**: inline YAML-embedded `material`/`lattice`/`basis` (the `material: {lattice: ..., basis: ...}` form, as opposed to `material: <path>.json`) is NOT validated -- confirmed via the same cross-check that every committed example references an external material JSON file instead, so this path carries far less real-world typo risk; revisit if inline material embedding sees real usage.
-    -   **Still open**: aligning the legacy namelist parser against the YAML parser for spin/smearing key parity was not attempted here (a separate, independent piece of work) -- see the item below.
+    -   **Still open**: aligning the pw.x namelist parser against the YAML parser for spin/smearing key parity was not attempted here (a separate, independent piece of work) -- see the item below.
 -   [x] **[M]** **Drop-in case set: the reference codes' own input files** (2026-08-08) —
         `tests/validation/test_reference_input_drop_in.py`, 12 cases. Every other comparison test
         generates the reference code's input _from_ Q3's YAML, which checks the physics but leaves
@@ -1312,6 +1314,15 @@ dftd3_threebody=.false.` and ignoring what the file said, so `vdw_corr='dft-d3'`
         refusal and the single-rank `q3_mpi` positive case. A real multi-rank export needs a
         gather step (k-points across pools, G-slabs within a group — `allgather_within_group()`
         exists for the latter) feeding the record on the root rank.
+    -   **`VSC` and `VKB` are not in the mean-field record** — `q3_utility convert` cannot
+        produce them, because `mean-field.q3mf` stores neither the self-consistent potential
+        nor the projectors; they are written only by the run itself. Storing V_sc(G) is
+        cheap; the projectors would better be rebuilt from the datasets at conversion than
+        stored, which needs the pseudopotentials and the crystal in the converter.
+    -   **`VKB` is norm-conserving only** — ultrasoft and PAW make the problem generalized
+        (H ψ = E S ψ), and DFT+U adds a projector term of its own; neither fits the file, so
+        both are refused. `VXC` is spin-unpolarized only: the record carries the
+        spin-averaged V_xc(G).
     -   **The mean-field record duplicates `wfc<N>.dat`** — `mean-field.q3mf`
         (`io/mean_field_record/`) stores its own copy of the wavefunction coefficients, so a run
         that requests an export writes them twice. It is written only when
@@ -1473,4 +1484,4 @@ dftd3_threebody=.false.` and ignoring what the file said, so `vdw_corr='dft-d3'`
         default-topology doc/behavior mismatch, a byte-offset bug in the wavefunction-checkpoint
         test reader, the orphaned (write-only) mid-SCF checkpoint, and the CLI-vs-bindings
         `results.json` naming mismatch.
--   [ ] **[M]** **Reconcile docs/ontology.md with the implementation** — the DataHolder / DataCalculator / Result pattern it describes (`ForcesDataHolder`, `AtomicForcesResult`, `LoggableMixin`, …) diverged from the code (results flow through `FlavorResult` + `contributions.hpp` structs + generated ESSE types). Either update the ontology (and [ontology.drawio](docs/ontology.drawio)) to the implemented design, or decide the pattern is still the target and file the refactor. Concrete class trees (XC, diagonalizers, mixers, smearing) were re-synced 2026-07-08.
+-   [ ] **[M]** **Reconcile docs/ontology.md with the implementation** — the DataHolder / DataCalculator / Result pattern it describes (`ForcesDataHolder`, `AtomicForcesResult`, `LoggableMixin`, …) diverged from the code (results flow through `generated::Results` + `contributions.hpp` structs + generated ESSE types). Either update the ontology (and [ontology.drawio](docs/ontology.drawio)) to the implemented design, or decide the pattern is still the target and file the refactor. Concrete class trees (XC, diagonalizers, mixers, smearing) were re-synced 2026-07-08.

@@ -8,33 +8,57 @@ regression suite reads, what the Python workflow layer parses, and what you
 should build on. Run tutorial 01's silicon example first, then:
 
 ```bash
-python3 -c "import json; d=json.load(open('output/si_nc_results.json')); print(sorted(d))"
+python3 -c "import json; d=json.load(open('output/si_nc_results.json')); print({k: sorted(v) for k, v in d.items()})"
 ```
 
 ```
-['band_energy_ry', 'converged', 'double_counting_correction_ry', 'eigenvalues_ry',
- 'ewald_energy_ry', 'exchange_correlation_energy_ry', 'execution', 'fermi_energy_ry',
- 'flavor', 'forces_ry_per_bohr', 'hartree_energy_ry', 'kpoint_weights', 'occupations',
- 'provenance', 'self_consistent_field_iterations', 'smearing_entropy_contribution_ry',
- 'stress_contributions_kbar', 'stress_kbar', 'timings_ms', 'total_energy_ry', 'units']
+{'structure': ['material'],
+ 'provenance': ['generator', 'model', 'precision', ...],
+ 'properties': ['energy_contributions', 'force_contributions', 'records',
+                'stress_contributions'],
+ 'runtime_log': ['converged', 'execution', 'flavor',
+             'self_consistent_field_iterations', 'timings_ms']}
 ```
 
-Every key carries its unit in its name, and a `units` block states them again
-(`energy: Ry`, `forces: Ry/bohr`, `stress: kbar`, `eigenvalues: Ry`). Q3 works
-in Rydberg atomic units throughout.
+The file is grouped by domain: `structure` is the material the run computed,
+`provenance` what it was asked to do and by which build, `properties` the
+physical results, and `runtime_log` how the calculation itself went.
 
-## Check `converged` first — always
+The headline results -- total energy and its breakdown, Fermi energy, forces,
+stress, pressure, band gaps -- are
+[ESSE](https://github.com/Exabyte-io/esse) property records in the
+`properties.records` list, each carrying its own `units`:
+
+```json
+{ "name": "total_energy", "units": "Ry", "value": -16.913417932 }
+```
+
+Everything else is an ESSE shape that carries its unit the same way, in a
+`units` field beside the value, never in the key's name:
+
+```json
+"energy_contributions": {
+    "double_counting": { "name": "double_counting", "units": "Ry", "value": 4.18208578 }
+}
+```
+
+Q3 works in Rydberg atomic units throughout, and every quantity in the file
+states its unit in its own `units` field. `q3.io.results.classes.Results` reads the
+file into typed blocks; each ESSE record is ESSE's own pydantic model, read by
+its name as an attribute of `properties`.
+
+## Check `runtime_log.converged` first — always
 
 ```python
-import json
+from q3.io.results.classes import Results
 
-with open("output/si_nc_results.json") as handle:
-    results = json.load(handle)
+results = Results.read("output/si_nc_results.json")
 
-if not results["converged"]:
+if not results.runtime_log.converged:
     raise SystemExit("SCF did not converge — every number below is meaningless")
 
-print(f"total energy = {results['total_energy_ry']:.9f} Ry")
+energy = results.properties.total_energy
+print(f"total energy = {energy.value:.9f} {energy.units.value}")
 ```
 
 ```
@@ -42,10 +66,10 @@ total energy = -16.913417932 Ry
 ```
 
 An unconverged run still writes a complete, well-formed results file with a
-plausible-looking energy in it. `converged` is the only thing standing between
+plausible-looking energy in it. `runtime_log.converged` is the only thing standing between
 you and publishing that number. Make this the first line of any script.
 
-When a run did not converge, `self_consistent_field_iterations` says how far it
+When a run did not converge, `runtime_log.self_consistent_field_iterations` says how far it
 got, and `provenance.precision.maximum_self_consistent_field_iterations` is the
 limit it was given. Equal numbers mean it ran out of iterations; the silicon
 example converges on iteration 7 of its 100.
@@ -55,40 +79,48 @@ example converges on iteration 7 of its 100.
 The total is decomposed, which is how you diagnose a suspicious result:
 
 ```python
-for key in ("total_energy_ry", "band_energy_ry", "hartree_energy_ry",
-            "exchange_correlation_energy_ry", "ewald_energy_ry",
-            "double_counting_correction_ry", "smearing_entropy_contribution_ry"):
-    print(f"{key:38s} {results[key]:16.9f}")
+contributions = results.properties.total_energy_contributions
+for key, term in contributions.model_dump(by_alias=True, exclude_none=True).items():
+    if isinstance(term, dict):
+        print(f"{key:30s} {term['value']:16.9f}")
+for key, quantity in results.properties.energy_contributions:
+    if quantity is not None:
+        print(f"{key:30s} {quantity.value:16.9f}")
 ```
 
 ```
-total_energy_ry                         -16.913417932
-band_energy_ry                            0.620351315
-hartree_energy_ry                         1.133669940
-exchange_correlation_energy_ry           -6.169552421
-ewald_energy_ry                         -16.679972546
-double_counting_correction_ry             4.182085780
-smearing_entropy_contribution_ry          0.000000000
+eigenvalues                           0.620351315
+hartree                               1.133669940
+exchange_correlation                 -6.169552421
+ewald                               -16.679972546
+temperatureEntropy                    0.000000000
+double_counting                       4.182085780
 ```
 
-`ewald_energy_ry` is the classical ion–ion electrostatic energy. It depends
+The contributions are ESSE's `total_energy_contributions` record, keyed as ESSE
+keys them: `eigenvalues` is the band energy and `temperatureEntropy` the `-TS`
+smearing term. The terms ESSE has no key for yet (the double-counting
+correction, DFT+U, dispersion, PAW one-center) are under `properties.energy_contributions`,
+each an ESSE energy with its own `units`.
+
+`ewald` is the classical ion–ion electrostatic energy. It depends
 only on the geometry and charges, not on the SCF, so it is a fast way to check
 that two calculations really used the same structure: if the Ewald energies
 differ, the geometries differ, whatever you believed about your inputs.
 
-`smearing_entropy_contribution_ry` is zero here because silicon is an insulator
+`temperatureEntropy` is zero here because silicon is an insulator
 run with fixed occupations. In a metal it is the `-TS` term, and a large value
 means your smearing width is doing more work than it should.
 
 ## Forces and stress
 
 ```python
-forces = results["forces_ry_per_bohr"]
-largest = max(max(abs(component) for component in atom) for atom in forces)
+forces = sorted(results.properties.atomic_forces.values, key=lambda atom: atom.id)
+largest = max(max(abs(component) for component in atom.value) for atom in forces)
 print(f"largest force component = {largest:.2e} Ry/bohr")
 
-stress = results["stress_kbar"]
-pressure = sum(stress[i][i] for i in range(3)) / 3
+stress = [row.root for row in results.properties.stress_tensor.value]
+pressure = results.properties.pressure.value
 print(f"pressure = {pressure:.2f} kbar")
 ```
 
@@ -97,24 +129,34 @@ largest force component = 2.89e-19 Ry/bohr
 pressure = 3.71 kbar
 ```
 
-Forces are per atom in the input's order, `[[fx, fy, fz], ...]`. Stress is a
+The forces record lists `{"id", "value"}` pairs, `id` 1-based as in
+`structure.material`; sorting by `id` puts them in the input's order. Nothing
+converts units on the way: check a record's `units` if your code assumes one.
+Stress is a
 3×3 tensor; the trace over 3 is the pressure, and a **positive** pressure means
 the cell wants to expand.
 
-`stress_contributions_kbar` breaks the tensor into `kinetic`, `hartree`,
+`properties.stress_contributions` breaks the tensor into `kinetic`, `hartree`,
 `exchange_correlation`, `ewald`, `local_pseudopotential`,
 `nonlocal_pseudopotential`, `core_correction`, `augmentation`, `dispersion` and
 `hubbard`. These individual terms are large and cancel heavily — kinetic is
 +2176 kbar against Ewald's −2964 kbar to leave 3.71 kbar — which is exactly why
 a small absolute error in one term can matter, and why they are reported
-separately.
+separately. Each is a `stress_tensor` shape (`units`, `value`), so
+`results.properties.stress_contributions["ewald"]` reads one;
+`force_contributions` holds the force terms the same way.
 
 ## Eigenvalues and occupations
 
-Both are indexed `[k-point][spin][band]`:
+They are ESSE's `eigenvalues_at_kpoints` record, `results.properties.eigenvalues_at_kpoints`:
+one entry per k-point with its `kpoint`, its `weight`, and the band `energies` and
+`occupations` of each spin channel. `eigenvalue_arrays` turns that into arrays
+indexed `[k-point][spin][band]`, with the occupations and weights beside them:
 
 ```python
-eigenvalues = results["eigenvalues_ry"]
+from q3.io.results.classes import eigenvalue_arrays
+
+eigenvalues, occupations, weights = eigenvalue_arrays(results.properties.eigenvalues_at_kpoints)  # Ry
 print(f"{len(eigenvalues)} k-points, {len(eigenvalues[0])} spin channel(s), "
       f"{len(eigenvalues[0][0])} bands")
 
@@ -139,21 +181,17 @@ wrong — a good illustration of why [tutorial 03](03-convergence.md) exists, an
 why band gaps come from the k-path workflow in
 [tutorial 04](04-band-structure-and-dos.md), not from an SCF grid.
 
-For spin-polarized runs the middle index has two entries, and `occupations`
-(same indexing) gives you the moment:
+A spin-polarized run lists every k-point twice, the spin-up states first and
+then the spin-down ones, each at half the k-point's weight. Its moment is
+reported directly, as ESSE's `magnetization_total` and `magnetization_absolute` records:
 
 ```python
-weights = results["kpoint_weights"]
-total_weight = sum(weights)
-moment = sum(
-    weight * (sum(up) - sum(down))
-    for weight, (up, down) in zip(weights, results["occupations"])
-) / total_weight
+moment = results.properties.magnetization_total.value  # uB
 ```
 
 k-point weights are **not** normalized to 1 — in this example they are 0.5 and
-1.5, summing to 2. Always divide by the sum; assuming normalization is a
-common source of factor-of-two errors.
+1.5, summing to 2. Always divide by the sum when you average over them;
+assuming normalization is a common source of factor-of-two errors.
 
 ## What else a run leaves behind
 

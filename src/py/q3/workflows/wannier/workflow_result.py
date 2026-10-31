@@ -6,15 +6,16 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from q3.io.interpolation_results import InterpolationResults, LadderAttempt
+from q3.io.interpolation.results.classes import InterpolationResults, LadderAttempt
+from q3.io.results.classes import Results
 from q3.workflows.band_distance import BandDistance
 
 
 class WorkflowResult(BaseModel):
     """What the protocol returns: the verdict, the model, and everything it was judged against.
 
-    The engine's own results files are carried as the documents they are; what
-    the protocol made is typed. :meth:`as_dict` is the dict the workflow has
+    The engine's own results files are carried as their models, and handed on
+    by :meth:`as_dict` as the documents they are. :meth:`as_dict` is the dict the workflow has
     always returned, its fifteen keys in the documented order.
     """
 
@@ -34,10 +35,10 @@ class WorkflowResult(BaseModel):
     band_distance: BandDistance | None
     #: The results file, with the band distance, the verdict and the ladder written into it.
     interpolation_results: InterpolationResults | None
-    reference_results: dict[str, Any] | None
+    reference_results: Results | None
     reference_kpoints: list[tuple[float, float, float]]
-    scf_results: dict[str, Any] | None
-    nscf_results: dict[str, Any] | None
+    scf_results: Results | None
+    nscf_results: Results | None
     fermi_energy_ry: float
 
     def as_dict(self) -> dict[str, Any]:
@@ -56,11 +57,16 @@ class WorkflowResult(BaseModel):
             "number_of_bands": self.number_of_bands,
             "attempts": [attempt.model_dump() for attempt in self.attempts],
             "band_distance": self.band_distance.as_dict() if self.band_distance else None,
-            "quality": document["interpolation"]["quality"] if document is not None else None,
+            "quality": document["quality"] if document is not None else None,
             "interpolation_results": document,
-            "reference_results": self.reference_results,
+            "reference_results": _document(self.reference_results),
             "reference_kpoints": [list(point) for point in self.reference_kpoints],
-            "scf_results": self.scf_results,
-            "nscf_results": self.nscf_results,
+            "scf_results": _document(self.scf_results),
+            "nscf_results": _document(self.nscf_results),
             "fermi_energy_ry": self.fermi_energy_ry,
         }
+
+
+def _document(results: Results | None) -> dict[str, Any] | None:
+    """A run's results file as its JSON, as ``as_dict`` hands every block on."""
+    return results.to_document() if results is not None else None

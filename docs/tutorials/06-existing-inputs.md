@@ -102,7 +102,9 @@ the deck's directory and starts from the density the previous one saved in its
 `forc_conv_thr = 1e-4` Q3 lands there too.
 
 The same call runs on a cluster by naming the binary and how to launch it —
-`q3_binary="q3_mpi", launcher="srun -n 64"`, or a GPU binary. A `vc-relax` deck
+`q3_binary="q3_mpi"` with
+`execution_policy=ExecutionPolicy(number_of_processes=64, number_of_kpoint_pools=64, launcher="srun -n {number_of_processes}")`
+from `q3.binary`, or a GPU binary. A `vc-relax` deck
 goes through `run_vc_relax_workflow`; give `press` as
 `target_pressure_gpa=press / 10` and take it out of the deck.
 

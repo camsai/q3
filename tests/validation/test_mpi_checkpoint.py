@@ -21,7 +21,6 @@ and nothing gathers them, so that layout still refuses. That refusal is pinned
 in test_mpi_mean_field_export.py.
 """
 
-import json
 import shutil
 import struct
 import subprocess
@@ -30,8 +29,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 from binary_readers import read_charge_density, read_wavefunction
+from q3.io.results.classes import Results
 
-from helpers import EXAMPLES_DIRECTORY, apply_config_overlay
+from helpers import EXAMPLES_DIRECTORY, apply_config_overlay, eigenvalues_ry
 
 pytestmark = pytest.mark.skipif(
     shutil.which("mpirun") is None,
@@ -96,7 +96,8 @@ no two k-points here share a plane-wave set.
 @pytest.fixture(scope="module")
 def serial_q3_bin(pytestconfig, q3_bin):
     """
-    A serial `q3`, from a build tree of its own. Only it runs NSCF.
+    A serial `q3`, from a build tree of its own. Every NSCF here runs on it, so
+    the comparison isolates the checkpoint from the topology of the NSCF.
 
     `q3_bin` is q3_mpi here: conftest's `require_mpi_binary` skips this module
     otherwise, since four serial processes under mpirun would each write the
@@ -143,7 +144,7 @@ def _scf_then_nscf(launcher, serial_q3_bin, working_directory, description):
     scf_input = apply_config_overlay(SILICON_INPUT, SCF_OVERLAY, working_directory)
     scf_output = _run(launcher + [str(scf_input)], working_directory, f"{description} SCF")
     output_directory = working_directory / "output"
-    scf_results = json.loads((output_directory / f"{PREFIX}_results.json").read_text())
+    scf_results = Results.read(output_directory / f"{PREFIX}_results.json")
 
     save_directory = output_directory / f"{PREFIX}.save"
     assert save_directory.is_dir(), (
@@ -162,8 +163,8 @@ def _scf_then_nscf(launcher, serial_q3_bin, working_directory, description):
     }
     nscf_input = apply_config_overlay(SILICON_INPUT, nscf_overlay, working_directory)
     _run([serial_q3_bin, str(nscf_input)], working_directory, f"NSCF from the {description} SCF")
-    nscf_results = json.loads((output_directory / f"{PREFIX}_results.json").read_text())
-    nscf_eigenvalues = np.array(nscf_results["eigenvalues_ry"])
+    nscf_results = Results.read(output_directory / f"{PREFIX}_results.json")
+    nscf_eigenvalues = np.array(eigenvalues_ry(nscf_results))
     return saved_checkpoint, scf_results, nscf_eigenvalues
 
 
@@ -218,10 +219,10 @@ def pooled_run(q3_bin, serial_q3_bin, tmp_path_factory):
 def test_pooled_run_uses_one_rank_per_pool(pooled_run):
     """The layout under test: the automatic topology, every rank its own pool."""
     _, scf_results, _ = pooled_run
-    execution = scf_results["execution"]
-    assert execution["number_of_processes"] == NUMBER_OF_RANKS
-    assert execution["number_of_kpoint_pools"] == NUMBER_OF_RANKS
-    assert execution["band_group_size"] == 1
+    execution = scf_results.runtime_log.execution
+    assert execution.number_of_processes == NUMBER_OF_RANKS
+    assert execution.number_of_kpoint_pools == NUMBER_OF_RANKS
+    assert execution.band_group_size == 1
 
 
 def test_nscf_from_pooled_checkpoint_matches_nscf_from_serial_checkpoint(serial_run, pooled_run):
@@ -295,5 +296,5 @@ def test_checkpoint_eigenvalues_cover_every_kpoint_in_global_order(serial_run, p
     difference = np.max(np.abs(pooled["eigenvalues"] - serial["eigenvalues"]))
     assert difference < EIGENVALUE_TOLERANCE_RY, f"stored eigenvalues differ by {difference:.3e} Ry"
     # And they are the ones the same run reported in results.json.
-    reported = np.array(pooled_results["eigenvalues_ry"])[:, 0, :]
+    reported = np.array(eigenvalues_ry(pooled_results))[:, 0, :]
     np.testing.assert_allclose(pooled["eigenvalues"], reported, rtol=0, atol=1e-12)

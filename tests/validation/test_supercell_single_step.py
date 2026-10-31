@@ -105,7 +105,7 @@ def test_supercell_single_step(q3_command, system_key, tmp_path):
         timeout=300,
     )
 
-    computed_energy = results["total_energy_ry"]
+    computed_energy = results.properties.total_energy.value
     min_energy = reference["min_energy"]
     max_energy = reference["max_energy"]
 

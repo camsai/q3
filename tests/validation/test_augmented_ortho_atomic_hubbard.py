@@ -24,8 +24,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from q3.io.results.classes import Incomplete, Results
 
-from helpers import QE_AVAILABLE, QE_PW
+from helpers import QE_AVAILABLE, QE_PW, atomic_forces, stress_contributions, stress_tensor
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 ULTRASOFT_REFERENCE_INPUT = (
@@ -44,6 +45,7 @@ LATTICE_VECTORS_BOHR = (
     (0.0, 4.119180301160476, 4.119180301160476),
     (-4.119180301160476, 4.119180301160476, 0.0),
 )
+
 ATOMIC_POSITIONS_CRYSTAL = ((0.0, 0.0, 0.0), (0.27, 0.263, 0.257))
 INDEPENDENT_STRAIN_COMPONENTS = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
 FINITE_STRAIN_STEP = 0.002
@@ -155,9 +157,12 @@ def run_paw_q3(q3_bin, directory, lattice_vectors, atomic_positions, label, samp
         timeout=3600,
     )
     assert completed.returncode == 0, completed.stdout[-4000:]
-    result = json.loads((directory / "output" / f"{label}_results.json").read_text())
-    assert result["converged"], completed.stdout[-4000:]
-    print(f"\n  completed {label}: E={result['total_energy_ry']:.12f} Ry", flush=True)
+    result = Results.read(directory / "output" / f"{label}_results.json")
+    assert result.runtime_log.converged, completed.stdout[-4000:]
+    print(
+        f"\n  completed {label}: E={result.properties.total_energy.value:.12f} Ry",
+        flush=True,
+    )
     return result
 
 
@@ -271,31 +276,30 @@ def test_paw_ortho_atomic_force_is_q3s_energy_gradient(paw_derivative_runs):
     displacement_length = math.sqrt(sum(value * value for value in displacement_vector))
     displacement_unit = [value / displacement_length for value in displacement_vector]
     analytic = sum(
-        baseline["forces_ry_per_bohr"][1][direction] * displacement_unit[direction]
+        atomic_forces(baseline)[1][direction] * displacement_unit[direction]
         for direction in range(3)
     )
-    numerical = -(displaced[1]["total_energy_ry"] - displaced[-1]["total_energy_ry"]) / (
-        2.0 * FINITE_POSITION_STEP * displacement_length
-    )
+    numerical = -(
+        displaced[1].properties.total_energy.value - displaced[-1].properties.total_energy.value
+    ) / (2.0 * FINITE_POSITION_STEP * displacement_length)
     assert abs(analytic - numerical) < FORCE_GRADIENT_TOLERANCE_RYDBERG_PER_BOHR
 
 
 def test_paw_ortho_atomic_stress_is_q3s_full_energy_gradient(paw_derivative_runs):
     baseline = paw_derivative_runs["baseline"]
-    assert not baseline.get("stress_is_incomplete", False)
+    assert (baseline.runtime_log.incomplete or Incomplete()).stress is None
     assert (
-        max(abs(value) for row in baseline["stress_contributions_kbar"]["hubbard"] for value in row)
-        > 5.0
+        max(abs(value) for row in stress_contributions(baseline)["hubbard"] for value in row) > 5.0
     )
     volume_bohr_cubed = abs(determinant(LATTICE_VECTORS_BOHR))
     for direction_a, direction_b in INDEPENDENT_STRAIN_COMPONENTS:
         pair = paw_derivative_runs["strain"][(direction_a, direction_b)]
         numerical = (
-            -(pair[1]["total_energy_ry"] - pair[-1]["total_energy_ry"])
+            -(pair[1].properties.total_energy.value - pair[-1].properties.total_energy.value)
             / (2.0 * FINITE_STRAIN_STEP * volume_bohr_cubed)
             * RYDBERG_PER_BOHR_CUBED_TO_KILOBAR
         )
-        analytic = baseline["stress_kbar"][direction_a][direction_b]
+        analytic = stress_tensor(baseline)[direction_a][direction_b]
         assert abs(analytic - numerical) < STRESS_GRADIENT_TOLERANCE_KILOBAR, (
             f"component ({direction_a}, {direction_b}): analytic {analytic:.8f} kbar "
             f"vs numerical {numerical:.8f} kbar"
@@ -305,21 +309,21 @@ def test_paw_ortho_atomic_stress_is_q3s_full_energy_gradient(paw_derivative_runs
 def test_paw_gamma_half_sphere_matches_explicit_full_sphere(paw_gamma_runs):
     half = paw_gamma_runs["gamma_half"]
     full = paw_gamma_runs["gamma_full"]
-    assert abs(half["total_energy_ry"] - full["total_energy_ry"]) < GAMMA_ENERGY_TOLERANCE_RYDBERG
+    assert (
+        abs(half.properties.total_energy.value - full.properties.total_energy.value)
+        < GAMMA_ENERGY_TOLERANCE_RYDBERG
+    )
     assert (
         max(
-            abs(
-                half["forces_ry_per_bohr"][atom][direction]
-                - full["forces_ry_per_bohr"][atom][direction]
-            )
-            for atom in range(len(half["forces_ry_per_bohr"]))
+            abs(atomic_forces(half)[atom][direction] - atomic_forces(full)[atom][direction])
+            for atom in range(len(atomic_forces(half)))
             for direction in range(3)
         )
         < GAMMA_FORCE_TOLERANCE_RYDBERG_PER_BOHR
     )
     assert (
         max(
-            abs(half["stress_kbar"][row][column] - full["stress_kbar"][row][column])
+            abs(stress_tensor(half)[row][column] - stress_tensor(full)[row][column])
             for row in range(3)
             for column in range(3)
         )
@@ -328,8 +332,8 @@ def test_paw_gamma_half_sphere_matches_explicit_full_sphere(paw_gamma_runs):
     assert (
         max(
             abs(
-                half["stress_contributions_kbar"]["augmentation"][row][column]
-                - full["stress_contributions_kbar"]["augmentation"][row][column]
+                stress_contributions(half)["augmentation"][row][column]
+                - stress_contributions(full)["augmentation"][row][column]
             )
             for row in range(3)
             for column in range(3)
@@ -339,8 +343,8 @@ def test_paw_gamma_half_sphere_matches_explicit_full_sphere(paw_gamma_runs):
     assert (
         max(
             abs(
-                half["stress_contributions_kbar"]["hubbard"][row][column]
-                - full["stress_contributions_kbar"]["hubbard"][row][column]
+                stress_contributions(half)["hubbard"][row][column]
+                - stress_contributions(full)["hubbard"][row][column]
             )
             for row in range(3)
             for column in range(3)

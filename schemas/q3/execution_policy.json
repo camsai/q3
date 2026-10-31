@@ -1,0 +1,39 @@
+{
+    "$id": "execution_policy",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Execution policy",
+    "description": "The engine execution policy every run of a calculation is started with, described from outside the binary. The binary builds its own policy (serial, MPI, GPU) from the ranks it is launched on and its command-line options; these fields say which, in the names the `execution` block of results.json reports back. One value, handed to a workflow, reaches each of its units -- the SCF, the NSCF of a band structure or a DOS, every step of a relaxation. It names no binary: which one runs (q3, q3_mpi, a GPU binary) is the caller's choice. The Python model is q3.binary.ExecutionPolicy, which also accepts the launcher as one string and splits it as a shell would.",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "number_of_processes": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 1,
+            "description": "MPI ranks. One runs the binary directly, without the launcher."
+        },
+        "number_of_kpoint_pools": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "default": null,
+            "description": "k-point pools, passed as --pools. Null leaves the choice to the input's control.number_of_kpoint_pools, or to the engine."
+        },
+        "distribute_bands": {
+            "type": "boolean",
+            "default": false,
+            "description": "Split each pool's bands over its ranks, passed as --distribute-bands."
+        },
+        "precision": {
+            "type": ["string", "null"],
+            "enum": ["double", "mixed", null],
+            "default": null,
+            "description": "Arithmetic of the GPU binaries, passed as --precision. Null keeps the binary's default."
+        },
+        "launcher": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": ["mpirun", "-np", "{number_of_processes}"],
+            "description": "The MPI launcher placed before the binary when number_of_processes is above one, one word per entry, with {number_of_processes} where the rank count goes, e.g. [\"srun\", \"-n\", \"{number_of_processes}\", \"--gpus-per-task\", \"1\"]."
+        }
+    }
+}

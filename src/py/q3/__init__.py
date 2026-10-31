@@ -13,7 +13,7 @@ Example::
     from q3.io.input_writer import write_input
 
     result = run_scf("path/to/input.yml", q3_binary="./build/q3")
-    print(result["total_energy_ry"])
+    print(result.properties.total_energy.value)  # Ry
 """
 
 from q3.errors import (

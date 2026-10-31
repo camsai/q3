@@ -36,13 +36,14 @@ from ase.calculators.calculator import Calculator, all_changes
 from ase.io import espresso
 from mat3ra.code.constants import Coefficients as _Coefficients
 
-from q3.binary import find_binary
+from q3.binary import ExecutionPolicy, execution_policy_or_serial, find_binary
 from q3.errors import Q3RuntimeError
 from q3.io.output_writer import (
     extract_total_energy,
     raise_if_derivative_incomplete,
     raise_if_not_converged,
 )
+from q3.io.results.classes import Results
 from q3.structure.ase_atoms import ase_atoms_to_material_json, material_json_to_ase_atoms
 
 try:
@@ -116,8 +117,11 @@ class Q3ASECalculator(Calculator):
     q3_binary:
         Path to the binary each calculation runs: ``q3``, ``q3_mpi`` or a GPU
         binary.  Auto-detected when ``None``.
-    launcher:
-        Command placed before the binary, e.g. ``"srun -n 64"``.
+    execution_policy:
+        The execution policy each calculation starts the binary with: ranks,
+        k-point pools, the launcher (see :class:`q3.binary.ExecutionPolicy`).
+        Anything but the serial policy needs ``"subprocess"`` mode, which
+        ``"auto"`` then picks: the in-process bindings run on one process.
     workdir:
         Directory where each step's structure (``step_NNNN/material.json``) is written.  Defaults
         to a persistent ``q3_ase_workdir/`` in the current directory.
@@ -134,7 +138,7 @@ class Q3ASECalculator(Calculator):
         *,
         mode: str = "auto",
         q3_binary: str | Path | None = None,
-        launcher: str | list[str] = (),
+        execution_policy: ExecutionPolicy | None = None,
         workdir: str | Path | None = None,
         capture_output: bool = True,
         **kwargs: Any,
@@ -149,7 +153,7 @@ class Q3ASECalculator(Calculator):
         self._step = 0
         self._mode = mode
 
-        self._launcher = launcher.split() if isinstance(launcher, str) else list(launcher)
+        self._execution_policy = execution_policy_or_serial(execution_policy)
         if self._scf_input_path.suffix.lower() in (".yml", ".yaml"):
             with open(self._scf_input_path) as file_handle:
                 self._template_config: dict = yaml.safe_load(file_handle)
@@ -168,7 +172,13 @@ class Q3ASECalculator(Calculator):
 
         # Resolve mode
         if self._mode == "auto":
-            self._mode = "subprocess" if q3_core is None else "bindings"
+            in_process = q3_core is not None and self._execution_policy.is_default
+            self._mode = "bindings" if in_process else "subprocess"
+        if self._mode == "bindings" and not self._execution_policy.is_default:
+            raise ValueError(
+                "Q3ASECalculator: mode='bindings' runs in this process and cannot honour "
+                f"the execution policy {self._execution_policy!r}. Use mode='subprocess' (or 'auto')."
+            )
 
         self._bindings_reference_cell = None
         if self._mode == "bindings":
@@ -228,7 +238,7 @@ class Q3ASECalculator(Calculator):
                 )
             coordinates = atoms.get_scaled_positions().tolist()
             result_str = self._solver.solve(coordinates, write_output_files=True)
-            q3_results = json.loads(result_str)
+            q3_results = Results.model_validate_json(result_str)
         else:
             self._step += 1
             step_directory = self._workdir / f"step_{self._step:04d}"
@@ -252,17 +262,17 @@ class Q3ASECalculator(Calculator):
         """
         self._step += 1
         q3_results = self._run_binary()
-        atoms = material_json_to_ase_atoms(q3_results["material"])
+        atoms = material_json_to_ase_atoms(q3_results.structure.material)
         atoms.calc = self
         self.atoms = atoms.copy()
         self._store_results(q3_results, ("energy", "forces", "stress"), len(atoms))
         return atoms, q3_results
 
-    def _run_binary(self, *arguments: str) -> dict:
+    def _run_binary(self, *arguments: str) -> Results:
         """Run the binary on the input, in its directory, and read the results it wrote."""
         self._results_path.unlink(missing_ok=True)
         proc = subprocess.run(
-            [*self._launcher, str(self._binary), str(self._scf_input_path), *arguments],
+            self._execution_policy.command(self._binary, str(self._scf_input_path), *arguments),
             cwd=self._scf_input_path.parent,
             capture_output=self._capture_output,
             text=True,
@@ -276,10 +286,11 @@ class Q3ASECalculator(Calculator):
             )
         if not self._results_path.exists():
             raise FileNotFoundError(f"{self._results_path} not found after step {self._step}.")
-        with open(self._results_path) as file_handle:
-            return json.load(file_handle)
+        results = Results.read(self._results_path)
+        self._execution_policy.check_results(results)
+        return results
 
-    def _store_results(self, q3_results: dict, properties, number_of_atoms: int) -> None:
+    def _store_results(self, q3_results: Results, properties, number_of_atoms: int) -> None:
         """Convert a Q3 result to ASE's units and conventions, into ``self.results``."""
         raise_if_not_converged(q3_results)
 
@@ -291,7 +302,12 @@ class Q3ASECalculator(Calculator):
         raise_if_derivative_incomplete(q3_results, properties)
 
         # Convert forces from Ry/Bohr to eV/Å.
-        forces_ry_bohr = q3_results.get("forces_ry_per_bohr", [])
+        forces = q3_results.properties.atomic_forces
+        forces_ry_bohr = (
+            [atom.value for atom in sorted(forces.values, key=lambda atom: atom.id)]
+            if forces
+            else []
+        )
         if forces_ry_bohr:
             self.results["forces"] = np.array(forces_ry_bohr) * _RY_PER_BOHR_TO_EV_PER_ANG
         elif "forces" in properties:
@@ -300,6 +316,7 @@ class Q3ASECalculator(Calculator):
         # Convert stress from Q3's kbar (Nielsen-Martin convention) to ASE's
         # Voigt-order eV/Å³ (tensile-positive convention) -- see
         # stress_kbar_to_ase_voigt's docstring for why the sign flips.
-        stress_kbar = q3_results.get("stress_kbar")
+        stress = q3_results.properties.stress_tensor
+        stress_kbar = [row.root for row in stress.value] if stress else None
         if stress_kbar and "stress" in properties:
             self.results["stress"] = stress_kbar_to_ase_voigt(stress_kbar)

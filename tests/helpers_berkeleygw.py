@@ -170,6 +170,12 @@ def _read_scalar_int32(reader, label):
 
 
 def _read_title_block(reader, expected_prefix, label="record 1 (stitle, sdate, stime)"):
+    """See ``_read_title_block_for``; ``expected_prefix`` may also be a tuple of them."""
+    prefixes = (expected_prefix,) if isinstance(expected_prefix, str) else tuple(expected_prefix)
+    return _read_title_block_for(reader, prefixes, label)
+
+
+def _read_title_block_for(reader, expected_prefixes, label):
     """Record 1: 32-byte stitle + 32-byte sdate + 32-byte stime = 96 bytes.
 
     The converter (``write_wfng`` for WFN, ``write_rhog`` for RHO) builds
@@ -189,14 +195,16 @@ def _read_title_block(reader, expected_prefix, label="record 1 (stitle, sdate, s
         creation_time = payload[64:96].decode("ascii").rstrip()
     except UnicodeDecodeError as exc:
         raise BerkeleyGWFormatError(f"{reader.source_path}: {label} is not ASCII: {exc}") from exc
-    if title == f"{expected_prefix}-Real":
+    if title in {f"{prefix}-Real" for prefix in expected_prefixes}:
         is_complex_flavor = False
-    elif title == f"{expected_prefix}-Complex":
+    elif title in {f"{prefix}-Complex" for prefix in expected_prefixes}:
         is_complex_flavor = True
     else:
+        expected = " or ".join(
+            f"'{prefix}-Real' or '{prefix}-Complex'" for prefix in expected_prefixes
+        )
         raise BerkeleyGWFormatError(
-            f"{reader.source_path}: {label} stitle is {title!r}, expected "
-            f"'{expected_prefix}-Real' or '{expected_prefix}-Complex'."
+            f"{reader.source_path}: {label} stitle is {title!r}, expected {expected}."
         )
     return {
         "title": title,
@@ -596,29 +604,20 @@ def _read_wfn_body(reader, header):
 # ── RHO ─────────────────────────────────────────────────────────────
 
 
-def read_berkeleygw_charge_density_file(path):
-    """Reads a BerkeleyGW ``RHO`` mean-field file (8 header records + body).
+def _read_field_file(path, expected_prefixes, field_key):
+    """Reads a field file -- RHO, VXC or VSC: 8 header records, the G-set, one field per spin.
 
-    Header layout follows the BerkeleyGW specification as ``write_rhog``
-    writes its records 1-8 -- identical
-    to WFN records 1, 4-8, but record 2 omits the k-point fields and record 3
-    is FFT grid only (no kgrid/kshift).
-
-    Returns a dict with every header field plus:
-      - "charge_density_gvectors": int32 ndarray, shape (3, number_of_g_vectors).
-      - "charge_density_g_times_cell_volume": complex128 (or float64, if
-        real flavor) ndarray, shape (number_of_g_vectors,
-        number_of_spin_components). NOTE the name: ``write_rhog`` multiplies
-        rho(G) by the cell volume before writing it
-        -- this is the raw on-disk BerkeleyGW convention, not the bare
-        density. See ``read_berkeleygw_wavefunction_file``'s docstring for
-        the general conventions (framing, dtypes, column-major order).
+    The three share RHO's layout (the BerkeleyGW specification's RHO and VXC
+    files; BerkeleyGW 4.0's ParaBands reads VSC with the same routines, in
+    ``MeanField/ParaBands/parabands.f90``), and differ only in the title and
+    in what the values mean. ``expected_prefixes`` lists the titles accepted,
+    first the one named in errors; the values land under ``field_key``.
     """
     path = Path(path)
     with open(path, "rb") as file_handle:
         reader = _FortranSequentialReader(file_handle, path)
         header = {}
-        header.update(_read_title_block(reader, "RHO"))
+        header.update(_read_title_block(reader, expected_prefixes))
 
         # Record 2: ns, ng, ntran, cell_symmetry, nat, ecutrho -- all that's shared with
         # WFN's record 2; RHO omits nk/nbands/ngkmax/ecutwfc entirely (``write_rhog``
@@ -658,7 +657,7 @@ def read_berkeleygw_charge_density_file(path):
 
         header.update(
             _read_lattice_and_symmetry_records(
-                reader, number_of_symmetry_operations, number_of_atoms, "RHO"
+                reader, number_of_symmetry_operations, number_of_atoms, expected_prefixes[0]
             )
         )
 
@@ -696,12 +695,46 @@ def read_berkeleygw_charge_density_file(path):
         flat = _as_array(
             payload, coefficient_dtype, number_of_g_vectors * number_of_spin_components, label, path
         )
-        header["charge_density_g_times_cell_volume"] = _reshape_fortran(
+        header[field_key] = _reshape_fortran(
             flat, (number_of_g_vectors, number_of_spin_components)
         ).copy()
 
     header["source_path"] = path
     return header
+
+
+def read_berkeleygw_charge_density_file(path):
+    """Reads a BerkeleyGW ``RHO`` mean-field file (8 header records + body).
+
+    Header layout follows the BerkeleyGW specification as ``write_rhog``
+    writes its records 1-8 -- identical
+    to WFN records 1, 4-8, but record 2 omits the k-point fields and record 3
+    is FFT grid only (no kgrid/kshift).
+
+    Returns a dict with every header field plus:
+      - "charge_density_gvectors": int32 ndarray, shape (3, number_of_g_vectors).
+      - "charge_density_g_times_cell_volume": complex128 (or float64, if
+        real flavor) ndarray, shape (number_of_g_vectors,
+        number_of_spin_components). NOTE the name: ``write_rhog`` multiplies
+        rho(G) by the cell volume before writing it
+        -- this is the raw on-disk BerkeleyGW convention, not the bare
+        density. See ``read_berkeleygw_wavefunction_file``'s docstring for
+        the general conventions (framing, dtypes, column-major order).
+    """
+    return _read_field_file(path, ("RHO",), "charge_density_g_times_cell_volume")
+
+
+def read_berkeleygw_potential_file(path):
+    """Reads a BerkeleyGW ``VXC`` or ``VSC`` file: a potential on the G-set, per spin.
+
+    VXC is the exchange-correlation potential (the BerkeleyGW
+    specification's VXC file), VSC the local Kohn-Sham potential ParaBands
+    diagonalizes with; both in Rydberg, with G = 0 the cell average.
+
+    Returns ``read_berkeleygw_charge_density_file``'s header fields plus
+    "potential_g", shape (number_of_g_vectors, number_of_spin_components).
+    """
+    return _read_field_file(path, ("VXC", "VSC"), "potential_g")
 
 
 # ── vxc.dat (ASCII) ───────────────────────────────────────────────────
@@ -842,3 +875,207 @@ def read_berkeleygw_exchange_correlation_file(path):
         kpoint_index += 1
 
     return {"number_of_kpoints": len(kpoint_blocks), "kpoints": kpoint_blocks, "source_path": path}
+
+
+# ── VKB (Kleinman-Bylander projectors) ────────────────────────────────
+
+
+def _read_block(reader, expected_count, dtype, values_per_item, label):
+    """One ``[nrecord=1][count][values]`` block; returns the values, flat."""
+    nrecord = _read_scalar_int32(reader, f"{label} nrecord")
+    if nrecord != 1:
+        raise BerkeleyGWFormatError(
+            f"{reader.source_path}: {label} nrecord = {nrecord}, expected 1."
+        )
+    count = _read_scalar_int32(reader, f"{label} count")
+    if count != expected_count:
+        raise BerkeleyGWFormatError(
+            f"{reader.source_path}: {label} count = {count}, expected {expected_count}."
+        )
+    payload = reader.read_raw_record(f"{label} payload")
+    return _as_array(payload, dtype, values_per_item * count, label, reader.source_path)
+
+
+def read_berkeleygw_kleinman_bylander_file(path):
+    """Reads a BerkeleyGW ``VKB`` file: the nonlocal pseudopotential at every k-point.
+
+    The BerkeleyGW specification does not cover VKB; this follows the reader
+    BerkeleyGW 4.0 ships, ``pp_read_header`` and ``pp_read_beta`` in
+    ``MeanField/ParaBands/pseudopot_vkb.f90``. Records 1 and 3-11 are WFN's;
+    record 2 replaces WFN's nbands with nsp, nkb, nhm; records 12-14 are the
+    species of each atom, the projector channels per species and the D
+    coefficients; then the charge-density G-set and, per k-point, its
+    G-vectors and every projector channel per spin, atoms grouped by species.
+
+    Returns the header fields plus:
+      - "atom_species": int ndarray (nat,), 1-based.
+      - "projectors_per_species": int ndarray (nsp,).
+      - "nonlocal_coefficients": float64 ndarray (nhm, nhm, nat, ns), Rydberg.
+      - "kpoint_gvectors": list over k-points of int32 (3, ngk).
+      - "projectors": list over k-points of complex128 (ns, nat, nhm, ngk),
+        each atom's channels at their own index, zero beyond its count --
+        already put back from the file's species-grouped order.
+    """
+    path = Path(path)
+    with open(path, "rb") as file_handle:
+        reader = _FortranSequentialReader(file_handle, path)
+        header = {}
+        header.update(_read_title_block(reader, "VKB"))
+
+        label = "record 2 (ns, ng, ntran, cell_symmetry, nat, ecutrho, nk, nsp, nkb, nhm, ngkmax, ecutwfc)"
+        payload = reader.read_raw_record(label)
+        record_2_dtype = np.dtype(
+            [
+                ("number_of_spin_components", _INT32),
+                ("number_of_g_vectors", _INT32),
+                ("number_of_symmetry_operations", _INT32),
+                ("cell_symmetry_class", _INT32),
+                ("number_of_atoms", _INT32),
+                ("charge_density_cutoff_rydberg", _FLOAT64),
+                ("number_of_kpoints", _INT32),
+                ("number_of_species", _INT32),
+                ("number_of_projectors", _INT32),
+                ("maximum_projectors_per_atom", _INT32),
+                ("maximum_g_vectors_per_kpoint", _INT32),
+                ("wavefunction_cutoff_rydberg", _FLOAT64),
+            ]
+        )
+        record_2 = _as_array(payload, record_2_dtype, 1, label, path)[0]
+        for name in record_2_dtype.names:
+            value = record_2[name]
+            header[name] = float(value) if value.dtype == _FLOAT64 else int(value)
+        number_of_spin_components = header["number_of_spin_components"]
+        number_of_atoms = header["number_of_atoms"]
+        number_of_kpoints = header["number_of_kpoints"]
+        number_of_species = header["number_of_species"]
+        maximum_projectors_per_atom = header["maximum_projectors_per_atom"]
+
+        label = "record 3 (FFTgrid, kgrid, kshift)"
+        payload = reader.read_raw_record(label)
+        record_3_dtype = np.dtype(
+            [
+                ("fft_grid_dimensions", _INT32, (3,)),
+                ("kpoint_grid_dimensions", _INT32, (3,)),
+                ("kpoint_grid_shifts", _FLOAT64, (3,)),
+            ]
+        )
+        record_3 = _as_array(payload, record_3_dtype, 1, label, path)[0]
+        for name in record_3_dtype.names:
+            header[name] = np.array(record_3[name])
+
+        header.update(
+            _read_lattice_and_symmetry_records(
+                reader, header["number_of_symmetry_operations"], number_of_atoms, "VKB"
+            )
+        )
+
+        payload = reader.read_raw_record("record 9 (ngk)")
+        header["number_of_gvectors_per_kpoint"] = _as_array(
+            payload, _INT32, number_of_kpoints, "record 9 (ngk)", path
+        ).copy()
+        payload = reader.read_raw_record("record 10 (kw)")
+        header["kpoint_weights"] = _as_array(
+            payload, _FLOAT64, number_of_kpoints, "record 10 (kw)", path
+        ).copy()
+        payload = reader.read_raw_record("record 11 (kpt)")
+        header["kpoints_crystal_coordinates"] = _reshape_fortran(
+            _as_array(payload, _FLOAT64, 3 * number_of_kpoints, "record 11 (kpt)", path),
+            (3, number_of_kpoints),
+        ).copy()
+
+        payload = reader.read_raw_record("record 12 (ityp)")
+        header["atom_species"] = _as_array(
+            payload, _INT32, number_of_atoms, "record 12 (ityp)", path
+        ).copy()
+        payload = reader.read_raw_record("record 13 (nh)")
+        header["projectors_per_species"] = _as_array(
+            payload, _INT32, number_of_species, "record 13 (nh)", path
+        ).copy()
+        shape = (
+            maximum_projectors_per_atom,
+            maximum_projectors_per_atom,
+            number_of_atoms,
+            number_of_spin_components,
+        )
+        payload = reader.read_raw_record("record 14 (deeq)")
+        header["nonlocal_coefficients"] = _reshape_fortran(
+            _as_array(payload, _FLOAT64, int(np.prod(shape)), "record 14 (deeq)", path), shape
+        ).copy()
+
+        header["charge_density_gvectors"] = _reshape_fortran(
+            _read_block(reader, header["number_of_g_vectors"], _INT32, 3, "G-set"),
+            (3, header["number_of_g_vectors"]),
+        ).copy()
+
+        # Atoms in the order the file stores their projectors: grouped by species.
+        atoms_by_species = [
+            atom_index
+            for species in range(1, number_of_species + 1)
+            for atom_index in range(number_of_atoms)
+            if header["atom_species"][atom_index] == species
+        ]
+        header["kpoint_gvectors"] = []
+        header["projectors"] = []
+        for kpoint_index in range(number_of_kpoints):
+            number_of_plane_waves = int(header["number_of_gvectors_per_kpoint"][kpoint_index])
+            header["kpoint_gvectors"].append(
+                _reshape_fortran(
+                    _read_block(
+                        reader,
+                        number_of_plane_waves,
+                        _INT32,
+                        3,
+                        f"k-point {kpoint_index + 1} G-vectors",
+                    ),
+                    (3, number_of_plane_waves),
+                ).copy()
+            )
+            projectors = np.zeros(
+                (
+                    number_of_spin_components,
+                    number_of_atoms,
+                    maximum_projectors_per_atom,
+                    number_of_plane_waves,
+                ),
+                dtype=_COMPLEX128,
+            )
+            for spin_index in range(number_of_spin_components):
+                for atom_index in atoms_by_species:
+                    species = header["atom_species"][atom_index]
+                    for channel in range(header["projectors_per_species"][species - 1]):
+                        projectors[spin_index, atom_index, channel] = _read_block(
+                            reader,
+                            number_of_plane_waves,
+                            _COMPLEX128,
+                            1,
+                            f"k-point {kpoint_index + 1} projector",
+                        )
+            header["projectors"].append(projectors)
+
+        trailing = file_handle.read(1)
+        if trailing:
+            raise BerkeleyGWFormatError(f"{path}: data after the last k-point's projectors.")
+
+    header["source_path"] = path
+    return header
+
+
+def nonlocal_potential_matrix(kleinman_bylander_file, kpoint_index, spin_index=0):
+    """V_NL(G, G') = Σ_atom Σ_ij β_i(G) D_ij conj(β_j(G')) at one k-point, Rydberg.
+
+    The contraction ParaBands builds (``ham_build_column_nl_col`` in
+    ``MeanField/ParaBands/hamiltonian.f90``). It does not depend on the
+    phase, sign or order a code chooses for its projector channels, so two
+    codes' VKB files of one system are compared through it.
+    """
+    projectors = kleinman_bylander_file["projectors"][kpoint_index][spin_index]
+    coefficients = kleinman_bylander_file["nonlocal_coefficients"]
+    number_of_plane_waves = projectors.shape[-1]
+    matrix = np.zeros((number_of_plane_waves, number_of_plane_waves), dtype=_COMPLEX128)
+    for atom_index in range(projectors.shape[0]):
+        species = kleinman_bylander_file["atom_species"][atom_index]
+        count = kleinman_bylander_file["projectors_per_species"][species - 1]
+        beta = projectors[atom_index, :count]  # (count, ngk)
+        d_matrix = coefficients[:count, :count, atom_index, spin_index]
+        matrix += beta.T @ d_matrix @ beta.conj()
+    return matrix

@@ -303,6 +303,14 @@ The BerkeleyGW export resolved this question on 2026-10-20 as follows:
     (`write_wfng`, `write_rhog`, `write_vxc_g`, `write_vxc_r`) and record.
     The symmetry conventions are also pinned by unit tests against that
     release's output.
+-   **VSC and VKB (2026-10-24).** Neither file is in the appendix. Their authority is
+    the reader BerkeleyGW 4.0 ships, which is BSD-licensed: `parabands.f90` for VSC
+    (read with the RHO/VXC routines) and `pp_read_header`/`pp_read_beta` in
+    `MeanField/ParaBands/pseudopot_vkb.f90` for VKB, with the contraction
+    Σ β D β† from `ham_build_column_nl_col` in `hamiltonian.f90`. That Vxc is
+    evaluated at the valence density follows pw2bgw's documented input
+    `vxc_zero_rho_core` (INPUT_pw2bgw, the public manual). No GPL source was opened;
+    both were validated against pw2bgw.x's output files and through `parabands`.
 -   **What was retired.** About a hundred line-number citations pinned to a
     2026-07-27 `develop` checkout, and the Fortran expressions quoted with QE's
     variable names, were replaced by the record they describe and the

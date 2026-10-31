@@ -11,8 +11,9 @@ work.
 ## Before CMake: the Python the build needs
 
 `cmake --build` runs `scripts/repo/generate_cpp_from_schemas.py`, which needs
-**jinja2, jsonref and pyyaml**. These are inputs to the build, not runtime
-dependencies of the `q3` Python package, so create the environment first:
+**jinja2, jsonref and pyyaml**, and reads ESSE's schemas from **mat3ra-esse**
+(a dependency of the `q3` package). The first three are inputs to the build,
+not runtime dependencies, so create the environment first:
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[build]"
@@ -27,8 +28,7 @@ cmake -S . -B build -DPython3_EXECUTABLE=$(which python)
 
 Configuration reports which interpreter it chose. If the modules are missing it
 warns and falls back to the committed headers in `src/generated`, which is
-correct as long as you are not changing `schemas/` — and is also what lets a
-clone made without `--recurse-submodules` build. Pass
+correct as long as you are not changing `schemas/`. Pass
 `-DQ3_REQUIRE_SCHEMA_CODEGEN=ON` to make that a configuration failure instead;
 CI does.
 
@@ -193,7 +193,7 @@ module load PrgEnv-gnu cmake cray-fftw cray-libsci    # cray-mpich is already de
 ```
 
 ```bash
-git clone --recurse-submodules <repository-url> q3 && cd q3
+git clone <repository-url> q3 && cd q3
 python3 -m venv .venv && .venv/bin/pip install -e ".[build]"
 ```
 

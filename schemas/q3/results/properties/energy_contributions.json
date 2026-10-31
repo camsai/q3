@@ -1,0 +1,23 @@
+{
+    "$id": "q3/results/properties/energy_contributions",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "energy contributions",
+    "type": "object",
+    "description": "Energy terms Q3 reports that ESSE's total_energy_contributions has no key for yet, each an ESSE energy in rydberg; the terms ESSE does have are in that record under properties. hubbard (DFT+U, Dudarev), dispersion (already inside total_energy) and one_center (PAW) are present only when nonzero.",
+    "required": ["double_counting"],
+    "additionalProperties": false,
+    "properties": {
+        "double_counting": {
+            "$ref": "../../../esse/core/reusable/energy.json"
+        },
+        "hubbard": {
+            "$ref": "../../../esse/core/reusable/energy.json"
+        },
+        "dispersion": {
+            "$ref": "../../../esse/core/reusable/energy.json"
+        },
+        "one_center": {
+            "$ref": "../../../esse/core/reusable/energy.json"
+        }
+    }
+}

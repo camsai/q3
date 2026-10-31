@@ -1,0 +1,40 @@
+{
+    "$id": "q3/interpolation/results/construction/disentanglement",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Interpolation results disentanglement",
+    "type": "object",
+    "required": [
+        "metallic",
+        "bands_crossing_fermi",
+        "frozen_window_above_fermi_ev",
+        "frozen_window_automatic",
+        "bands_excluded_from_freeze"
+    ],
+    "additionalProperties": false,
+    "description": "What the classifier decided when the subspace was chosen by projectability disentanglement: the window it resolved and which bands the singular-gauge rule kept out of the freeze. Present only when the model was disentangled.",
+    "properties": {
+        "metallic": {
+            "type": "boolean",
+            "description": "Whether a band crosses the Fermi level, which is what makes the automatic window E_F + 2 eV rather than 0."
+        },
+        "bands_crossing_fermi": {
+            "type": "integer",
+            "description": "How many bands cross the Fermi level."
+        },
+        "frozen_window_above_fermi_ev": {
+            "type": "number",
+            "description": "The frozen window that was applied, in electronvolts above the Fermi level."
+        },
+        "frozen_window_automatic": {
+            "type": "boolean",
+            "description": "Whether the window was resolved from the record (true) or given in the manifest (false)."
+        },
+        "bands_excluded_from_freeze": {
+            "type": "array",
+            "description": "Bands inside the frozen window whose projectability fell below the minimum at some k-points, and were excluded from the freeze there rather than frozen: the trial orbitals cannot represent them, and freezing them would make the gauge singular.",
+            "items": {
+                "$ref": "./disentanglement/bands_excluded_from_freeze.json"
+            }
+        }
+    }
+}

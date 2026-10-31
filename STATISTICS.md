@@ -6,11 +6,11 @@
 
 | Metric | Value |
 | ------ | ----: |
-| Header files (`.hpp`) | 461 |
+| Header files (`.hpp`) | 505 |
 | Translation units (`.cpp`/`.cu`/`.mm`) | 29 |
-| Lines of C++ (non-empty) | 82,386 |
-| C++ unit/integration tests | 1,641 |
-| Python validation tests | 219 |
-| Python regression tests | 32 |
+| Lines of C++ (non-empty) | 85,743 |
+| C++ unit/integration tests | 1,666 |
+| Python validation tests | 231 |
+| Python regression tests | 34 |
 | C++ standard | C++17 |
 | Build style | Header-heavy library + `q3`, `q3_mpi`, `q3_gpu_*`, `q3_utility` executables |

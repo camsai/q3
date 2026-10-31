@@ -1,7 +1,9 @@
 """q3.io.output_writer — Extract structured results from Q3 output.
 
-Converts the flat ``results.json`` dict (written by the C++ binary) into
-structured Python objects ready for use by workflows and ESSE serialisation.
+Converts the ``results.json`` dict (written by the C++ binary) into structured
+Python objects ready for use by workflows. The file arrives as
+:class:`q3.io.results.classes.Results`; the results ESSE defines are read off their
+ESSE records.
 
 All energy values are in Rydberg; forces in Ry/Bohr; stress in kbar.
 
@@ -45,22 +47,23 @@ import numpy as np
 from mat3ra.code.constants import Coefficients as _Coefficients
 
 from q3.errors import IncompleteDerivativeError, SCFNotConvergedError
+from q3.io.interpolation.results.classes import InterpolationResults
+from q3.io.results.classes import Results, eigenvalue_arrays
 
 # ---------------------------------------------------------------------------
 # Total energy
 # ---------------------------------------------------------------------------
 
 
-def extract_total_energy(results: dict) -> float:
+def extract_total_energy(results: Results) -> float:
     """Return the total energy in Rydberg.
 
-    Accepts both the new flat schema (``total_energy_ry``) and the legacy
-    nested schema (``total_energy.value``).
+    Read from the ESSE ``total_energy`` record.
 
     Parameters
     ----------
     results:
-        Dict returned by ``run_q3()`` / parsed from ``results.json``.
+        What ``run_q3()`` returns: the run's ``results.json``.
 
     Returns
     -------
@@ -70,12 +73,13 @@ def extract_total_energy(results: dict) -> float:
     Raises
     ------
     KeyError
-        If neither key is present in *results*.
+        If *results* lists no ``total_energy``.
     """
-    if "total_energy_ry" in results:
-        return float(results["total_energy_ry"])
-    # Legacy nested format.
-    return float(results["total_energy"]["value"])
+    record = results.properties.total_energy
+    if record is None:
+        raise KeyError("Q3 results list no 'total_energy' property")
+    _require_units("the total energy", record.units, "Ry")
+    return float(record.value)
 
 
 # ---------------------------------------------------------------------------
@@ -83,13 +87,13 @@ def extract_total_energy(results: dict) -> float:
 # ---------------------------------------------------------------------------
 
 
-def extract_forces(results: dict) -> list[list[float]]:
+def extract_forces(results: Results) -> list[list[float]]:
     """Return the per-atom Cartesian forces in Ry/Bohr.
 
     Parameters
     ----------
     results:
-        Dict returned by ``run_q3()`` / parsed from ``results.json``.
+        What ``run_q3()`` returns: the run's ``results.json``.
 
     Returns
     -------
@@ -106,12 +110,17 @@ def extract_forces(results: dict) -> list[list[float]]:
         well as in the ASE calculator.
     """
     raise_if_derivative_incomplete(results, ("forces",))
+    forces = results.properties.atomic_forces
+    if forces is None:
+        return []
+    _require_units("the forces", forces.units, "Ry/a.u.")
     return [
-        [float(component) for component in force] for force in results.get("forces_ry_per_bohr", [])
+        [float(component) for component in atom.value]
+        for atom in sorted(forces.values, key=lambda atom: atom.id)
     ]
 
 
-def extract_stress(results: dict) -> list[list[float]]:
+def extract_stress(results: Results) -> list[list[float]]:
     """Return the 3x3 stress tensor in kbar.
 
     The sign is Q3's own Nielsen-Martin convention, under which a compressed
@@ -121,7 +130,7 @@ def extract_stress(results: dict) -> list[list[float]]:
     Parameters
     ----------
     results:
-        Dict returned by ``run_q3()`` / parsed from ``results.json``.
+        What ``run_q3()`` returns: the run's ``results.json``.
 
     Returns
     -------
@@ -135,10 +144,14 @@ def extract_stress(results: dict) -> list[list[float]]:
         If Q3 reported the stress as incomplete.
     """
     raise_if_derivative_incomplete(results, ("stress",))
-    return [[float(component) for component in row] for row in results.get("stress_kbar", [])]
+    stress = results.properties.stress_tensor
+    if stress is None:
+        return []
+    _require_units("the stress", stress.units, "kbar")
+    return [[float(component) for component in row.root] for row in stress.value]
 
 
-def raise_if_derivative_incomplete(results: dict, properties) -> None:
+def raise_if_derivative_incomplete(results: Results, properties) -> None:
     """Refuse a force or stress that Q3 has reported as incomplete.
 
     Q3 knows which derivative terms it cannot yet compute and says so in its
@@ -155,7 +168,7 @@ def raise_if_derivative_incomplete(results: dict, properties) -> None:
     Parameters
     ----------
     results:
-        Dict returned by ``run_q3()`` / parsed from ``results.json``.
+        What ``run_q3()`` returns: the run's ``results.json``.
     properties:
         Which quantities are actually being asked for; only these are checked.
 
@@ -164,12 +177,10 @@ def raise_if_derivative_incomplete(results: dict, properties) -> None:
     IncompleteDerivativeError
         If a requested derivative is flagged incomplete.
     """
-    for quantity, flag, reason_key in (
-        ("forces", "forces_are_incomplete", "forces_incomplete_reason"),
-        ("stress", "stress_is_incomplete", "stress_incomplete_reason"),
-    ):
-        if quantity in properties and results.get(flag):
-            reason = results.get(reason_key, "")
+    incomplete = results.runtime_log.incomplete if results.runtime_log else None
+    for quantity in ("forces", "stress"):
+        reason = getattr(incomplete, quantity, None)
+        if quantity in properties and reason is not None:
             raise IncompleteDerivativeError(
                 f"Q3 reports its {quantity} are incomplete for this system, so a calculation "
                 f"driven by them would converge to a wrong answer without failing. "
@@ -179,7 +190,7 @@ def raise_if_derivative_incomplete(results: dict, properties) -> None:
             )
 
 
-def raise_if_not_converged(results: dict, *, returncode: int = -1) -> None:
+def raise_if_not_converged(results: Results, *, returncode: int = -1) -> None:
     """Refuse a result whose SCF did not converge, saying how far it got.
 
     The binary exits 0 on non-convergence, so ``converged`` in the results is
@@ -196,8 +207,8 @@ def raise_if_not_converged(results: dict, *, returncode: int = -1) -> None:
     Parameters
     ----------
     results:
-        Dict returned by ``run_q3()`` / parsed from ``results.json``. A result
-        with no ``converged`` key is accepted as converged, as before.
+        What ``run_q3()`` returns: the run's ``results.json``. A result with
+        no ``runtime_log.converged`` is accepted as converged, as before.
     returncode:
         Exit status carried on the error, as on any ``Q3RuntimeError``; the
         default -1 means it is not known.
@@ -207,11 +218,12 @@ def raise_if_not_converged(results: dict, *, returncode: int = -1) -> None:
     SCFNotConvergedError
         If *results* reports ``converged: false``.
     """
-    if results.get("converged", True):
+    runtime_log = results.runtime_log
+    if runtime_log is None or runtime_log.converged is not False:
         return
 
-    iterations = results.get("self_consistent_field_iterations")
-    precision = (results.get("provenance") or {}).get("precision") or {}
+    iterations = runtime_log.self_consistent_field_iterations
+    precision = (results.provenance or {}).get("precision") or {}
     maximum_iterations = precision.get("maximum_self_consistent_field_iterations")
 
     if iterations is not None and maximum_iterations is not None:
@@ -240,7 +252,7 @@ def raise_if_not_converged(results: dict, *, returncode: int = -1) -> None:
 
 
 def extract_band_structure(
-    results: dict,
+    results: Results | InterpolationResults,
     kpoints: list[tuple[float, float, float]],
     kpath_distances: list[float],
     fermi_energy_ry: float | None = None,
@@ -250,10 +262,10 @@ def extract_band_structure(
     Parameters
     ----------
     results:
-        Dict returned by ``run_nscf()`` / parsed from ``results.json``.
+        What ``run_nscf()`` returns: the run's ``results.json``.
     kpoints:
         Ordered list of k-point coordinates (crystal units) used in the NSCF
-        run.  Same order as ``results["eigenvalues_ry"]``.
+        run.  Same order as the k-points of ``results.properties.eigenvalues_at_kpoints``.
     kpath_distances:
         Cumulative path distance for each k-point (used as the x-axis).
         Typically computed by ``band_path_distances()``.
@@ -267,16 +279,10 @@ def extract_band_structure(
         ``eigenvalues_ry``, ``kpoints``, ``kpath_distances``, ``fermi_energy_ry``.
         Eigenvalues are shaped ``[num_kpoints][num_spin][num_bands]``.
     """
-    # Support both new and legacy schemas.
-    if "eigenvalues_ry" in results:
-        eigenvalues = results["eigenvalues_ry"]  # [kpt][spin][band]
-    else:
-        # Legacy: results["eigenvalues"]["kpoints"][i]["bands"]  (spin-0 only)
-        raw_kpoints = results["eigenvalues"]["kpoints"]
-        eigenvalues = [[kpt_data["bands"]] for kpt_data in raw_kpoints]
+    eigenvalues, _, _ = _eigenvalue_arrays(results)  # [kpt][spin][band]
 
     if fermi_energy_ry is None:
-        fermi_energy_ry = float(results.get("fermi_energy_ry", 0.0))
+        fermi_energy_ry = _fermi_energy(results)
 
     return {
         "eigenvalues_ry": eigenvalues,
@@ -294,7 +300,7 @@ _RY_TO_EV = _Coefficients.RYDBERG
 
 
 def extract_dos(
-    results: dict,
+    results: Results,
     *,
     energy_min_ry: float | None = None,
     energy_max_ry: float | None = None,
@@ -306,7 +312,7 @@ def extract_dos(
     Parameters
     ----------
     results:
-        Dict returned by ``run_scf()`` / parsed from ``results.json``.
+        What ``run_scf()`` returns: the run's ``results.json``.
     energy_min_ry:
         Lower energy limit of the DOS grid in Ry.  Defaults to
         ``min(eigenvalues) - 5 * broadening``.
@@ -329,25 +335,14 @@ def extract_dos(
     all_eigenvalues: list[float] = []
     all_weights: list[float] = []
 
-    kpoint_weights = results.get("kpoint_weights", None)
-
-    if "eigenvalues_ry" in results:
-        for kpoint_index, kpt_data in enumerate(results["eigenvalues_ry"]):
-            # Determine weight for this k-point.
-            if kpoint_weights is not None and kpoint_index < len(kpoint_weights):
-                weight = kpoint_weights[kpoint_index]
-            else:
-                # Fallback: equal weight (sum to 2.0 for spin degeneracy).
-                weight = 2.0 / len(results["eigenvalues_ry"])
-            for spin_data in kpt_data:
-                for eigenvalue in spin_data:
-                    all_eigenvalues.append(eigenvalue)
-                    all_weights.append(weight)
-    else:
-        # Legacy format.
-        for kpt_data in results["eigenvalues"]["kpoints"]:
-            weight = kpt_data.get("weight", 1.0)
-            for eigenvalue in kpt_data["bands"]:
+    kpoint_eigenvalues, _, kpoint_weights = _eigenvalue_arrays(results)
+    for kpoint_index, kpt_data in enumerate(kpoint_eigenvalues):
+        weight = kpoint_weights[kpoint_index]
+        if weight is None:
+            # Fallback: equal weight (sum to 2.0 for spin degeneracy).
+            weight = 2.0 / len(kpoint_eigenvalues)
+        for spin_data in kpt_data:
+            for eigenvalue in spin_data:
                 all_eigenvalues.append(eigenvalue)
                 all_weights.append(weight)
 
@@ -374,7 +369,7 @@ def extract_dos(
             / (sigma * math.sqrt(2.0 * math.pi))
         )
 
-    fermi_energy_ry = float(results.get("fermi_energy_ry", 0.0))
+    fermi_energy_ry = _fermi_energy(results)
 
     return {
         "energies_ry": energies.tolist(),
@@ -388,12 +383,46 @@ def extract_dos(
 # ---------------------------------------------------------------------------
 
 
-def _require_orbital_projections(results: dict, function_name: str) -> None:
-    if not results.get("orbital_projections"):
+def _require_units(what: str, units, expected: str) -> None:
+    """Refuse a quantity stated in a unit other than the one this module returns it in.
+
+    Each reader here names its unit (energies in Ry, forces in Ry/a.u., stress
+    in kbar); a value in any other unit is refused rather than converted, since
+    a silently rescaled energy is the failure a unit field exists to prevent.
+    """
+    found = getattr(units, "value", units)
+    if found != expected:
+        raise ValueError(f"Q3 reported {what} in {found!r}, but this reader returns {expected!r}.")
+
+
+def _eigenvalue_arrays(results: Results | InterpolationResults):
+    """The eigenvalue arrays of a run's results, or of ``q3_utility interpolate``'s, in Ry."""
+    record = results.properties.eigenvalues_at_kpoints
+    _require_units("the eigenvalues", record.units, "Ry")
+    return eigenvalue_arrays(record)
+
+
+def _fermi_energy(results: Results | InterpolationResults) -> float:
+    """The run's Fermi energy in Ry, 0.0 when it recorded none."""
+    record = results.properties.fermi_energy
+    if record is None:
+        return 0.0
+    _require_units("the Fermi energy", record.units, "Ry")
+    return float(record.value)
+
+
+def _require_orbital_projections(results: Results, function_name: str) -> None:
+    if results.properties.orbital_projections is None:
         raise KeyError(
             f"{function_name}: 'orbital_projections' not present in results -- "
             "re-run NSCF with control.compute_projections: true."
         )
+
+
+def _orbital_projections(results: Results) -> tuple[list[dict], list]:
+    """The orbital labels, as plain dicts, and the projections indexed [k-point][band][orbital]."""
+    block = results.properties.orbital_projections
+    return [label.model_dump() for label in block.labels or []], block.values or []
 
 
 def _group_key(label: dict) -> tuple[int, str]:
@@ -409,7 +438,7 @@ def _new_atom_shell_entry(label: dict) -> dict:
     }
 
 
-def extract_lowdin_charges(results: dict) -> dict:
+def extract_lowdin_charges(results: Results) -> dict:
     """Compute Löwdin (ortho-atomic) population charges from NSCF *results*.
 
     Implements the same formula as QE's ``projwfc.x``:
@@ -423,14 +452,14 @@ def extract_lowdin_charges(results: dict) -> dict:
         Dict returned by an NSCF run with ``compute_projections: true`` over
         a proper (dense, full-BZ) k-point grid -- see
         ``q3.workflows.pdos.run_pdos_workflow``.  Requires
-        ``orbital_projections``, ``orbital_labels``, ``occupations``, and
-        ``kpoint_weights``.
+        ``properties.orbital_projections`` and ``properties.eigenvalues_at_kpoints``
+        with their occupations and k-point weights.
 
     Returns
     -------
     dict
         - ``"orbital"`` — list of per-orbital dicts (label fields plus
-          ``"charge"``), same order as ``results["orbital_labels"]``.
+          ``"charge"``), same order as ``results.properties.orbital_projections.labels``.
         - ``"atom_shell"`` — the same charges grouped by (atom, shell_label),
           i.e. summed over the magnetic quantum number m -- matches QE's
           per-atom ``pdos_atm#N(elem)_wfc#M(l)`` grouping.
@@ -451,10 +480,12 @@ def extract_lowdin_charges(results: dict) -> dict:
     """
     _require_orbital_projections(results, "extract_lowdin_charges")
 
-    orbital_labels = results["orbital_labels"]
-    projections = results["orbital_projections"]  # [kpt][band][orbital]
-    occupations = results["occupations"]  # [kpt][spin][band]
-    kpoint_weights = results["kpoint_weights"]  # [kpt]
+    orbital_labels, projections = _orbital_projections(results)  # projections [kpt][band][orbital]
+    _, occupations, kpoint_weights = _eigenvalue_arrays(results)  # [kpt][spin][band], [kpt]
+    if occupations is None:
+        raise KeyError(
+            "extract_lowdin_charges needs the occupations of results.properties.eigenvalues_at_kpoints"
+        )
 
     charges = [0.0] * len(orbital_labels)
     number_of_electrons = 0.0
@@ -490,7 +521,7 @@ def extract_lowdin_charges(results: dict) -> dict:
 
 
 def extract_pdos(
-    results: dict,
+    results: Results,
     *,
     energy_min_ry: float | None = None,
     energy_max_ry: float | None = None,
@@ -529,7 +560,7 @@ def extract_pdos(
     dict
         - ``"energies_ry"`` — energy grid.
         - ``"orbital_pdos"`` — list of per-orbital dicts (label fields plus
-          ``"dos"`` curve), same order as ``results["orbital_labels"]``.
+          ``"dos"`` curve), same order as ``results.properties.orbital_projections.labels``.
         - ``"atom_shell_pdos"`` — the same curves grouped by (atom,
           shell_label), matching QE's ``pdos_atm#N(elem)_wfc#M(l)`` files.
         - ``"summed_pdos"`` — Σ over all orbitals at each energy, comparable
@@ -544,10 +575,8 @@ def extract_pdos(
     """
     _require_orbital_projections(results, "extract_pdos")
 
-    orbital_labels = results["orbital_labels"]
-    projections = results["orbital_projections"]  # [kpt][band][orbital]
-    eigenvalues = results["eigenvalues_ry"]  # [kpt][spin][band]
-    kpoint_weights = results["kpoint_weights"]  # [kpt]
+    orbital_labels, projections = _orbital_projections(results)  # projections [kpt][band][orbital]
+    eigenvalues, _, kpoint_weights = _eigenvalue_arrays(results)  # [kpt][spin][band], [kpt]
 
     all_eigenvalues: list[float] = []
     all_band_weights: list[float] = []
@@ -600,7 +629,7 @@ def extract_pdos(
         atom_shell_pdos.append(entry)
 
     if fermi_energy_ry is None:
-        fermi_energy_ry = float(results.get("fermi_energy_ry", 0.0))
+        fermi_energy_ry = _fermi_energy(results)
 
     return {
         "energies_ry": energies.tolist(),

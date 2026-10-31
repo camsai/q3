@@ -7,6 +7,8 @@ console output is kept beside it for what is only ever said there.
 
 from typing import NamedTuple
 
+from helpers import atomic_forces, force_contributions
+
 BOHR_TO_ANGSTROM = 0.529177249
 
 
@@ -25,12 +27,12 @@ class Q3Run(NamedTuple):
 
 def force_on_atom(run, atom_index):
     """The total force on one atom, in Ry/bohr."""
-    return run.results["forces_ry_per_bohr"][atom_index]
+    return atomic_forces(run.results)[atom_index]
 
 
 def force_contribution(run, name):
     """One named term of that force, per atom -- 'hubbard', 'nonlocal', ..."""
-    contributions = run.results["force_contributions_ry_per_bohr"]
+    contributions = force_contributions(run.results)
     assert name in contributions, (
         f"no {name} force contribution in the results: {list(contributions)}"
     )

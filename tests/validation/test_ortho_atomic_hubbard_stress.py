@@ -24,6 +24,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from q3.io.results.classes import Incomplete, Results
+
+from helpers import atomic_forces, stress_contributions, stress_tensor
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 PSEUDOPOTENTIAL_DIRECTORY = REPOSITORY / "examples" / "data" / "pseudopotentials" / "nc"
@@ -32,6 +35,7 @@ LATTICE_VECTORS_BOHR = (
     (0.0, 4.119180301160476, 4.119180301160476),
     (-4.119180301160476, 4.119180301160476, 0.0),
 )
+
 ATOMIC_POSITIONS_CRYSTAL = ((0.0, 0.0, 0.0), (0.27, 0.263, 0.257))
 INDEPENDENT_STRAIN_COMPONENTS = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
 FINITE_STRAIN_STEPS = (0.002, 0.001)
@@ -136,9 +140,12 @@ def run_q3(q3_bin, directory, lattice_vectors, label, sampling="mesh"):
         timeout=3600,
     )
     assert completed.returncode == 0, completed.stdout[-4000:]
-    result = json.loads((directory / "output" / f"{label}_results.json").read_text())
-    assert result["converged"], completed.stdout[-4000:]
-    print(f"\n  completed {label}: E={result['total_energy_ry']:.12f} Ry", flush=True)
+    result = Results.read(directory / "output" / f"{label}_results.json")
+    assert result.runtime_log.converged, completed.stdout[-4000:]
+    print(
+        f"\n  completed {label}: E={result.properties.total_energy.value:.12f} Ry",
+        flush=True,
+    )
     return result
 
 
@@ -185,8 +192,8 @@ def test_norm_conserving_ortho_atomic_stress_is_reported_as_complete(
     ortho_atomic_stress_runs,
 ):
     baseline = ortho_atomic_stress_runs["baseline"]
-    assert not baseline.get("stress_is_incomplete", False)
-    hubbard_tensor = baseline["stress_contributions_kbar"]["hubbard"]
+    assert (baseline.runtime_log.incomplete or Incomplete()).stress is None
+    hubbard_tensor = stress_contributions(baseline)["hubbard"]
     assert max(abs(value) for row in hubbard_tensor for value in row) > 10.0
 
 
@@ -200,11 +207,11 @@ def test_whole_ortho_atomic_stress_tensor_is_q3s_energy_gradient(
     for direction_a, direction_b in INDEPENDENT_STRAIN_COMPONENTS:
         pair = ortho_atomic_stress_runs["strained"][strain_step][(direction_a, direction_b)]
         numerical_stress = (
-            -(pair[1]["total_energy_ry"] - pair[-1]["total_energy_ry"])
+            -(pair[1].properties.total_energy.value - pair[-1].properties.total_energy.value)
             / (2.0 * strain_step * volume_bohr_cubed)
             * RYDBERG_PER_BOHR_CUBED_TO_KILOBAR
         )
-        analytic_stress = baseline["stress_kbar"][direction_a][direction_b]
+        analytic_stress = stress_tensor(baseline)[direction_a][direction_b]
         assert abs(analytic_stress - numerical_stress) < STRESS_GRADIENT_TOLERANCE_KILOBAR, (
             f"strain {strain_step}, component ({direction_a}, {direction_b}): analytic "
             f"{analytic_stress:.8f} kbar vs numerical {numerical_stress:.8f} kbar"
@@ -216,21 +223,21 @@ def test_gamma_half_sphere_matches_explicit_full_sphere_for_ortho_atomic_derivat
 ):
     half = gamma_ortho_atomic_runs["gamma_half"]
     full = gamma_ortho_atomic_runs["gamma_full"]
-    assert abs(half["total_energy_ry"] - full["total_energy_ry"]) < GAMMA_ENERGY_TOLERANCE_RYDBERG
+    assert (
+        abs(half.properties.total_energy.value - full.properties.total_energy.value)
+        < GAMMA_ENERGY_TOLERANCE_RYDBERG
+    )
     assert (
         max(
-            abs(
-                half["forces_ry_per_bohr"][atom][direction]
-                - full["forces_ry_per_bohr"][atom][direction]
-            )
-            for atom in range(len(half["forces_ry_per_bohr"]))
+            abs(atomic_forces(half)[atom][direction] - atomic_forces(full)[atom][direction])
+            for atom in range(len(atomic_forces(half)))
             for direction in range(3)
         )
         < GAMMA_FORCE_TOLERANCE_RYDBERG_PER_BOHR
     )
     assert (
         max(
-            abs(half["stress_kbar"][row][column] - full["stress_kbar"][row][column])
+            abs(stress_tensor(half)[row][column] - stress_tensor(full)[row][column])
             for row in range(3)
             for column in range(3)
         )
@@ -239,8 +246,8 @@ def test_gamma_half_sphere_matches_explicit_full_sphere_for_ortho_atomic_derivat
     assert (
         max(
             abs(
-                half["stress_contributions_kbar"]["hubbard"][row][column]
-                - full["stress_contributions_kbar"]["hubbard"][row][column]
+                stress_contributions(half)["hubbard"][row][column]
+                - stress_contributions(full)["hubbard"][row][column]
             )
             for row in range(3)
             for column in range(3)

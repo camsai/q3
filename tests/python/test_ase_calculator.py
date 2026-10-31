@@ -18,6 +18,7 @@ from q3.calculators.ase_calculator import (
     stress_kbar_to_ase_voigt,
 )
 from q3.errors import IncompleteDerivativeError, SCFNotConvergedError
+from q3.io.results.classes import Results
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -94,43 +95,72 @@ log nothing reads programmatically.
 """
 
 INCOMPLETE_DERIVATIVE_RESULTS = {
-    "converged": True,
-    "total_energy_ry": -15.517022664,
-    "forces_ry_per_bohr": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
-    "forces_are_incomplete": True,
-    "forces_incomplete_reason": "the selected projector type has no complete force derivative",
-    "stress_is_incomplete": True,
-    "stress_incomplete_reason": ("the selected projector type has no complete stress derivative"),
+    "runtime_log": {
+        "converged": True,
+        "incomplete": {
+            "forces": "the selected projector type has no complete force derivative",
+            "stress": "the selected projector type has no complete stress derivative",
+        },
+    },
+    "properties": {
+        "records": [
+            {"name": "total_energy", "units": "Ry", "value": -15.517022664},
+            {
+                "name": "atomic_forces",
+                "units": "Ry/a.u.",
+                "values": [
+                    {"id": 1, "value": [0.0, 0.0, 0.0]},
+                    {"id": 2, "value": [0.0, 0.0, 0.0]},
+                ],
+            },
+        ]
+    },
 }
 
 COMPLETE_RESULTS = {
-    "converged": True,
-    "total_energy_ry": -15.7,
-    "forces_ry_per_bohr": [[0.01, 0.0, 0.0]],
+    "runtime_log": {"converged": True},
+    "properties": {
+        "records": [
+            {"name": "total_energy", "units": "Ry", "value": -15.7},
+            {
+                "name": "atomic_forces",
+                "units": "Ry/a.u.",
+                "values": [{"id": 1, "value": [0.01, 0.0, 0.0]}],
+            },
+        ]
+    },
 }
 
 
 def test_energy_only_is_allowed_when_the_derivatives_are_incomplete():
     """The energy is correct on exactly the systems whose forces are not."""
-    raise_if_derivative_incomplete(INCOMPLETE_DERIVATIVE_RESULTS, ["energy"])
+    raise_if_derivative_incomplete(
+        Results.model_validate(INCOMPLETE_DERIVATIVE_RESULTS), ["energy"]
+    )
 
 
 def test_incomplete_forces_are_refused_when_asked_for():
     with pytest.raises(IncompleteDerivativeError) as caught:
-        raise_if_derivative_incomplete(INCOMPLETE_DERIVATIVE_RESULTS, ["energy", "forces"])
+        raise_if_derivative_incomplete(
+            Results.model_validate(INCOMPLETE_DERIVATIVE_RESULTS), ["energy", "forces"]
+        )
     assert caught.value.quantity == "forces"
     assert "force derivative" in caught.value.reason
 
 
 def test_incomplete_stress_is_refused_when_asked_for():
     with pytest.raises(IncompleteDerivativeError) as caught:
-        raise_if_derivative_incomplete(INCOMPLETE_DERIVATIVE_RESULTS, ["stress"])
+        raise_if_derivative_incomplete(
+            Results.model_validate(INCOMPLETE_DERIVATIVE_RESULTS), ["stress"]
+        )
     assert caught.value.quantity == "stress"
 
 
 def test_a_complete_result_passes_every_property():
     """The guard must be invisible to every system that does not trip it."""
-    raise_if_derivative_incomplete(COMPLETE_RESULTS, ["energy", "forces", "stress"])
+    raise_if_derivative_incomplete(
+        Results.model_validate(COMPLETE_RESULTS), ["energy", "forces", "stress"]
+    )
 
 
 # ── Non-convergence ──────────────────────────────────────────────────────────
@@ -151,7 +181,7 @@ def test_a_failed_scf_says_how_many_iterations_it_performed(tmp_path):
     binary.write_text(
         "#!/bin/sh\n"
         "cat > q3_results.json <<'RESULTS'\n"
-        '{"converged": false, "self_consistent_field_iterations": 100,'
+        '{"runtime_log": {"converged": false, "self_consistent_field_iterations": 100},'
         ' "provenance": {"precision": {"maximum_self_consistent_field_iterations": 100}}}\n'
         "RESULTS\n"
     )
@@ -181,31 +211,48 @@ def test_a_deck_run_as_written_gives_the_engines_structure_and_is_the_first_step
     deck_path = tmp_path / "relax.in"
     deck_path.write_text("&control\n  calculation = 'relax'\n  prefix = 'si'\n/\n")
     results = {
-        "converged": True,
-        "total_energy_ry": -16.0,
-        "forces_ry_per_bohr": [[0.0, 0.0, 0.0], [0.01, 0.0, 0.0]],
-        "stress_kbar": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-        "material": {
-            "lattice": {
-                "vectors": {
-                    "a": [-2.7, 0.0, 2.7],
-                    "b": [0.0, 2.7, 2.7],
-                    "c": [-2.7, 2.7, 0.0],
-                    "units": "angstrom",
-                }
-            },
-            "basis": {
-                "units": "crystal",
-                "elements": [{"id": 1, "value": "Si"}, {"id": 2, "value": "Si"}],
-                "coordinates": [
-                    {"id": 1, "value": [0.0, 0.0, 0.0]},
-                    {"id": 2, "value": [0.26, 0.25, 0.25]},
-                ],
-                "constraints": [
-                    {"id": 1, "value": [False, False, False]},
-                    {"id": 2, "value": [True, True, True]},
-                ],
-            },
+        "runtime_log": {"converged": True},
+        "properties": {
+            "records": [
+                {"name": "total_energy", "units": "Ry", "value": -16.0},
+                {
+                    "name": "atomic_forces",
+                    "units": "Ry/a.u.",
+                    "values": [
+                        {"id": 1, "value": [0.0, 0.0, 0.0]},
+                        {"id": 2, "value": [0.01, 0.0, 0.0]},
+                    ],
+                },
+                {
+                    "name": "stress_tensor",
+                    "units": "kbar",
+                    "value": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                },
+            ]
+        },
+        "structure": {
+            "material": {
+                "lattice": {
+                    "vectors": {
+                        "a": [-2.7, 0.0, 2.7],
+                        "b": [0.0, 2.7, 2.7],
+                        "c": [-2.7, 2.7, 0.0],
+                        "units": "angstrom",
+                    }
+                },
+                "basis": {
+                    "units": "crystal",
+                    "elements": [{"id": 1, "value": "Si"}, {"id": 2, "value": "Si"}],
+                    "coordinates": [
+                        {"id": 1, "value": [0.0, 0.0, 0.0]},
+                        {"id": 2, "value": [0.26, 0.25, 0.25]},
+                    ],
+                    "constraints": [
+                        {"id": 1, "value": [False, False, False]},
+                        {"id": 2, "value": [True, True, True]},
+                    ],
+                },
+            }
         },
     }
     binary = tmp_path / "q3"
@@ -219,7 +266,7 @@ def test_a_deck_run_as_written_gives_the_engines_structure_and_is_the_first_step
 
     atoms, run_results = calculator.run_input_as_written()
 
-    assert run_results["total_energy_ry"] == -16.0
+    assert run_results.properties.total_energy.value == -16.0
     assert atoms.get_chemical_symbols() == ["Si", "Si"]
     assert np.allclose(atoms.get_scaled_positions()[1], [0.26, 0.25, 0.25])
     assert len(atoms.constraints) == 1  # the first atom, held by if_pos 0 0 0

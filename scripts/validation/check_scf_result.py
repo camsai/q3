@@ -33,6 +33,18 @@ DEFAULT_EXPECTED_ENERGY_RY = -16.91341791
 DEFAULT_TOLERANCE_RY = 1e-6
 
 
+def total_energy_ry(results: dict) -> float | None:
+    """The value of the results' ESSE ``total_energy`` record, if it is in Ry.
+
+    Read from the JSON rather than through ``q3.io.results``: this script runs
+    without the package installed.
+    """
+    for record in results.get("properties", {}).get("records", []):
+        if record.get("name") == "total_energy" and record.get("units") == "Ry":
+            return record["value"]
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results", type=Path, help="a run's results JSON file")
@@ -46,13 +58,13 @@ def main() -> int:
 
     data = json.loads(arguments.results.read_text(encoding="utf-8"))
 
-    if data.get("converged") is not True:
+    if data.get("runtime_log", {}).get("converged") is not True:
         print(f"FAIL {arguments.results}: SCF did not converge")
         return 1
 
-    energy = data.get("total_energy_ry")
+    energy = total_energy_ry(data)
     if energy is None:
-        print(f"FAIL {arguments.results}: no total_energy_ry in the results")
+        print(f"FAIL {arguments.results}: no total_energy in Ry in the results")
         return 1
 
     difference = abs(energy - arguments.expected)

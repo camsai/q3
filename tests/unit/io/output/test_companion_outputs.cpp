@@ -38,7 +38,7 @@ class CompanionWidgetInputFormat : public InputFormat {
         return std::make_unique<YAMLInputParser>();
     }
     void write_companion_outputs(const InputData& /*input*/,
-                                 const FlavorResult& /*result*/) const override {
+                                 const generated::Results& /*results*/) const override {
         widget_companion_output_calls++;
     }
 };
@@ -49,21 +49,21 @@ TEST(CompanionOutputsTest, OnlyTheFormatTheRunWasReadFromWritesItsOutputs) {
     if (input_format_registry().find("companion_test_widget") == nullptr)
         input_format_registry().add(std::make_unique<CompanionWidgetInputFormat>());
     widget_companion_output_calls = 0;
-    const FlavorResult result;
+    const generated::Results results{};
 
     InputData read_from_widget;
     read_from_widget.source_format = "companion_test_widget";
-    write_companion_outputs(read_from_widget, result);
+    write_companion_outputs(read_from_widget, results);
     EXPECT_EQ(widget_companion_output_calls, 1);
 
     InputData read_from_yaml;
     read_from_yaml.source_format = "yaml";
-    write_companion_outputs(read_from_yaml, result);
+    write_companion_outputs(read_from_yaml, results);
     EXPECT_EQ(widget_companion_output_calls, 1);
 }
 
 TEST(CompanionOutputsTest, ARunAssembledInCodeWritesNoCompanionOutputs) {
     const InputData assembled;
     EXPECT_TRUE(assembled.source_format.empty());
-    EXPECT_NO_THROW(write_companion_outputs(assembled, FlavorResult{}));
+    EXPECT_NO_THROW(write_companion_outputs(assembled, generated::Results{}));
 }

@@ -19,6 +19,7 @@ import pytest
 from helpers import (
     EXAMPLES_DIRECTORY,
     apply_config_overlay,
+    kpoint_weights,
     run_overlay_and_read_energy,
     run_q3_and_load_results,
     total_pressure_kbar,
@@ -83,7 +84,7 @@ def unpolarized_kpoint_weights(q3_command, tmp_path_factory):
     results, _ = run_q3_and_load_results(
         q3_command, merged_input, SI_NC_PREFIX, working_directory=run_directory
     )
-    return results["kpoint_weights"]
+    return kpoint_weights(results)
 
 
 @pytest.mark.parametrize("starting_magnetization", [0.0, 0.3])
@@ -130,7 +131,7 @@ def test_lsda_kpoint_weights_repeat_across_spin_channels(
     """LSDA results.json kpoint_weights are the (halved) unpolarized weights, tiled per
     spin channel.
 
-    Regression test for a k-point STATE vs PHYSICAL-k-point index bug in FlavorResult
+    Regression test for a k-point STATE vs PHYSICAL-k-point index bug in the flavors'
     reporting: kpoint_weights[state_index] indexed the physical-only KPointsGrid (size
     N) directly with the spin-doubled state index (size 2N for LSDA), reading
     out-of-bounds memory for the second spin channel -- observed in practice as
@@ -148,7 +149,7 @@ def test_lsda_kpoint_weights_repeat_across_spin_channels(
     results, _ = run_q3_and_load_results(
         q3_command, merged_input, SI_NC_PREFIX, working_directory=tmp_path
     )
-    weights = results["kpoint_weights"]
+    weights = kpoint_weights(results)
     halved_unpolarized_weights = [w * 0.5 for w in unpolarized_kpoint_weights]
 
     assert len(weights) == 2 * len(unpolarized_kpoint_weights)

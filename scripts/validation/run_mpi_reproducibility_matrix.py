@@ -42,25 +42,37 @@ from pathlib import Path
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-ENERGY_FIELDS = (
-    "total_energy_ry",
-    "band_energy_ry",
-    "hartree_energy_ry",
-    "exchange_correlation_energy_ry",
-    "ewald_energy_ry",
-    "double_counting_correction_ry",
-    "smearing_entropy_contribution_ry",
-    "one_center_energy_ry",
-    "hubbard_energy_ry",
-    "fermi_energy_ry",
+sys.path.insert(0, str(PROJECT_ROOT / "src" / "py"))
+
+from q3.io.results.classes import (  # noqa: E402 -- needs the sys.path entry above
+    Results,
+    eigenvalue_arrays,
 )
+
+# The units the tolerances are stated in: the engine writes every energy in Ry
+# and the forces in Ry/a.u., and each quantity's own ``units`` says so.
+ENERGY_UNITS = "Ry"
+FORCE_UNITS = "Ry/a.u."
+# Compared exactly: runtime_log's flavor and converged, and why the forces are
+# incomplete (None when they are not). The stress is left out: whether it is
+# complete depends on the topology, and validate_stress_refusal checks it.
 EXACT_METADATA_FIELDS = (
     "flavor",
     "converged",
-    "units",
-    "forces_are_incomplete",
-    "forces_incomplete_reason",
+    "forces_incomplete",
 )
+# The ESSE property records compared, by name.
+ESSE_ENERGIES = ("total_energy", "fermi_energy")
+# The ESSE total_energy_contributions terms compared, by ESSE's own keys.
+ESSE_CONTRIBUTIONS = (
+    "eigenvalues",
+    "hartree",
+    "exchange_correlation",
+    "ewald",
+    "temperatureEntropy",
+)
+# Q3's energy_contributions ESSE has no key for, by Q3's keys.
+Q3_CONTRIBUTIONS = ("double_counting", "one_center", "hubbard")
 THREAD_ENVIRONMENT = {
     "BLIS_NUM_THREADS": "1",
     "MKL_NUM_THREADS": "1",
@@ -510,7 +522,7 @@ def run_one(
     result_path = run_directory / "output" / f"{case.prefix}_results.json"
     with result_path.open(encoding="utf-8") as file_handle:
         results = json.load(file_handle)
-    if case.requires_convergence and not results.get("converged"):
+    if case.requires_convergence and not results["runtime_log"].get("converged"):
         raise RuntimeError(f"Calculation did not converge: {run_directory}")
     console_text = standard_output_path.read_text(errors="replace")
     return RunRecord(
@@ -520,7 +532,7 @@ def run_one(
         wall_seconds=wall_seconds,
         result_path=str(result_path),
         results=results,
-        timings_ms=results.get("timings_ms"),
+        timings_ms=results["runtime_log"].get("timings_ms"),
         allocation_node_names=read_allocation_node_names(console_text),
         number_of_nodes=topology.number_of_nodes,
         distributes_bands=topology.distributes_bands,
@@ -566,6 +578,69 @@ def flatten_numeric_values(value):
     return [float(value)]
 
 
+def energies(properties):
+    """The energies *properties* carries, by their ESSE (or Q3) name, in ENERGY_UNITS."""
+    values = {}
+    for name in ESSE_ENERGIES:
+        record = properties.record(name)
+        if record is not None:
+            values[name] = record.value
+    contributions = properties.total_energy_contributions
+    if contributions is not None:
+        terms = contributions.model_dump(by_alias=True, exclude_none=True)
+        values.update({key: terms[key]["value"] for key in ESSE_CONTRIBUTIONS if key in terms})
+    for key in Q3_CONTRIBUTIONS:
+        quantity = getattr(properties.energy_contributions, key, None)
+        if quantity is not None:
+            values[key] = quantity.value
+    return values
+
+
+def comparable_fields(results):
+    """*results* with the quantities it carries read out as plain numbers.
+
+    The comparison below works field by field, so runtime_log's metadata, the ESSE
+    records results.json carries under "properties" and Q3's own unit-carrying
+    quantities are read,
+    each in the unit the tolerances are stated in (ENERGY_UNITS, FORCE_UNITS):
+    the energies by name, atomic_forces in atom order and the eigenvalues
+    arrays indexed [k-point][spin][band]. The file itself is not changed.
+    """
+    model = Results.model_validate(results)
+    runtime_log = model.runtime_log
+    properties = model.properties
+    fields = {
+        "flavor": runtime_log.flavor,
+        "converged": runtime_log.converged,
+        "forces_incomplete": runtime_log.incomplete.forces if runtime_log.incomplete else None,
+        "energies": energies(properties),
+    }
+    forces = properties.atomic_forces
+    if forces is not None:
+        fields["forces"] = [atom.value for atom in forces.values]
+    eigenvalue_record = properties.eigenvalues_at_kpoints
+    if eigenvalue_record is not None:
+        eigenvalues, occupations, weights = eigenvalue_arrays(eigenvalue_record)
+        fields["eigenvalues"] = eigenvalues
+        fields["kpoint_weights"] = weights
+        fields["kpoint_coordinates"] = [
+            kpoint.kpoint or [] for kpoint in eigenvalue_record.values or []
+        ]
+        if occupations is not None:
+            fields["occupations"] = occupations
+    correction = properties.isolated_system_correction
+    if correction is not None:
+        fields["isolated_system_correction"] = {
+            "method": correction.method,
+            "energies": {
+                "total": correction.total.value,
+                "corrected_total_energy": correction.corrected_total_energy.value,
+                **{name: term.value for name, term in correction.terms.items()},
+            },
+        }
+    return fields
+
+
 def compare_results(
     reference,
     candidate,
@@ -573,19 +648,25 @@ def compare_results(
     component_energy_tolerance,
     context,
 ):
+    reference = comparable_fields(reference)
+    candidate = comparable_fields(candidate)
     failures = []
-    for field in ENERGY_FIELDS:
-        tolerance = (
-            total_energy_tolerance if field == "total_energy_ry" else component_energy_tolerance
-        )
-        if (field in reference) != (field in candidate):
-            failures.append(f"{context}: presence of {field} differs")
-        elif field in reference and not math.isclose(
-            float(reference[field]), float(candidate[field]), abs_tol=tolerance, rel_tol=0.0
+    reference_energies = reference["energies"]
+    candidate_energies = candidate["energies"]
+    for name in sorted(reference_energies.keys() | candidate_energies.keys()):
+        tolerance = total_energy_tolerance if name == "total_energy" else component_energy_tolerance
+        if (name in reference_energies) != (name in candidate_energies):
+            failures.append(f"{context}: presence of energy {name} differs")
+        elif not math.isclose(
+            float(reference_energies[name]),
+            float(candidate_energies[name]),
+            abs_tol=tolerance,
+            rel_tol=0.0,
         ):
             failures.append(
-                f"{context}: {field} differs by "
-                f"{abs(float(reference[field]) - float(candidate[field])):.3e} Ry"
+                f"{context}: energy {name} differs by "
+                f"{abs(float(reference_energies[name]) - float(candidate_energies[name])):.3e}"
+                f" {ENERGY_UNITS}"
             )
 
     for field in EXACT_METADATA_FIELDS:
@@ -595,9 +676,9 @@ def compare_results(
     for field in (
         "kpoint_weights",
         "kpoint_coordinates",
-        "eigenvalues_ry",
+        "eigenvalues",
         "occupations",
-        "forces_ry_per_bohr",
+        "forces",
     ):
         if nested_shape(reference.get(field, [])) != nested_shape(candidate.get(field, [])):
             failures.append(f"{context}: shape of {field} differs")
@@ -615,7 +696,7 @@ def compare_results(
 
     for field, tolerance in (
         ("kpoint_coordinates", 1.0e-12),
-        ("eigenvalues_ry", component_energy_tolerance),
+        ("eigenvalues", component_energy_tolerance),
         ("occupations", component_energy_tolerance),
     ):
         reference_values = reference.get(field, [])
@@ -642,14 +723,14 @@ def compare_results(
     elif reference_correction is not None:
         if reference_correction.get("method") != candidate_correction.get("method"):
             failures.append(f"{context}: isolated-system correction method differs")
-        for field, reference_value in reference_correction.items():
-            if field.endswith("_ry") and not math.isclose(
+        for name, reference_value in reference_correction["energies"].items():
+            if not math.isclose(
                 float(reference_value),
-                float(candidate_correction[field]),
+                float(candidate_correction["energies"][name]),
                 abs_tol=total_energy_tolerance,
                 rel_tol=0.0,
             ):
-                failures.append(f"{context}: correction {field} differs")
+                failures.append(f"{context}: correction {name} differs")
     return failures
 
 
@@ -668,7 +749,7 @@ def validate_stress_refusal(case, topology, results):
     expected_reasons = []
     if case.identifier == "nickel_lsda_hubbard_ortho_atomic":
         expected_reasons.append("ortho-atomic projectors")
-    execution_metadata = results.get("execution", {})
+    execution_metadata = results["runtime_log"].get("execution", {})
     reciprocal_space_vectors_are_distributed = execution_metadata.get(
         "reciprocal_space_vectors_are_distributed"
     )
@@ -678,15 +759,16 @@ def validate_stress_refusal(case, topology, results):
         expected_reasons.append("MPI band group")
 
     context = f"{case.identifier}/{topology.identifier}"
+    incomplete = results["runtime_log"].get("incomplete", {})
     if not expected_reasons:
-        if results.get("stress_is_incomplete", False):
+        if "stress" in incomplete:
             return [f"{context}: stress is unexpectedly marked incomplete"]
         return []
 
     failures = []
-    if not results.get("stress_is_incomplete", False):
+    if "stress" not in incomplete:
         failures.append(f"{context}: unsupported stress path is not marked incomplete")
-    reason = results.get("stress_incomplete_reason", "")
+    reason = incomplete.get("stress", "")
     for expected_reason in expected_reasons:
         if expected_reason not in reason:
             failures.append(f"{context}: stress refusal omits {expected_reason!r}")
@@ -694,7 +776,7 @@ def validate_stress_refusal(case, topology, results):
 
 
 def validate_execution_topology(topology, results, context):
-    execution_metadata = results.get("execution", {})
+    execution_metadata = results["runtime_log"].get("execution", {})
     failures = []
     if execution_metadata.get("number_of_processes") != topology.number_of_processes:
         failures.append(f"{context}: actual process count differs from the launch topology")
@@ -922,7 +1004,7 @@ def main():
                     topology.identifier,
                     repetition,
                     record.wall_seconds,
-                    record.results["total_energy_ry"],
+                    energies(record.results)["total_energy"],
                 )
 
     for case in cases:

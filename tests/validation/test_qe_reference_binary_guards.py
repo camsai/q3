@@ -38,7 +38,7 @@ VALIDATION_DIRECTORY = Path(__file__).parent
 
 # Names that stand for the QE reference binaries. A test that mentions one of
 # these, directly or through a helper or fixture, can launch QE.
-QE_BINARY_NAMES = frozenset({"QE_PW", "QE_PROJWFC", "QE_BIN_DIR", "QE_BINARY"})
+QE_BINARY_NAMES = frozenset({"QE_PW", "QE_PW2BGW", "QE_PROJWFC", "QE_BIN_DIR", "QE_BINARY"})
 
 # Names that stand for "QE is present". Referencing one is what a guard looks
 # like from the outside, whether it is used in a `skipif` condition, an `if

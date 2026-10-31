@@ -23,11 +23,13 @@ from q3.flavors import run_scf
 # What a run that used its whole iteration budget reports: the count it
 # performed, and the limit its provenance recorded.
 _NOT_CONVERGED_RESULTS = {
-    "flavor": "self_consistent_field",
-    "converged": False,
-    "self_consistent_field_iterations": 100,
+    "runtime_log": {
+        "flavor": "self_consistent_field",
+        "converged": False,
+        "self_consistent_field_iterations": 100,
+    },
     "provenance": {"precision": {"maximum_self_consistent_field_iterations": 100}},
-    "total_energy_ry": -486.6177018,
+    "properties": {"records": [{"name": "total_energy", "units": "Ry", "value": -486.6177018}]},
 }
 
 
@@ -71,10 +73,13 @@ def test_in_process_run_refuses_a_result_that_did_not_converge(tmp_path, monkeyp
 
 
 def test_in_process_run_returns_a_converged_result(tmp_path, monkeypatch):
-    converged_results = dict(_NOT_CONVERGED_RESULTS, converged=True)
+    converged_results = dict(
+        _NOT_CONVERGED_RESULTS,
+        runtime_log={**_NOT_CONVERGED_RESULTS["runtime_log"], "converged": True},
+    )
     calls = _install_in_process_engine(monkeypatch, converged_results)
 
-    assert run_scf(_write_input(tmp_path)) == converged_results
+    assert run_scf(_write_input(tmp_path)).to_document() == converged_results
     assert len(calls) == 1
 
 

@@ -39,6 +39,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from q3.io.results.classes import Results
 from spin_polarization_helpers import (
     COLLAPSE_TOLERANCE_RYDBERG,
     parse_total_magnetization,
@@ -50,6 +51,7 @@ from helpers import (
     BOHR_RADIUS_ANGSTROM,
     EXAMPLES_DIRECTORY,
     Q3_ROOT,
+    atomic_forces,
     run_overlay_and_read_energy,
     run_overlay_and_read_stdout,
 )
@@ -60,6 +62,7 @@ CU_PREFIX = "cu_us"
 ULTRASOFT_PSEUDOPOTENTIAL_ARCHIVE = (
     Q3_ROOT.parent / "reference" / "mat3ra" / "pseudos" / "data" / "pseudo_gga_pbe.tar.gz"
 )
+
 """
 GBRV ultrasoft datasets, resolved from the workspace reference tree.
 
@@ -331,8 +334,8 @@ def magnetic_iron_displacement_runs(q3_command, tmp_path_factory, iron_ultrasoft
         assert completed.returncode == 0, (
             f"q3 exited {completed.returncode} on the {label} run\n{completed.stdout[-3000:]}"
         )
-        results = json.loads((directory / "output" / "spin_case_results.json").read_text())
-        assert results["converged"], (
+        results = Results.read(directory / "output" / "spin_case_results.json")
+        assert results.runtime_log.converged, (
             f"the {label} run did not converge; a finite-difference force needs three converged "
             "energies, and an unconverged run reports no forces at all -- which surfaces "
             "downstream as an empty force list rather than as the real cause"
@@ -385,10 +388,10 @@ def test_magnetic_augmentation_force_is_the_gradient_of_q3s_own_energy(
     _, baseline_results = magnetic_iron_displacement_runs["baseline"]
     _, plus_results = magnetic_iron_displacement_runs["plus"]
     _, minus_results = magnetic_iron_displacement_runs["minus"]
-    analytic = baseline_results["forces_ry_per_bohr"][1][0]
-    numerical = -(plus_results["total_energy_ry"] - minus_results["total_energy_ry"]) / (
-        2.0 * AUGMENTATION_DISPLACEMENT_BOHR
-    )
+    analytic = atomic_forces(baseline_results)[1][0]
+    numerical = -(
+        plus_results.properties.total_energy.value - minus_results.properties.total_energy.value
+    ) / (2.0 * AUGMENTATION_DISPLACEMENT_BOHR)
 
     assert abs(numerical) > 1e-3, (
         f"the finite-difference force is only {numerical:.2e} Ry/bohr -- the displacement is "

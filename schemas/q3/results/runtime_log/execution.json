@@ -1,0 +1,42 @@
+{
+    "$id": "q3/results/runtime_log/execution",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "execution",
+    "type": "object",
+    "description": "The parallel topology the run ended up with, and its measured footprint.",
+    "required": [
+        "number_of_processes",
+        "number_of_kpoint_pools",
+        "band_group_size",
+        "reciprocal_space_vectors_are_distributed",
+        "peak_resident_memory_bytes"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "number_of_processes": {
+            "type": "integer",
+            "minimum": 1
+        },
+        "number_of_threads_per_process": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "OpenMP threads each process may use (OMP_NUM_THREADS); 1 without OpenMP. Absent from results written before it was recorded."
+        },
+        "number_of_kpoint_pools": {
+            "type": "integer",
+            "minimum": 1
+        },
+        "band_group_size": {
+            "type": "integer",
+            "minimum": 1
+        },
+        "reciprocal_space_vectors_are_distributed": {
+            "type": "boolean"
+        },
+        "peak_resident_memory_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The largest peak resident set over the ranks, not their sum: what a node has to fit is the biggest rank. Zero when no platform source could be read."
+        }
+    }
+}

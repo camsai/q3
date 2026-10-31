@@ -41,6 +41,7 @@
 #include <memory>
 #include <vector>
 
+#include "io/mean_field_record/projector_source.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_1_structure/symmetry/operation.hpp"
 
@@ -151,6 +152,34 @@ struct [[nodiscard]] MeanFieldRecord {
      * did not have one; `vxc.dat` export refuses rather than inventing values.
      */
     std::vector<Complex> exchange_correlation_potential_g;
+    /**
+     * The local Kohn-Sham potential the Hamiltonian applied -- ionic local plus
+     * Hartree plus exchange-correlation -- one entry per spin channel, Rydberg,
+     * parallel to `charge_density_miller_indices`, G = 0 the cell average.
+     * Empty when the producing run did not have one, which includes every
+     * record read back from `mean-field.q3mf`; `VSC` export then refuses.
+     */
+    std::vector<std::vector<Complex>> self_consistent_potential_g;
+
+    // ── Nonlocal pseudopotential ─────────────────────────────────────
+    /**
+     * Filled only when the projectors were requested
+     * (`control.mean_field_export_kleinman_bylander_projectors`), and only for
+     * norm-conserving datasets: then V_NL = Σ_atom |β⟩ D ⟨β| is the whole
+     * nonlocal part of H. `projector_source` stays null otherwise, and the
+     * `VKB` file is not written.
+     */
+    /// 0-based species index of each atom, parallel to `atomic_numbers`.
+    std::vector<int> atom_species_indices;
+    /// Projector channels -- one per (β, m) -- of each species.
+    std::vector<int> projectors_per_species;
+    /**
+     * D_ij in Rydberg, indexed [spin][atom], each block
+     * `projectors_per_species[species]` squared values with the first index
+     * fastest -- the channel order of `projector_source`'s rows for that atom.
+     */
+    std::vector<std::vector<std::vector<Real>>> nonlocal_coefficients;
+    std::shared_ptr<const MeanFieldProjectorSource> projector_source;
 
     [[nodiscard]] int number_of_kpoints() const {
         return static_cast<int>(kpoint_coordinates.size());

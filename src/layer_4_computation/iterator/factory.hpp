@@ -12,6 +12,7 @@
  * PlanewaveMPIExecutionPolicy.
  */
 
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -42,6 +43,25 @@ inline std::unique_ptr<PlanewaveKohnShamSCFIterator> create_iterator(const Input
         return iterator;
     }
     throw std::runtime_error("Unsupported theory: " + input.theory);
+}
+
+/**
+ * Builds the iterator a flavor runs, from the input that flavor prepared.
+ *
+ * The seam through which an entry point hands every flavor its execution environment
+ * -- an MPI execution policy and its topology, a GPU diagonalizer -- without
+ * the flavor naming either. A flavor that adjusts its input first (a
+ * non-self-consistent pass caps the iterations and tightens the solver) still
+ * gets the entry point's setup, because it is the adjusted input that is
+ * passed in. Empty means create_iterator(): serial, on the CPU.
+ */
+using IteratorFactory =
+    std::function<std::unique_ptr<PlanewaveKohnShamSCFIterator>(const InputData&)>;
+
+/// The iterator `factory` builds for `input`, or the serial one when it is empty.
+inline std::unique_ptr<PlanewaveKohnShamSCFIterator>
+create_iterator(const InputData& input, const IteratorFactory& factory) {
+    return factory ? factory(input) : create_iterator(input);
 }
 
 } // namespace q3

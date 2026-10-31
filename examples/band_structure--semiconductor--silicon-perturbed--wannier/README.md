@@ -96,7 +96,7 @@ of the cases `tests/validation/test_wannier_protocol.py` runs through it:
     chain above runs in minutes; the workflow chooses the mesh from a 0.2 Å⁻¹
     spacing, which gives this cell 10×10×10.
 -   **the quality report** — `q3_utility interpolate` now writes
-    `interpolation.quality`: per-function spreads and their variance, the
+    `quality`: per-function spreads and their variance, the
     centres against the atoms and the bonds, and how far H(R) has decayed. The
     147 meV above is still measured against a direct calculation — by the
     workflow itself now, as the band distance η, which is what it accepts or

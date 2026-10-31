@@ -1,0 +1,18 @@
+{
+    "$id": "q3/interpolation/results/construction/disentanglement/bands_excluded_from_freeze",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Interpolation results excluded band",
+    "type": "object",
+    "required": ["band", "kpoints"],
+    "additionalProperties": false,
+    "properties": {
+        "band": {
+            "type": "integer",
+            "description": "The band, one-based as the manifest counts them."
+        },
+        "kpoints": {
+            "type": "integer",
+            "description": "At how many k-points it was excluded."
+        }
+    }
+}

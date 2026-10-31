@@ -82,12 +82,12 @@ instead of resolving it. See AGENTS-generic.md § Imports for the general rule.
 
 A module may import from its own tier or any tier below it, never above:
 
-| Tier | Modules                                               | Owns                                                                |
-| ---- | ----------------------------------------------------- | ------------------------------------------------------------------- |
-| 3    | `q3.workflows`, `q3.jax`                              | orchestration — multi-step runs, differentiation                    |
-| 2    | `q3.calculators`, `q3.flavors`                        | one run of the engine, driven through an API                        |
-| 1    | `q3.binary`, `q3.io`, `q3.structure`, `q3.properties` | process, format, and structure adapters; fits of derived properties |
-| 0    | `q3.constants`, `q3.errors`                           | leaves — import nothing from `q3`                                   |
+| Tier | Modules                                                               | Owns                                                                                                   |
+| ---- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 3    | `q3.workflows`, `q3.jax`                                              | orchestration — multi-step runs, differentiation                                                       |
+| 2    | `q3.calculators`, `q3.flavors`                                        | one run of the engine, driven through an API                                                           |
+| 1    | `q3.binary`, `q3.io`, `q3.generated`, `q3.structure`, `q3.properties` | process, format, and structure adapters; models generated from the schemas; fits of derived properties |
+| 0    | `q3.constants`, `q3.errors`                                           | leaves — import nothing from `q3`                                                                      |
 
 `q3/__init__.py` and `q3/__main__.py` are untiered entry points: they sit
 above everything and are never imported by package code.
@@ -136,6 +136,47 @@ and the two formed a cycle. The fix was to move the adapter down to
 -   use the same units as Quantum ESRESSO for ease of comparison for standard output
 -   use ESSE units for outputting the values in JSON/YAML output files
 -   Keep physical constants and conversion factors in a separate file, e.g. `constants.hpp`
+
+### Output schemas (ESSE first)
+
+-   **HARD RULE**: a result Q3 writes to a machine-readable output (`<prefix>_results.json`,
+    `<prefix>_interpolation_results.json`, the Python layer's result dictionaries, companion
+    JSON files) that ESSE already has a property schema for MUST be written as that ESSE
+    property record (`name`, `units`, `value` or `values`), and its Q3 schema MUST `$ref` the
+    ESSE schema rather than restate it.
+    Look in `schemas/esse/properties_directory/`, and on ESSE's `dev` branch,
+    before adding a key. `results.json` carries these under `properties.records`
+    (`set_record()` in `src/io/output/results.hpp`).
+-   **HARD RULE**: no output key names a unit (`_ry`, `_ev`, `_kbar`, `_bohr`,
+    `_per_bohr`, ...). A quantity carries its unit in its own `units` field, the way ESSE's
+    records do: `$ref` the ESSE schema for it (`core/reusable/energy`,
+    `structural/atomic_forces`, `non_scalar/stress_tensor`, ...) directly from the output
+    schema. Do not copy or re-narrow ESSE schemas into a Q3 file. Readers check the unit where
+    they read the value and refuse any other.
+-   **HARD RULE**: when ESSE has no schema for a quantity, propose one to ESSE
+    ([Exabyte-io/esse](https://github.com/Exabyte-io/esse)) before writing any record for it:
+    draft the schema, open the ESSE change or hand the draft to the maintainer, and record the
+    proposal in `plan/`. Until it lands and the `mat3ra-esse` pin is bumped, the value
+    is written under a Q3 key beside `properties.records`, as a Q3 schema file of its own
+    built from ESSE pieces (`core/primitive/scalar` plus an ESSE unit). Never invent an ESSE-shaped record with a Q3-made `name`, and
+    never add a Q3-local schema for a physical property ESSE could hold.
+-   **HARD RULE**: reuse ESSE's code, not just its schemas. C++ writers fill the structs
+    generated from the ESSE and Q3 schemas (`schemas/manifest.yaml`, `src/generated/`) rather
+    than building JSON by hand, and a Q3 schema that `$ref`s an ESSE schema listed there gets
+    ESSE's struct, not a copy of it under a Q3 name; Python reads records through the pydantic models in
+    `mat3ra.esse.models` (`q3.io.results` types each record as ESSE's model). Never write a helper class or module that
+    re-describes a record ESSE already models.
+-   `schemas/q3/` is for what is genuinely Q3's own (the input manifest, execution topology,
+    provenance) and `$ref`s ESSE, by a relative path into `schemas/esse`, for every piece ESSE
+    already defines. One schema per file: a document's blocks live in a directory named after
+    it (`results/runtime_log.json`), and a Q3 schema that needs more than ESSE states extends the
+    ESSE schema with `allOf` rather than copying it.
+-   `results.json` is grouped by domain: `structure`, `provenance`, `properties` (physical
+    results) and `runtime_log` (how the calculation ran). A new key goes in the group it belongs
+    to, never at the top level.
+-   `tests/regression/test_results_schema.py` enforces the results side: every record under
+    `properties.records` must validate against an ESSE schema the results schema lists, and no key
+    may end in a unit suffix.
 
 ### Testing
 

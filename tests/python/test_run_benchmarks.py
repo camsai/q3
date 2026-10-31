@@ -55,10 +55,11 @@ output_directory.mkdir(parents=True, exist_ok=True)
 """
 
 WRITE_RESULTS = """
-results = {
+results = {"properties": {"records": [
+    {"name": "total_energy", "units": "Ry", "value": -16.913417},
+]}, "runtime_log": {
     "converged": True,
     "self_consistent_field_iterations": 7,
-    "total_energy_ry": -16.913417,
     "execution": {"peak_resident_memory_bytes": 39624704},
     "timings_ms": {
         "seed": 86.7,
@@ -72,12 +73,15 @@ results = {
         "davidson_iterations": 53.0,
         "hamiltonian_applications": 320.0,
     },
-}
+}}
 (output_directory / f"{control['prefix']}_results.json").write_text(json.dumps(results))
 """
 
 WRITE_RESULTS_WITHOUT_TIMINGS = """
-results = {"converged": False, "total_energy_ry": -16.9}
+results = {
+    "runtime_log": {"converged": False},
+    "properties": {"records": [{"name": "total_energy", "units": "Ry", "value": -16.9}]},
+}
 (output_directory / f"{control['prefix']}_results.json").write_text(json.dumps(results))
 """
 

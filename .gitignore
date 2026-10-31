@@ -18,6 +18,10 @@ __pycache__/
 
 /output/
 
+# ESSE's resolved schemas, written from the mat3ra-esse package by
+# scripts/repo/schemas.py (never committed).
+/schemas/esse/
+
 # Virtual environments and agent files
 venv/
 .venv/

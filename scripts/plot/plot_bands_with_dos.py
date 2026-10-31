@@ -35,6 +35,10 @@ sys.path.insert(
 
 from q3.binary import run_q3  # noqa: E402 — needs the sys.path entry above
 from q3.io.output_writer import extract_dos  # noqa: E402 — needs the sys.path entry above
+from q3.io.results.classes import (  # noqa: E402 — needs the sys.path entry above
+    Results,
+    eigenvalue_arrays,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -462,7 +466,8 @@ def main():
 
             q3_dos_data[label] = extract_dos(result, broadening_ry=0.022, energy_steps=2000)
             fermi_ev = q3_dos_data[label]["fermi_energy_ry"] * RY_TO_EV
-            print(f"    OK, {len(result['eigenvalues_ry'])} kpts, Ef={fermi_ev:.4f} eV")
+            kpoint_count = len(result.properties.eigenvalues_at_kpoints.values)
+            print(f"    OK, {kpoint_count} kpts, Ef={fermi_ev:.4f} eV")
         except Exception as exception:
             print(f"    FAILED: {exception}")
 
@@ -518,11 +523,10 @@ def main():
         if not os.path.exists(q3_band_results[label]):
             print(f"  Skip {label}: no NSCF")
             continue
-        with open(q3_band_results[label]) as f:
-            data = json.load(f)
-        q3_bands = (
-            np.array([[band for band in kpoint[0]] for kpoint in data["eigenvalues_ry"]]) * RY_TO_EV
-        )
+        eigenvalues = eigenvalue_arrays(
+            Results.read(q3_band_results[label]).properties.eigenvalues_at_kpoints
+        )[0]
+        q3_bands = np.array([kpoint[0] for kpoint in eigenvalues]) * RY_TO_EV
 
         if label not in qe_data:
             print(f"  Skip {label}: no QE")
@@ -639,12 +643,10 @@ def main():
                 axis.set_title(f"{label}: data missing")
                 continue
 
-            with open(q3_band_results[label]) as f:
-                data = json.load(f)
-            q3_bands = (
-                np.array([[band for band in kpoint[0]] for kpoint in data["eigenvalues_ry"]])
-                * RY_TO_EV
-            )
+            eigenvalues = eigenvalue_arrays(
+                Results.read(q3_band_results[label]).properties.eigenvalues_at_kpoints
+            )[0]
+            q3_bands = np.array([kpoint[0] for kpoint in eigenvalues]) * RY_TO_EV
             qe_bands = qe_data[label]["bands"]
             qe_fermi = qe_data[label]["fermi"]
             number_of_common_bands = min(q3_bands.shape[1], qe_bands.shape[1])

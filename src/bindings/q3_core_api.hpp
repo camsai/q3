@@ -20,13 +20,15 @@
 #include <stdexcept>
 #include <string>
 
+#include "generated/esse/properties/non_scalar/eigenvalues_at_kpoints.hpp"
 #include "io/input/parser/factory.hpp"
 #include "io/input/system_builder.hpp"
 #include "io/logger.hpp"
+#include "io/output/results.hpp"
 #include "layer_0_core/profiling/counters.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/init.hpp"
 #include "layer_4_computation/flavors/factory.hpp"
-#include "layer_4_computation/flavors/result.hpp"
+#include "layer_5_properties/band_structure/band_edges.hpp"
 
 namespace q3 {
 namespace bindings {
@@ -59,17 +61,17 @@ inline std::string run_scf(const std::string& input_path, bool write_output_file
     log::apply_verbosity(input.verbosity, "");
     input.calculation = "self_consistent_field";
 
-    FlavorResult result = run_flavor(input);
+    generated::Results results = run_flavor(input);
 
     if (write_output_files) {
         if (!input.output_directory.empty()) {
             std::filesystem::create_directories(input.output_directory);
         }
         std::string results_path = input.output_directory + "/" + input.prefix + "_results.json";
-        result.write_results_json(results_path);
+        write_results_json(results, results_path);
     }
 
-    return result.to_json_string();
+    return results_json_string(results);
 }
 
 /**
@@ -86,17 +88,17 @@ inline std::string run_nscf(const std::string& input_path, bool write_output_fil
     log::apply_verbosity(input.verbosity, "");
     input.calculation = "non_self_consistent_field";
 
-    FlavorResult result = run_flavor(input);
+    generated::Results results = run_flavor(input);
 
     if (write_output_files) {
         if (!input.output_directory.empty()) {
             std::filesystem::create_directories(input.output_directory);
         }
         std::string results_path = input.output_directory + "/" + input.prefix + "_results.json";
-        result.write_results_json(results_path);
+        write_results_json(results, results_path);
     }
 
-    return result.to_json_string();
+    return results_json_string(results);
 }
 
 /**
@@ -215,83 +217,37 @@ class SCFSolver {
                 std::make_unique<PlanewaveKohnShamQuantumSystem>(iterator->quantum_system());
         }
 
-        FlavorResult flavor_result;
-        flavor_result.flavor = "self_consistent_field";
-        flavor_result.converged = converged;
-        flavor_result.number_of_self_consistent_field_iterations = iterator->iteration();
-        flavor_result.provenance = provenance_;
-
-        const auto& energies = scf_state.energies();
-        flavor_result.total_energy_in_ry = energies.total();
-        flavor_result.band_energy_in_ry = energies.band_energy;
-        flavor_result.hartree_energy_in_ry = energies.hartree_energy;
-        flavor_result.exchange_correlation_energy_in_ry = energies.exchange_correlation_energy;
-        flavor_result.ewald_energy_in_ry = energies.ewald_energy;
-        flavor_result.double_counting_correction_in_ry = energies.double_counting_correction;
-        flavor_result.smearing_entropy_contribution_in_ry = energies.smearing_entropy_contribution;
-        flavor_result.dispersion_energy_in_ry = energies.dispersion_energy();
-
-        flavor_result.fermi_energy_in_ry = iterator->quantum_system().fermi_energy();
+        generated::Results results = new_results("self_consistent_field");
+        results.runtime_log.converged = converged;
+        results.runtime_log.self_consistent_field_iterations = iterator->iteration();
+        if (!provenance_.is_null()) {
+            results.provenance = provenance_;
+        }
 
         /**
-         * The same quantities SelfConsistentFieldFlavor carries, read from the
-         * same accessors. This populator and that one are two hand-maintained
-         * fillers of one FlavorResult, so a quantity added to one and not the
-         * other makes the bindings and the command line disagree about what a
-         * run reported -- which is exactly what results_json() being a single
-         * serializer cannot protect against.
+         * The same quantities SelfConsistentFieldFlavor lists, filled by the
+         * same helpers from the same accessors, so the bindings and the
+         * command line cannot disagree about what a run reported.
          */
-        flavor_result.magnetization = iterator->magnetization();
-        const auto& hubbard_occupation_traces = iterator->hubbard_occupation_traces();
-        for (std::size_t manifold_index = 0; manifold_index < hubbard_occupation_traces.size() &&
-                                             manifold_index < scf_state.hubbard_manifolds.size();
-             ++manifold_index) {
-            flavor_result.hubbard_occupations.push_back(
-                {scf_state.hubbard_manifolds[manifold_index].atom_index,
-                 hubbard_occupation_traces[manifold_index]});
-        }
+        const auto& energies = scf_state.energies();
+        set_energy_records(results, energies.total(), energies);
+        set_fermi_energy(results, iterator->quantum_system().fermi_energy());
+        SelfConsistentFieldFlavor::record_convergence(results, iterator->scf_history());
+        SelfConsistentFieldFlavor::record_magnetization(results, iterator->magnetization());
+        SelfConsistentFieldFlavor::record_hubbard_occupations(
+            results, iterator->hubbard_occupation_traces(), scf_state.hubbard_manifolds);
 
         if (converged) {
             auto [total_forces, forces_contributions] = ForceCalculator::compute_forces(
                 scf_state, input_.dispersion_correction, input_.disable_symmetry);
-            flavor_result.forces_in_ry_per_bohr = total_forces;
-            flavor_result.add_force_contribution("local", forces_contributions.local);
-            flavor_result.add_force_contribution("ewald", forces_contributions.ewald);
-            flavor_result.add_force_contribution("nonlocal", forces_contributions.nonlocal);
-            flavor_result.add_force_contribution("core_correction",
-                                                 forces_contributions.core_correction);
-            flavor_result.add_force_contribution("augmentation", forces_contributions.augmentation);
-            flavor_result.add_force_contribution("dispersion", forces_contributions.dispersion);
-            flavor_result.add_force_contribution("hubbard", forces_contributions.hubbard);
+            SelfConsistentFieldFlavor::record_forces(results, total_forces, forces_contributions);
 
             auto [stress_total, stress_contributions] =
                 compute_stress(scf_state,
                                input_.nonlocal_stress_derivative_method,
                                input_.dispersion_correction,
                                input_.disable_symmetry);
-
-            for (int row_index = 0; row_index < 3; row_index++) {
-                for (int column_index = 0; column_index < 3; column_index++) {
-                    flavor_result.stress_in_kbar[row_index][column_index] =
-                        stress_total.values[row_index][column_index];
-                }
-            }
-            flavor_result.pressure_in_kbar = stress_total.pressure;
-            flavor_result.add_stress_contribution("kinetic", stress_contributions.kinetic);
-            flavor_result.add_stress_contribution("hartree", stress_contributions.hartree);
-            flavor_result.add_stress_contribution("exchange_correlation",
-                                                  stress_contributions.exchange_correlation);
-            flavor_result.add_stress_contribution("ewald", stress_contributions.ewald);
-            flavor_result.add_stress_contribution("local_pseudopotential",
-                                                  stress_contributions.local);
-            flavor_result.add_stress_contribution("nonlocal_pseudopotential",
-                                                  stress_contributions.nonlocal);
-            flavor_result.add_stress_contribution("core_correction",
-                                                  stress_contributions.core_correction);
-            flavor_result.add_stress_contribution("augmentation",
-                                                  stress_contributions.augmentation);
-            flavor_result.add_stress_contribution("hubbard", stress_contributions.hubbard);
-            flavor_result.add_stress_contribution("dispersion", stress_contributions.dispersion);
+            SelfConsistentFieldFlavor::record_stress(results, stress_total, stress_contributions);
         }
 
         const auto& eigenvalue_matrix = iterator->eigenvalues();
@@ -300,22 +256,26 @@ class SCFSolver {
         /**
          * kpoint_grid() holds one entry per PHYSICAL k-point; eigenvalue_matrix is
          * indexed by k-point STATE (physical kpoint * spin) -- see the identical
-         * convention in flavors/self_consistent_field.hpp.
+         * convention in iterator/kohn_sham/planewave/execution/kpoint_states.hpp.
          */
         int number_of_physical_kpoints = iterator->kpoint_grid().number_of_kpoints();
 
-        flavor_result.eigenvalues_in_ry.resize(number_of_kpoints);
-        flavor_result.kpoint_weights.resize(number_of_kpoints);
+        generated::EigenvaluesAtKpoints eigenvalues;
+        eigenvalues.name = generated::EigenvaluesAtKpointsNameEnum::EIGENVALUES_AT_KPOINTS;
+        eigenvalues.units = generated::EigenvaluesAtKpointsUnitsEnum::RY;
         for (int kpoint_index = 0; kpoint_index < number_of_kpoints; kpoint_index++) {
-            flavor_result.eigenvalues_in_ry[kpoint_index].resize(1);
-            flavor_result.eigenvalues_in_ry[kpoint_index][0].resize(number_of_bands);
+            generated::EigenvaluesAtKpointsBandEnergies channel;
             for (int band_index = 0; band_index < number_of_bands; band_index++) {
-                flavor_result.eigenvalues_in_ry[kpoint_index][0][band_index] =
-                    eigenvalue_matrix(kpoint_index, band_index);
+                channel.energies.push_back(eigenvalue_matrix(kpoint_index, band_index));
             }
-            flavor_result.kpoint_weights[kpoint_index] =
+            generated::EigenvaluesAtKpointsEigenvaluesAtKPoint kpoint;
+            kpoint.weight =
                 iterator->kpoint_grid()[kpoint_index % number_of_physical_kpoints].weight;
+            kpoint.eigenvalues = {channel};
+            eigenvalues.values.push_back(kpoint);
         }
+        set_record(results, eigenvalues);
+        add_band_edge_records(results);
 
         if (write_output_files) {
             if (!input_.output_directory.empty()) {
@@ -323,10 +283,10 @@ class SCFSolver {
             }
             std::string results_path =
                 input_.output_directory + "/" + input_.prefix + "_results.json";
-            flavor_result.write_results_json(results_path);
+            write_results_json(results, results_path);
         }
 
-        return flavor_result.to_json_string();
+        return results_json_string(results);
     }
 
   private:

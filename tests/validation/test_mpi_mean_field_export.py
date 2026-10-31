@@ -28,6 +28,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from q3.io.results.classes import Results
 
 from helpers import EXAMPLES_DIRECTORY, apply_config_overlay
 from helpers_berkeleygw import read_berkeleygw_wavefunction_file
@@ -163,11 +164,11 @@ def test_multi_rank_export_refuses_loudly_and_exports_nothing(
             combined_output
         )
 
-    results = yaml.safe_load((outdir / "si_nc_results.json").read_text())
-    execution = results["execution"]
-    assert execution["number_of_processes"] == number_of_ranks
-    assert execution["number_of_kpoint_pools"] == expected_number_of_pools
-    assert execution["band_group_size"] == number_of_ranks // expected_number_of_pools
+    results = Results.read(outdir / "si_nc_results.json")
+    execution = results.runtime_log.execution
+    assert execution.number_of_processes == number_of_ranks
+    assert execution.number_of_kpoint_pools == expected_number_of_pools
+    assert execution.band_group_size == number_of_ranks // expected_number_of_pools
 
 
 def test_single_rank_mpi_export_is_complete_and_valid(mpi_q3_bin, tmp_path):

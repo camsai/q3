@@ -58,6 +58,7 @@ import yaml
 from ase import Atoms
 from ase.phonons import Phonons
 
+from q3.binary import ExecutionPolicy
 from q3.calculators.ase_calculator import Q3ASECalculator
 from q3.io.input_writer import write_supercell_scf_input
 from q3.properties.phonons import (
@@ -85,6 +86,7 @@ def run_gamma_phonons_workflow(
     apply_acoustic_sum_rule: bool = True,
     mode: str = "auto",
     q3_binary: str | Path | None = None,
+    execution_policy: ExecutionPolicy | None = None,
     workdir: str | Path | None = None,
     cache_name: str = "phonon_cache",
     capture_output: bool = True,
@@ -114,7 +116,7 @@ def run_gamma_phonons_workflow(
         block to enforce exact translational invariance (the three acoustic
         modes at Gamma are otherwise only approximately zero, limited by
         finite-difference/SCF-convergence noise).
-    mode, q3_binary, workdir, capture_output:
+    mode, q3_binary, execution_policy, workdir, capture_output:
         Forwarded to ``Q3ASECalculator``. ``workdir`` also hosts the ASE
         ``Phonons`` displacement cache (see ``cache_name``); passing the
         same ``workdir``/``cache_name`` on a second call resumes from
@@ -151,6 +153,7 @@ def run_gamma_phonons_workflow(
         scf_input_path,
         mode=mode,
         q3_binary=q3_binary,
+        execution_policy=execution_policy,
         workdir=workdir,
         capture_output=capture_output,
     )
@@ -205,6 +208,7 @@ def run_phonopy_workflow(
     temperature_step_kelvin: float = 10.0,
     apply_acoustic_sum_rule: bool = True,
     q3_binary: str | Path | None = None,
+    execution_policy: ExecutionPolicy | None = None,
     workdir: str | Path | None = None,
     capture_output: bool = True,
 ) -> dict[str, Any]:
@@ -246,7 +250,7 @@ def run_phonopy_workflow(
         Temperature grid for the thermal properties.
     apply_acoustic_sum_rule:
         Apply Phonopy's ``symmetrize_force_constants()`` (default ``True``).
-    q3_binary, workdir, capture_output:
+    q3_binary, execution_policy, workdir, capture_output:
         Forwarded to ``Q3ASECalculator``.  *workdir* also receives the
         supercell input and ``phonopy_params.yaml``.
 
@@ -315,6 +319,7 @@ def run_phonopy_workflow(
         # the bindings path cannot solve (see Q3ASECalculator.calculate()).
         mode="subprocess",
         q3_binary=q3_binary,
+        execution_policy=execution_policy,
         workdir=workdir,
         capture_output=capture_output,
     )

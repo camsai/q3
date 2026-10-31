@@ -38,7 +38,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers import BOHR_RADIUS_ANGSTROM, load_results_json, run_q3
+from helpers import BOHR_RADIUS_ANGSTROM, atomic_forces, load_results_json, run_q3
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 SILICON_MATERIAL = REPOSITORY / "examples" / "data" / "materials" / "silicon.json"
@@ -203,7 +203,9 @@ def run_silicon(q3_command, directory, positions, kpoint_grid, volume_fraction=0
         f"stderr:\n{completed.stderr[-3000:]}"
     )
     results = load_results_json(directory / "out", "si")
-    assert results["converged"], "the SCF did not converge, so its derivatives mean nothing"
+    assert results.runtime_log.converged, (
+        "the SCF did not converge, so its derivatives mean nothing"
+    )
     return completed.stdout, results
 
 
@@ -246,7 +248,7 @@ def test_paw_pressure_is_the_volume_derivative_of_q3s_own_energy(
     (`write_input`) removes the term at any cutoff, which is what lets this run
     so far below convergence.
     """
-    analytic = stress_baseline["pressure_kbar"]
+    analytic = stress_baseline.properties.pressure.value
     energies = {}
     for sign in (+1, -1):
         _, results = run_silicon(
@@ -256,7 +258,7 @@ def test_paw_pressure_is_the_volume_derivative_of_q3s_own_energy(
             STRESS_KPOINT_GRID,
             volume_fraction=sign * VOLUME_STEP,
         )
-        energies[sign] = results["total_energy_ry"]
+        energies[sign] = results.properties.total_energy.value
 
     numerical = (
         -(energies[+1] - energies[-1])
@@ -289,19 +291,19 @@ def test_stress_does_not_depend_on_the_choice_of_origin(q3_command, stress_basel
     the defect leaves the committed pressure exactly where it was -- which is
     also why the volume-derivative gate above passes with it in place.
     """
-    reference = stress_baseline["pressure_kbar"]
+    reference = stress_baseline.properties.pressure.value
     _, shifted = run_silicon(
         q3_command, tmp_path / "shifted_origin", SHIFTED_ORIGIN, STRESS_KPOINT_GRID
     )
-    shifted_pressure = shifted["pressure_kbar"]
+    shifted_pressure = shifted.properties.pressure.value
     print(
         f"\n  P at (7/8, 1/8) = {reference:+.5f}  P at (0, 1/4) = {shifted_pressure:+.5f} kbar  "
         f"difference {shifted_pressure - reference:+.2e}"
     )
     assert abs(shifted_pressure - reference) < ORIGIN_TOLERANCE_KILOBAR, (
         f"the stress depends on the choice of origin: {reference:.5f} vs {shifted_pressure:.5f} "
-        f"kbar for the same crystal, whose energies are {stress_baseline['total_energy_ry']:.10f} "
-        f"and {shifted['total_energy_ry']:.10f} Ry"
+        f"kbar for the same crystal, whose energies are {stress_baseline.properties.total_energy.value:.10f} "
+        f"and {shifted.properties.total_energy.value:.10f} Ry"
     )
 
 
@@ -337,11 +339,12 @@ def test_gamma_only_forces_are_the_gradient_of_q3s_own_energy(q3_command, tmp_pa
         "this input was meant to exercise the Gamma-only half sphere:\n" + baseline_output[:2000]
     )
 
-    force = baseline["forces_ry_per_bohr"][1]
+    force = atomic_forces(baseline)[1]
     analytic = sum(force[index] * FIRST_CELL_VECTOR_DIRECTION[index] for index in range(3))
     step_bohr = step * primitive_vector_length_bohr()
     numerical = -(
-        outputs["plus"][1]["total_energy_ry"] - outputs["minus"][1]["total_energy_ry"]
+        outputs["plus"][1].properties.total_energy.value
+        - outputs["minus"][1].properties.total_energy.value
     ) / (2.0 * step_bohr)
 
     assert abs(numerical) > 1.0e-3, "the displacement is not producing a resolvable force"

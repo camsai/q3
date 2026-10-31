@@ -32,7 +32,7 @@ import pytest
 import yaml
 from q3.constants import RYDBERG_TO_ELECTRONVOLT
 
-from helpers import EXAMPLES_DIRECTORY
+from helpers import EXAMPLES_DIRECTORY, density_of_states_ry, eigenvalues_ry, evaluated_kpoints
 
 EXAMPLE = EXAMPLES_DIRECTORY / "band_structure--semiconductor--silicon-perturbed--wannier"
 GRID = (6, 6, 6)
@@ -70,7 +70,7 @@ def _mesh_kpoints() -> list[list[float]]:
 
 
 def _sorted_bands(path: Path) -> np.ndarray:
-    return np.sort(np.array(json.loads(path.read_text())["eigenvalues_ry"])[:, 0, :], axis=1)
+    return np.sort(np.array(eigenvalues_ry(json.loads(path.read_text())))[:, 0, :], axis=1)
 
 
 @pytest.fixture(scope="module")
@@ -108,7 +108,9 @@ def chain(tmp_path_factory, q3_command, q3_utility_command) -> dict:
         "calculation": "nscf",
         "outdir": str(output),
         "prefix": "si_perturbed",
-        "kpoints_list": [[*point, 2.0 / len(on_path["kpoints"])] for point in on_path["kpoints"]],
+        "kpoints_list": [
+            [*point, 2.0 / len(evaluated_kpoints(on_path))] for point in evaluated_kpoints(on_path)
+        ],
     }
     _run(
         q3 + ["--log-level", "warn", str(_write(workspace, "direct.yml", direct))],
@@ -142,7 +144,7 @@ def chain(tmp_path_factory, q3_command, q3_utility_command) -> dict:
 
     return {
         "on_path": on_path,
-        "path_model": np.sort(np.array(on_path["eigenvalues_ry"])[:, 0, :], axis=1),
+        "path_model": np.sort(np.array(eigenvalues_ry(on_path))[:, 0, :], axis=1),
         "path_reference": path_reference,
         "mesh_model": _sorted_bands(workspace / "mesh_model.json"),
         "mesh_reference": _sorted_bands(output / "si_perturbed_results.json"),
@@ -155,13 +157,12 @@ def test_the_pseudopotential_decides_how_many_wannier_functions(chain):
     an atom contributes one s and three p orbitals and a two-atom cell holds
     eight -- which is also what makes the 12-band window need disentangling.
     """
-    interpolation = chain["on_path"]["interpolation"]
+    interpolation = chain["on_path"]["construction"]
     assert interpolation["number_of_bands"] == EXPECTED_WANNIER_FUNCTIONS
     assert "disentanglement" in interpolation["description"]
 
-    density = chain["on_path"]["density_of_states"]
-    energies = np.array(density["energies_ry"])
-    values = np.array(density["dos"])
+    density = chain["on_path"]["properties"]["density_of_states"]
+    energies, values = density_of_states_ry(density)
     integral = float(np.sum(0.5 * (values[1:] + values[:-1]) * np.diff(energies)))
     assert integral == pytest.approx(float(EXPECTED_WANNIER_FUNCTIONS), abs=0.05)
 

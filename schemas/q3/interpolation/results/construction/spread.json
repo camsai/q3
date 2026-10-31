@@ -1,0 +1,70 @@
+{
+    "$id": "q3/interpolation/results/construction/spread",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Interpolation results spread",
+    "type": "object",
+    "required": ["gauge_invariant_bohr_squared", "localized"],
+    "additionalProperties": false,
+    "description": "The Marzari-Vanderbilt spread of the model's Wannier functions at the gauge it was built with, in bohr and bohr squared. Omega_I is reported always; the rest whenever the record carries the neighbour overlaps that define it and the mesh has no two-point axis — the projection gauge has a spread too, and a driver comparing two models wants it either way.",
+    "properties": {
+        "gauge_invariant_bohr_squared": {
+            "type": "number",
+            "description": "Omega_I: the part of the spread the gauge cannot change. From the spread when it was evaluated, otherwise from the subspace iteration when there was one; zero for an isolated manifold without overlaps."
+        },
+        "localized": {
+            "type": "boolean",
+            "description": "Whether the gauge was rotated by the spread minimiser at all."
+        },
+        "total_bohr_squared": {
+            "type": "number",
+            "description": "Omega = Omega_I + Omega_D + Omega_OD at the final gauge."
+        },
+        "guiding_centers": {
+            "type": "string",
+            "description": "What fixed the branch of each Berry phase: \"trial orbitals\" when the record carries their positions, \"projection gauge\" otherwise."
+        },
+        "trial_orbital_centers_bohr": {
+            "type": "array",
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "number"
+                }
+            },
+            "description": "The record's trial-orbital positions, Cartesian bohr, one [x, y, z] per function; empty when it carries none."
+        },
+        "initial_minimizable_bohr_squared": {
+            "type": "number",
+            "description": "Omega_D + Omega_OD at the projection gauge, before any rotation: what localisation bought is this minus the final value."
+        },
+        "centers_bohr": {
+            "type": "array",
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "number"
+                }
+            },
+            "description": "The Wannier centres at the final gauge, Cartesian bohr, one [x, y, z] per function."
+        },
+        "spreads_bohr_squared": {
+            "type": "array",
+            "items": {
+                "type": "number"
+            },
+            "description": "Omega_n per function: <r^2>_n - |<r>_n|^2, summing to the total."
+        },
+        "localization_iterations": {
+            "type": "integer",
+            "description": "How many iterations the spread minimiser ran; present when it ran."
+        },
+        "localization_converged": {
+            "type": "boolean",
+            "description": "Whether the minimiser reached a stationary gauge rather than merely stopped; false after a stall, where the gauge is the best one found but not a minimum."
+        },
+        "localization_gradient_norm": {
+            "type": "number",
+            "description": "The norm of the spread gradient where the minimiser stopped, a diagnostic beside the answer rather than the convergence test."
+        }
+    }
+}
