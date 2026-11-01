@@ -14,7 +14,7 @@
 # Pin a release instead of `latest` by editing the tag below, or skip this file
 # altogether and pull the image directly, which does the same conversion:
 #
-#     apptainer pull docker://ghcr.io/camsai/q3:2026.9.10-0
+#     apptainer pull docker://ghcr.io/camsai/q3:2026.11.1-0
 #
 # Tags cut before the images became OCI hold a SIF pushed as an ORAS artifact,
 # which `docker://` cannot read; those need `apptainer pull oras://…`.

@@ -163,7 +163,7 @@ apptainer pull docker://ghcr.io/camsai/q3:latest
 
 ```bash
 # Or a specific version — tags are date-based, YYYY.M.D-N, one per release
-apptainer pull docker://ghcr.io/camsai/q3:2026.9.10-0
+apptainer pull docker://ghcr.io/camsai/q3:2026.11.1-0
 ```
 
 Releases cut before the images became OCI hold a Singularity image pushed as an
