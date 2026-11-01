@@ -5,8 +5,9 @@
 <h1 align="center">Quantum 3xplorer (Q3)</h1>
 
 <p align="center">
-  An AI-Native (written from scratch and maintained by AI) engine for
-  next-generation quantum materials modeling.
+  An AI-native engine for next-generation quantum materials modeling, written
+  from scratch by AI coding agents under the direction and supervision of
+  domain scientists.
 </p>
 
 <p align="center">
@@ -15,12 +16,6 @@
   <a href="https://en.cppreference.com/w/cpp/17"><img src="https://img.shields.io/badge/language-C%2B%2B17-blue.svg" alt="Language"/></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg" alt="Platform"/>
 </p>
-
-> **Pre-release.** This repository is an unreleased copy shared for evaluation
-> under embargo. The Apache-2.0 text in [LICENSE.md](LICENSE.md) states the
-> _intended_ outbound license of the public release; it does not license this
-> copy. Read [PRERELEASE-NOTICE.md](PRERELEASE-NOTICE.md) before sharing
-> anything from this repository, including benchmark numbers.
 
 Q3 is a self-contained, from-scratch plane-wave density functional theory (DFT)
 engine. It computes the ground-state electronic structure of periodic
@@ -821,10 +816,7 @@ that avoids writing one.
 
 ## 6. License
 
-Q3's intended outbound license is the [Apache License 2.0](LICENSE.md).
+Q3 is licensed under the [Apache License 2.0](LICENSE.md).
 Copyright and licensing are declared for every file in [REUSE.toml](REUSE.toml)
 rather than in per-file headers, including the vendored pseudopotential tables,
 which stay under their upstream licenses.
-
-While this repository remains pre-release, that license text does not yet grant
-rights in this copy — see [PRERELEASE-NOTICE.md](PRERELEASE-NOTICE.md).

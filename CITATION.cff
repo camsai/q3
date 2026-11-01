@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use Q3 in your research, please cite it as below."
 type: software
-title: "Quantum 3xplorer: An AI-Native Engine for Next-Generation Quantum Materials Modeling"
+title: "Quantum 3xplorer: AI-Native Engine for Next-Generation Quantum Materials Modeling"
 authors:
   - name: "The Q3 Developers"
 license: Apache-2.0

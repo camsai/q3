@@ -11,21 +11,64 @@
  * its own: it runs the input once and continues from this material.
  */
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
 #include "io/input/data.hpp"
 #include "io/input/system_builder.hpp"
 #include "layer_0_core/types/constants.hpp"
+#include "layer_1_structure/crystal/periodic_table.hpp"
 
 namespace q3 {
 
 /**
+ * A species label split the ESSE way: the chemical element, and what tells
+ * this species apart from others of the same element ("Cr1" -> "Cr", 1).
+ *
+ * ESSE's basis.elements holds only periodic-table symbols; the sublattice a
+ * pw.x deck writes as Cr1/Cr2 goes in basis.labels. The element is the
+ * longest periodic-table symbol (two letters, else one) the name starts
+ * with; the label is the rest -- an integer when it is all digits, otherwise
+ * the text -- and null for a species named by its element alone. A name that
+ * starts with no element is kept whole as the element, unlabelled, for the
+ * results schema to refuse.
+ */
+[[nodiscard]] inline std::pair<std::string, nlohmann::json>
+element_and_label_of_species(const std::string& species_symbol) {
+    for (size_t length : {size_t{2}, size_t{1}}) {
+        if (species_symbol.size() < length)
+            continue;
+        const std::string element = species_symbol.substr(0, length);
+        if (!std::all_of(element.begin(), element.end(), [](unsigned char character) {
+                return std::isalpha(character);
+            }))
+            continue;
+        if (PeriodicTable::atomic_number_by_element_symbol(element) == 0)
+            continue;
+        const std::string rest = species_symbol.substr(length);
+        if (rest.empty())
+            return {element, nullptr};
+        const bool all_digits = std::all_of(rest.begin(), rest.end(), [](unsigned char character) {
+            return std::isdigit(character);
+        });
+        if (all_digits && rest.size() < 10)
+            return {element, std::stoi(rest)};
+        return {element, rest};
+    }
+    return {species_symbol, nullptr};
+}
+
+/**
  * The ESSE material of *input*: lattice (vectors in angstrom, with ESSE's lengths
- * and angles), and basis (species labels, crystal coordinates, and
- * `constraints` -- per site, `true` where a Cartesian component may move, as
- * mat3ra-made writes them).
+ * and angles), and basis (chemical elements, `labels` for the sites whose
+ * species is more than its element, crystal coordinates, and `constraints`
+ * -- per site, `true` where a Cartesian component may move, as mat3ra-made
+ * writes them).
  */
 [[nodiscard]] inline nlohmann::json build_material_json(const InputData& input) {
     const Matrix3x3 vectors_bohr =
@@ -49,11 +92,15 @@ namespace q3 {
     basis["elements"] = nlohmann::json::array();
     basis["coordinates"] = nlohmann::json::array();
     basis["constraints"] = nlohmann::json::array();
+    nlohmann::json labels = nlohmann::json::array();
     for (size_t atom_index = 0; atom_index < input.atoms.size(); ++atom_index) {
         const Atom& atom = input.atoms[atom_index];
         const int site_id = static_cast<int>(atom_index) + 1;
-        basis["elements"].push_back(
-            {{"id", site_id}, {"value", input.species[atom.species_index].symbol}});
+        auto [element, label] =
+            element_and_label_of_species(input.species[atom.species_index].symbol);
+        basis["elements"].push_back({{"id", site_id}, {"value", element}});
+        if (!label.is_null())
+            labels.push_back({{"id", site_id}, {"value", label}});
         basis["coordinates"].push_back(
             {{"id", site_id}, {"value", {atom.position[0], atom.position[1], atom.position[2]}}});
         basis["constraints"].push_back({{"id", site_id},
@@ -62,6 +109,8 @@ namespace q3 {
                                           atom.movable_components[1],
                                           atom.movable_components[2]}}});
     }
+    if (!labels.empty())
+        basis["labels"] = labels;
 
     return {{"name", input.prefix},
             {"metadata", nlohmann::json::object()},

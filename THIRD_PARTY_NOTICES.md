@@ -39,7 +39,7 @@ distributed.
 The commit the bundle names is permanent: the published repository's history is not
 rewritten after the public release, so the commit URL in the bundle's `README.txt` resolves
 for as long as the image is distributed. A snapshot of Q3's source at that commit is also
-available on request from the address in `LICENSE.md`'s copyright notice.
+available on request through the repository's issue tracker.
 
 The bundle covers FFTW, the GPL component Q3 itself links. The rest of each image is
 Ubuntu 24.04's binary packages, unmodified: the GNU C Library, the GCC runtime libraries

@@ -55,3 +55,43 @@ TEST(MaterialJson, ConstraintsFollowTheMat3raConvention) {
     EXPECT_EQ(material["basis"]["constraints"][0]["value"], nlohmann::json({true, true, true}));
     EXPECT_EQ(material["basis"]["constraints"][1]["value"], nlohmann::json({false, false, true}));
 }
+
+/// A same-element antiferromagnet's Cr1/Cr2 are ESSE element Cr, told apart by basis.labels.
+TEST(MaterialJson, SublatticeSpeciesAreElementsWithLabels) {
+    InputData input = make_fcc_silicon();
+    AtomSpecies first_chromium;
+    first_chromium.symbol = "Cr1";
+    AtomSpecies second_chromium;
+    second_chromium.symbol = "Cr2";
+    input.species = {first_chromium, second_chromium};
+    input.number_of_species = 2;
+    input.atoms[1].species_index = 1;
+
+    const nlohmann::json material = build_material_json(input);
+
+    EXPECT_EQ(material["basis"]["elements"][0]["value"], "Cr");
+    EXPECT_EQ(material["basis"]["elements"][1]["value"], "Cr");
+    EXPECT_EQ(material["basis"]["labels"],
+              nlohmann::json::parse(R"([{"id": 1, "value": 1}, {"id": 2, "value": 2}])"));
+}
+
+/// A species named by its element alone writes no labels at all.
+TEST(MaterialJson, PlainElementsWriteNoLabels) {
+    const nlohmann::json material = build_material_json(make_fcc_silicon());
+
+    EXPECT_FALSE(material["basis"].contains("labels"));
+}
+
+/// Element and label of a species name: digits are an integer label, other text a string one.
+TEST(MaterialJson, SplitsASpeciesNameIntoElementAndLabel) {
+    EXPECT_EQ(element_and_label_of_species("Fe"),
+              std::make_pair(std::string("Fe"), nlohmann::json()));
+    EXPECT_EQ(element_and_label_of_species("Fe12"),
+              std::make_pair(std::string("Fe"), nlohmann::json(12)));
+    EXPECT_EQ(element_and_label_of_species("Fe_up"),
+              std::make_pair(std::string("Fe"), nlohmann::json("_up")));
+    EXPECT_EQ(element_and_label_of_species("Xx"),
+              std::make_pair(std::string("Xx"), nlohmann::json()));
+    EXPECT_EQ(element_and_label_of_species("O2a"),
+              std::make_pair(std::string("O"), nlohmann::json("2a")));
+}

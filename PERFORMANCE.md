@@ -3,9 +3,7 @@
 Single-core and MPI-parallel performance of Q3, including comparisons against the
 Quantum ESPRESSO (QE) `develop` branch (commit
 [`0f3d9044f2`](https://gitlab.com/QEF/q-e/-/commit/0f3d9044f2e553b900550e8f0f18b3cb416f13b6),
-version string 7.5, LibXC-enabled build at `build_libxc/bin/pw.x`). Head-to-head
-comparisons against commercial reference engines are maintained privately, pending
-the appropriate benchmark-publication permissions.
+version string 7.5, LibXC-enabled build at `build_libxc/bin/pw.x`).
 
 ## Computational Environment
 

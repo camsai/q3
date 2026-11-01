@@ -1,4 +1,4 @@
-"""tests/python/test_wannier_campaign.py
+"""tests/python/test_wannier_campaign_roster.py
 
 The campaign's roster and its bookkeeping, without running anything: the
 roster is one fixed set, every case names datasets that exist, the variants

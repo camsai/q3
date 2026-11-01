@@ -1,4 +1,6 @@
 # Prettier ignore — only format what we own
+# The Apache License 2.0 text, kept verbatim.
+LICENSE.md
 STATISTICS.md
 # ESSE's schemas, written from the mat3ra-esse package (untracked): upstream's
 # JSON, not ours to reformat.

@@ -25,7 +25,7 @@ Q3 exists because the materials simulation field needs a **clean, modern, extens
 
 #### 1. From-Scratch Modern C++17 Implementation
 
-Q3 is written from scratch in C++17 with no legacy code. Every design decision reflects modern software engineering:
+Q3 is written from scratch in C++17. Every design decision reflects modern software engineering:
 
 -   **No abbreviations** — `number_of_plane_waves` not `npw`, `pseudopotential_set` not `ppset`. The codebase is self-documenting.
 -   **Strategy/Factory patterns** — XC functionals, mixers, diagonalizers, and smearing schemes are interchangeable via clean interfaces.

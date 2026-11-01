@@ -1,8 +1,8 @@
 name: Deploy Documentation
 
 on:
-  # Disabled automatic publishing while the site is not meant to be public.
-  # Re-enable by uncommenting the push trigger below.
+  # Runs by hand: GitHub Pages can be enabled only once camsai/q3 is public.
+  # After that, re-enable the push trigger below.
   # push:
   #   branches: ["main"]
   workflow_dispatch:
@@ -38,14 +38,6 @@ jobs:
         run: |
           mkdir -p docs_build
           doxygen Doxyfile
-
-      - name: Discourage search engine indexing
-        run: |
-          # Inject a noindex meta tag into every generated page so the site is
-          # not indexed by Google et al. while it is not meant to be public.
-          # (Crawling is still allowed so the noindex directive can be read.)
-          find docs_build/html -name '*.html' -print0 | xargs -0 sed -i \
-            's#<head>#<head><meta name="robots" content="noindex, nofollow">#I'
 
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3

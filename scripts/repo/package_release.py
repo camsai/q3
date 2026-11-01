@@ -51,7 +51,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 CMAKE_LISTS_PATH = REPOSITORY_ROOT / "CMakeLists.txt"
 
 # Files from the repository root that every archive carries.
-TOP_LEVEL_DOCUMENTS = ("LICENSE.md", "README.md", "PRERELEASE-NOTICE.md", "THIRD_PARTY_NOTICES.md")
+TOP_LEVEL_DOCUMENTS = ("LICENSE.md", "README.md", "THIRD_PARTY_NOTICES.md")
 
 # License-file names, tried in order, inside a dependency's source tree.
 LICENSE_FILE_NAMES = ("LICENSE", "LICENSE.txt", "LICENSE.md", "LICENSE.MIT", "COPYING")
