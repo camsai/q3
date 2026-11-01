@@ -16,7 +16,9 @@ The visual diagram is in [ontology.drawio](ontology.drawio).
 
 ---
 
-## Layer 0: Core (`src/layer_0_core/`)
+## Layer 0: Core
+
+Directory: `src/layer_0_core/`
 
 Foundation types with no physics knowledge.
 
@@ -31,7 +33,9 @@ Foundation types with no physics knowledge.
 
 ---
 
-## Layer 1: Structure (`src/layer_1_structure/`)
+## Layer 1: Structure
+
+Directory: `src/layer_1_structure/`
 
 Physical description of the periodic system — no knowledge of electronic structure.
 
@@ -78,7 +82,9 @@ classDiagram
 
 ---
 
-## Basis & Reciprocal Space (`src/layer_3_representation/basis/`, `src/layer_1_structure/reciprocal_space/`)
+## Basis & Reciprocal Space
+
+Directories: `src/layer_3_representation/basis/`, `src/layer_1_structure/reciprocal_space/`
 
 The mathematical framework for expanding wavefunctions and densities.
 (`GVector`, `FFTGrid`, and `PlanewaveBasis` live in `layer_3_representation/basis/planewave/`;
@@ -131,7 +137,9 @@ classDiagram
 
 ---
 
-## Layer 3: Representation — Pseudopotentials (`src/layer_3_representation/`)
+## Layer 3: Representation — Pseudopotentials
+
+Directory: `src/layer_3_representation/`
 
 Atomic physics input — replaces core electrons with effective potentials.
 
@@ -192,7 +200,9 @@ classDiagram
 
 ---
 
-## Layer 3: Representation — Quantum State Objects (`src/layer_3_representation/`)
+## Layer 3: Representation — Quantum State Objects
+
+Directory: `src/layer_3_representation/`
 
 The central physical quantities in Kohn-Sham DFT. These are what the SCF cycle computes.
 
@@ -246,7 +256,9 @@ The central physical quantities in Kohn-Sham DFT. These are what the SCF cycle c
 
 ---
 
-## Layer 4: Computation — Strategies (`src/layer_4_computation/`)
+## Layer 4: Computation — Strategies
+
+Directory: `src/layer_4_computation/`
 
 Pluggable algorithms (Strategy pattern). Each is an abstract base class with concrete implementations.
 
@@ -314,7 +326,9 @@ Standalone computation: Crystal → E_ewald (ion-ion electrostatic energy).
 
 ---
 
-## Layer 4: Computation — SCF Workflow (`src/layer_4_computation/`)
+## Layer 4: Computation — SCF Workflow
+
+Directory: `src/layer_4_computation/`
 
 ```mermaid
 classDiagram
@@ -365,7 +379,9 @@ classDiagram
 
 ---
 
-## IO: Mixins (`src/io/mixins/`)
+## IO: Mixins
+
+Directory: `src/io/mixins/`
 
 Cross-cutting capabilities mixed into classes via multiple inheritance.
 
@@ -395,7 +411,9 @@ classDiagram
 
 ---
 
-## Layer 5: Properties (`src/layer_5_properties/`)
+## Layer 5: Properties
+
+Directory: `src/layer_5_properties/`
 
 Post-SCF physical properties, organized as a 3-layer pipeline.
 
@@ -577,7 +595,9 @@ class ChargeDensityCheckpoint : public BinarySerializableMixin {
 
 ---
 
-## IO: Input Parsing (`src/io/`)
+## IO: Input Parsing
+
+Directory: `src/io/`
 
 Input parsing. Output is handled by the mixin pattern — no centralized output writer needed.
 

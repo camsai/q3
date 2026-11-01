@@ -5,7 +5,7 @@ name: Release Artifacts
 #
 #   linux-x86_64   Ubuntu 24.04, amd64
 #   linux-arm64    Ubuntu 24.04, arm64
-#   macos-arm64    macOS 14, Apple Silicon
+#   macos-arm64    macOS 15, Apple Silicon
 #
 # Each archive is built, then smoke-tested in a *separate* job that starts from
 # a clean OS with nothing but the archive and the runtime packages its own
@@ -63,7 +63,7 @@ jobs:
             platform: linux-x86_64
           - os: ubuntu-24.04-arm
             platform: linux-arm64
-          - os: macos-14
+          - os: macos-15
             platform: macos-arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -258,7 +258,7 @@ jobs:
     # job can still check is that the archive works on a runner that did not
     # build it, with only the Homebrew runtime libraries its link table names.
     needs: build
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 20
 
     steps:

@@ -17,10 +17,10 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg" alt="Platform"/>
 </p>
 
-Q3 is a self-contained, from-scratch plane-wave density functional theory (DFT)
-engine. It computes the ground-state electronic structure of periodic
-crystals — total energies, forces, stress, and band structures — and it does so
-in modern, readable C++ with a Python layer on top.
+Q3 is a self-contained, from-scratch quantum simulation engine. Its first
+implementation is plane-wave density functional theory (DFT): it computes the
+ground-state electronic structure of periodic crystals — total energies, forces,
+stress, and band structures — in modern, readable C++ with a Python layer on top.
 
 | If you want to…                       | Go here                                                                                                        |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------- |

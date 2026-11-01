@@ -19,7 +19,7 @@ The landscape of plane-wave DFT codes is dominated by a handful of mature projec
 
 These are mature, battle-tested, and widely used, and Q3's own validation rests on one of them, Quantum ESPRESSO. They are largely written in Fortran 90/2003 and were designed as standalone applications, before AI coding agents and today's data platforms existed.
 
-Q3 exists because the materials simulation field needs a **clean, modern, extensible** DFT engine that can serve as the computational core of a larger platform — not as a standalone monolithic application.
+Q3 exists because the materials simulation field needs a **clean, modern, extensible** quantum simulation engine that can serve as the computational core of a larger platform — not as a standalone monolithic application.
 
 ### Key Advantages
 

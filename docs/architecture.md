@@ -1,6 +1,6 @@
 # Q3 Layered Architecture
 
-This document describes the physical code organization of the Q3 DFT engine. The
+This document describes the physical code organization of Q3. The
 codebase is structured as a strict layered architecture where each layer may only
 depend on layers below it — never sideways or upward.
 
@@ -61,7 +61,9 @@ it is serial by construction.
 
 ---
 
-## Layer 0: Core (`src/layer_0_core/`)
+## Layer 0: Core
+
+Directory: `src/layer_0_core/`
 
 Foundation types, math, and execution infrastructure with zero physics knowledge.
 
@@ -81,7 +83,9 @@ Foundation types, math, and execution infrastructure with zero physics knowledge
 
 ---
 
-## Layer 1: Physical System (`src/layer_1_structure/`)
+## Layer 1: Physical System
+
+Directory: `src/layer_1_structure/`
 
 Physical description of the periodic crystal — no knowledge of electronic structure.
 
@@ -98,7 +102,9 @@ Physical description of the periodic crystal — no knowledge of electronic stru
 
 ---
 
-## Layer 2: Quantum System (`src/layer_2_quantum_system/`)
+## Layer 2: Quantum System
+
+Directory: `src/layer_2_quantum_system/`
 
 Abstract quantum-mechanical concepts — defines _what_ wavefunctions, densities,
 and potentials _are_, without specifying how they are represented.
@@ -117,7 +123,9 @@ and potentials _are_, without specifying how they are represented.
 
 ---
 
-## Layer 3: Representation (`src/layer_3_representation/`)
+## Layer 3: Representation
+
+Directory: `src/layer_3_representation/`
 
 Concrete representations of Layer 2 abstractions — plane waves, and the
 local-orbital Hamiltonian. The largest layer.
@@ -141,7 +149,9 @@ local-orbital Hamiltonian. The largest layer.
 
 ---
 
-## Layer 4: Computation (`src/layer_4_computation/`)
+## Layer 4: Computation
+
+Directory: `src/layer_4_computation/`
 
 Algorithms that operate on Layer 3 representations. All pluggable strategies live here.
 
@@ -178,7 +188,9 @@ a unified state interface while dispatching to US-specific logic polymorphically
 
 ---
 
-## Layer 5: Properties (`src/layer_5_properties/`)
+## Layer 5: Properties
+
+Directory: `src/layer_5_properties/`
 
 Post-SCF property calculations. These read converged SCF data and produce
 physical observables.
@@ -198,7 +210,9 @@ Individual contribution kernels live under each property's `internal/` and
 
 ---
 
-## IO Vertical Slice (`src/io/`)
+## IO Vertical Slice
+
+Directory: `src/io/`
 
 File I/O is organized as a vertical slice that can reach into any layer.
 
@@ -218,7 +232,9 @@ includes only `io/logger.hpp` (via `layer_0_core/logging/init.hpp`) for logging.
 
 ---
 
-## Build-Time Add-Ons (`src/addons/<name>/`)
+## Build-Time Add-Ons
+
+Directory: `src/addons/<name>/`
 
 An add-on is a directory under `src/addons/` that core never names: no core file
 includes it, links to it or mentions it by name. `cmake/Q3Addons.cmake` adds every

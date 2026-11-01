@@ -38,6 +38,14 @@ jobs:
         run: |
           mkdir -p docs_build
           doxygen Doxyfile
+          # README.md is the main page and shows images from docs/figures/.
+          mkdir -p docs_build/html/docs
+          cp -R docs/figures docs_build/html/docs/
+          # Dark theme (doxygen-awesome-css styles html.dark-mode), and a script that
+          # opens the sidebar's second level (docs/navtree-expand.js, copied by Doxygen).
+          find docs_build/html -name '*.html' -print0 | xargs -0 sed -i \
+            -e 's#<html #<html class="dark-mode" #' \
+            -e 's#</body>#<script src="navtree-expand.js"></script></body>#'
 
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
