@@ -1,4 +1,4 @@
-# Differentiability — Architecture Note
+# Differentiability
 
 Status: design note (not yet implemented). Captures the intended approach for
 making the engine differentiable so it can serve as a data **and gradient**
@@ -33,9 +33,9 @@ The engine is invoked repeatedly _inside_ a training/optimization graph
 (inverse design, in-the-loop functional learning). Here fine-grained host
 roundtrips are catastrophic and the binding/memory traps in §4 all apply.
 
-> **Recommendation:** build the adjoint math (§2) first — it is required in both
-> regimes — then ship Regime A. Only build the on-device JAX path (§4) when a
-> concrete Regime B workload justifies it.
+**Recommendation:** build the adjoint math (§2) first — it is required in both
+regimes — then ship Regime A. Only build the on-device JAX path (§4) when a
+concrete Regime B workload justifies it.
 
 ---
 

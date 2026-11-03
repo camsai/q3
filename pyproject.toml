@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "q3"
 version = "0.1.0"
-description = "Q3: a minimal plane-wave DFT code"
+description = "Quantum 3xplorer (Q3): an AI-native quantum simulation engine"
 license = "Apache-2.0"
 license-files = ["LICENSE.md"]
 requires-python = ">=3.12"

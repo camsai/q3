@@ -17,6 +17,12 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg" alt="Platform"/>
 </p>
 
+<p align="center">
+  <strong>Paper:</strong> <a href="https://arxiv.org/abs/2610.42108">arXiv:2610.42108</a> ·
+  <strong>Cite:</strong> <a href="CITATION.cff">CITATION.cff</a> ·
+  <strong>Docs:</strong> <a href="https://camsai.github.io/q3/">camsai.github.io/q3</a>
+</p>
+
 Q3 is a self-contained, from-scratch quantum simulation engine. Its first
 implementation is plane-wave density functional theory (DFT): it computes the
 ground-state electronic structure of periodic crystals — total energies, forces,
@@ -24,7 +30,7 @@ stress, and band structures — in modern, readable C++ with a Python layer on t
 
 | If you want to…                       | Go here                                                                                                        |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Run your first calculation            | [Tutorials](docs/tutorials/README.md) — seven runnable lessons, or [§2](#2-getting-started) for the short path |
+| Run your first calculation            | [Tutorials](docs/tutorials/README.md) — eight runnable lessons, or [§2](#2-getting-started) for the short path |
 | Know what Q3 can do today             | [FUNCTIONALITY.md](FUNCTIONALITY.md) — capabilities by area, each with its validation status                   |
 | Know where Q3 is still weak           | [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — the honest list; read it before trusting an untested regime               |
 | Look up an input field or output file | [docs/io_reference.md](docs/io_reference.md) — every field, flag and format, with units and defaults           |

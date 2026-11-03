@@ -1,4 +1,4 @@
-# Q3 Tutorials
+# Tutorials
 
 Eight short, runnable lessons that take you from a fresh clone to a converged
 calculation you can defend, and then to contributing code.

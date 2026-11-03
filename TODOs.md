@@ -5,10 +5,10 @@ Planned and in-progress work for Q3, grouped into the same three areas as
 **Engineering**. When an item ships, it moves from here into the matching area of
 [FUNCTIONALITY.md](FUNCTIONALITY.md).
 
-> **Queue convention:** unchecked boxes are the live work queue. Checked boxes
-> still present in this file are legacy implementation records retained for
-> their root-cause detail; they are not active plan items. New work continues to
-> follow the handoff-on-ship rule above rather than adding to that legacy set.
+**Queue convention:** unchecked boxes are the live work queue. Checked boxes
+still present in this file are legacy implementation records retained for
+their root-cause detail; they are not active plan items. New work continues to
+follow the handoff-on-ship rule above rather than adding to that legacy set.
 
 Each item carries a horizon tag. Because Q3 is developed at AI-agent velocity,
 these are calibrated to that pace and gated primarily by **validation and review
@@ -27,34 +27,34 @@ listed in §1.3.
 
 ---
 
-> **Sequencing:** the authoritative feature sequencing (PAW → DFPT → hybrids; properties
-> native-first with living-ecosystem interop — ASE/Phonopy/phono3py/i-PI/PLUMED/icet;
-> native GW ladder with BerkeleyGW/Yambo exporters kept as validation instruments;
-> COMMIT/GATED/PARKED tiers with a review-unit budget) with per-item pinned validation
-> criteria, and the demand gates that schedule them, live in the maintainers'
-> planning tree.
+**Sequencing:** the authoritative feature sequencing (PAW → DFPT → hybrids; properties
+native-first with living-ecosystem interop — ASE/Phonopy/phono3py/i-PI/PLUMED/icet;
+native GW ladder with BerkeleyGW/Yambo exporters kept as validation instruments;
+COMMIT/GATED/PARKED tiers with a review-unit budget) with per-item pinned validation
+criteria, and the demand gates that schedule them, live in the maintainers'
+planning tree.
 
 ## By horizon (index)
 
 -   **[M] Next:** calculator decomposition (§1), the Wannier campaign's threshold re-examination (§1.3), library API & layer cleanup (§3), ESSE schema coverage (§3), CPU batched FFTs (§2), GPU-resident pipeline + CUDA kernels (§2), move hot kernels to .cpp (§3.3), JAX primitives (§4)
 -   **[L] Later:** PAW parallel-backend validation (§1), MPI+GPU / NCCL (§2), HIP/SYCL hardware validation (§2), benchmarks (§2), advanced functionals (§1)
 
-> **Recently shipped 2026-08-08**: spin-polarized ultrasoft and PAW (the moment
-> had been collapsing silently — Fe
-> ultrasoft 0.0144 → 2.2482 μB vs QE); PAW forces and stress; Gamma-only forces, which were wrong in four terms for
-> _every_ pseudopotential family; DFT+U for ultrasoft and PAW.
->
-> **Recently shipped** (now in [FUNCTIONALITY.md](FUNCTIONALITY.md) §2): MPI
-> k-point pool + band parallelism; CUDA / Metal / HIP / SYCL GPU backends with
-> mixed precision; wavefunction-specific FFT grid; ZGEMM-batched KB projectors;
-> Kerker residual preconditioning; OpenMP threading of the hot loops; kbar constant
-> (`RYDBERG_TO_KILOBAR`); SCF iterator factory rename; DFT+U ortho-atomic
-> projectors; JSON output units &
-> validation; Broyden G-space BLAS acceleration; namelist vs YAML parser parity
-> for spin/smearing; deterministic FFT planning knob (+ tightened Fermi-Dirac
-> MPI tolerance); input/output reference doc; Makov-Payne isolated-system
-> correction (both orders); Martyna-Tuckerman isolated-system correction
-> (post-SCF evaluation); PAW serial SCF for UPF v2 datasets.
+**Recently shipped 2026-08-08**: spin-polarized ultrasoft and PAW (the moment
+had been collapsing silently — Fe
+ultrasoft 0.0144 → 2.2482 μB vs QE); PAW forces and stress; Gamma-only forces, which were wrong in four terms for
+_every_ pseudopotential family; DFT+U for ultrasoft and PAW.
+
+**Recently shipped** (now in [FUNCTIONALITY.md](FUNCTIONALITY.md) §2): MPI
+k-point pool + band parallelism; CUDA / Metal / HIP / SYCL GPU backends with
+mixed precision; wavefunction-specific FFT grid; ZGEMM-batched KB projectors;
+Kerker residual preconditioning; OpenMP threading of the hot loops; kbar constant
+(`RYDBERG_TO_KILOBAR`); SCF iterator factory rename; DFT+U ortho-atomic
+projectors; JSON output units &
+validation; Broyden G-space BLAS acceleration; namelist vs YAML parser parity
+for spin/smearing; deterministic FFT planning knob (+ tightened Fermi-Dirac
+MPI tolerance); input/output reference doc; Makov-Payne isolated-system
+correction (both orders); Martyna-Tuckerman isolated-system correction
+(post-SCF evaluation); PAW serial SCF for UPF v2 datasets.
 
 ---
 
@@ -1092,7 +1092,7 @@ subspace path. Remaining work:
         by repo-wide search for both the filename pattern and the literal string `"eV"` in
         `src/`). Every entry point (`main.cpp`, `main_mpi.cpp`) writes exactly one file,
         `<prefix>_results.json`, via `FlavorResult::write_results_json()`
-        ([flavors/result.hpp](src/layer_4_computation/flavors/result.hpp)) -- already
+        (`flavors/result.hpp`, since removed) -- already
         consistently Ry (energies), Ry/bohr (forces), kbar (stress), matching every live Python
         consumer (`ase_calculator.py`, `output_writer.py`, `jax/primitives.py`, the workflow
         modules) and every committed QE-comparison reference fixture
@@ -1125,7 +1125,7 @@ subspace path. Remaining work:
 -   [x] **[S]** **Consolidate duplicate energy serialization** — done: flavors now return
         `generated::Results` itself, and `write_results_json()` and `results_json_string()` both
         serialize that one struct. Original item: `FlavorResult::write_results_json()`
-        ([flavors/result.hpp](src/layer_4_computation/flavors/result.hpp)) and `to_json_string()`
+        (`flavors/result.hpp`, since removed) and `to_json_string()`
         are two hand-synced copies of the identical schema in the same file (confirmed
         2026-07-28 while adding the `units` field above -- both needed updating together, by
         hand); one code path for both would remove that duplication. **Correction to this

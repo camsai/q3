@@ -105,7 +105,7 @@ RUN for source in build/_deps/*-src; do \
 FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu24.04
 
 LABEL org.opencontainers.image.title="Q3 (CUDA)" \
-      org.opencontainers.image.description="Q3 DFT engine with the NVIDIA CUDA GPU backend" \
+      org.opencontainers.image.description="Quantum 3xplorer (Q3) with the NVIDIA CUDA GPU backend" \
       org.opencontainers.image.vendor="Mat3ra" \
       org.opencontainers.image.licenses="GPL-3.0-or-later" \
       q3.license.notice="This image is a combined work including FFTW and is distributed under GPL-3.0-or-later as a whole; Q3's own source is Apache-2.0."

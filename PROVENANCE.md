@@ -1,4 +1,4 @@
-# Provenance: how to write code that stays permissively licensed
+# Provenance
 
 Q3 ships under Apache-2.0. That is only true if nothing in the tree is a
 derivative work of code under an incompatible license. This document explains
@@ -9,8 +9,8 @@ It binds humans and AI coding agents equally. `CONTRIBUTING.md` § "Provenance
 policy" states the rules; this file is the reasoning and the recipe behind
 them.
 
-> Engineering guidance, not legal advice. When a specific case is genuinely
-> unclear, stop and escalate rather than deciding alone.
+Engineering guidance, not legal advice. When a specific case is genuinely
+unclear, stop and escalate rather than deciding alone.
 
 ---
 

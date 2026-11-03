@@ -81,10 +81,10 @@ approximations** (`method`), and **what to do with it** (`control`). Paths
 inside the manifest resolve relative to the manifest's own directory, so the
 example works from anywhere.
 
-> **`outdir` is relative to your current directory, not to the manifest.**
-> Running the command above from the repository root writes
-> `./output/si_nc_results.json` at the repository root. This trips people up;
-> `cd` into the example directory first if you want the output beside it.
+**`outdir` is relative to your current directory, not to the manifest.**
+Running the command above from the repository root writes
+`./output/si_nc_results.json` at the repository root. This trips people up;
+`cd` into the example directory first if you want the output beside it.
 
 ## 3. Read the log
 

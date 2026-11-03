@@ -3,16 +3,36 @@
 
 # --- Project ---
 PROJECT_NAME           = "Quantum 3xplorer (Q3)"
-PROJECT_BRIEF          = "An AI-native quantum simulation engine"
+# No tagline under the name in the sidebar: the landing page opens with it.
+PROJECT_BRIEF          =
 PROJECT_NUMBER         = ""
+PROJECT_LOGO           = docs/figures/logo.webp
 OUTPUT_DIRECTORY       = docs_build
 
 # --- Input ---
-INPUT                  = src docs/architecture.md docs/ontology.md README.md SUMMARY.md FUNCTIONALITY.md
+# docs/mainpage.md is the site's landing page, and its \subpage list orders the
+# pages in the sidebar, by the labels docs/doxygen_markdown_filter.py gives them;
+# docs/how_to_guides.md, docs/reference.md and docs/explanation.md list the pages
+# of those sections.
+# The README is shown as the "User Guide" page, without its GitHub front matter.
+# A directory's README.md is a page like any other (IMPLICIT_DIR_DOCS), so the
+# tutorials index lists the lessons. Add-ons are documented in their own
+# repositories.
+INPUT                  = docs/mainpage.md docs/how_to_guides.md docs/reference.md \
+                         docs/explanation.md README.md docs/tutorials TROUBLESHOOTING.md \
+                         FUNCTIONALITY.md PERFORMANCE.md KNOWN-ISSUES.md TODOs.md \
+                         docs/io_reference.md docs/build_reference.md \
+                         docs/build_nersc_perlmutter.md docs/performance_nersc_perlmutter.md \
+                         docs/podman_hpc_and_shifter.md docs/differentiability.md \
+                         SUMMARY.md docs/band_structure_comparison.md docs/architecture.md \
+                         docs/ontology.md CONTRIBUTING.md PROVENANCE.md \
+                         docs/provenance_register.md AGENTS.md STATISTICS.md LICENSE.md src
 FILE_PATTERNS          = *.hpp *.cpp *.md
 RECURSIVE              = YES
-USE_MDFILE_AS_MAINPAGE = README.md
-EXCLUDE_PATTERNS       = */generated/* */.venv/* */build/*
+USE_MDFILE_AS_MAINPAGE = docs/mainpage.md
+EXCLUDE_PATTERNS       = */generated/* */.venv/* */build/* */addons/*
+FILTER_PATTERNS        = "*.md=python3 docs/doxygen_markdown_filter.py"
+IMPLICIT_DIR_DOCS      = NO
 
 # --- Extraction ---
 EXTRACT_ALL            = YES
@@ -39,10 +59,16 @@ INCLUDED_BY_GRAPH      = NO
 GENERATE_HTML          = YES
 HTML_OUTPUT            = html
 HTML_EXTRA_STYLESHEET  = docs/doxygen-awesome-css/doxygen-awesome.css \
-                         docs/doxygen-awesome-css/doxygen-awesome-sidebar-only.css
-HTML_EXTRA_FILES       = docs/navtree-expand.js
+                         docs/doxygen-awesome-css/doxygen-awesome-sidebar-only.css \
+                         docs/doxygen-q3.css
+HTML_EXTRA_FILES       = docs/navtree-expand.js \
+                         docs/favicon.ico \
+                         docs/favicon.png
 HTML_COLORSTYLE        = LIGHT
 HTML_DYNAMIC_SECTIONS  = YES
+# Formulas in the Markdown pages (docs/doxygen_markdown_filter.py writes them).
+USE_MATHJAX            = YES
+MATHJAX_VERSION        = MathJax_3
 DISABLE_INDEX          = NO
 GENERATE_TREEVIEW      = YES
 FULL_SIDEBAR           = NO

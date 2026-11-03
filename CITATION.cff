@@ -1,12 +1,49 @@
 cff-version: 1.2.0
-message: "If you use Q3 in your research, please cite it as below."
+message: "If you use Q3 in your research, please cite the paper below."
 type: software
-title: "Quantum 3xplorer: AI-Native Engine for Next-Generation Quantum Materials Modeling"
+title: "Quantum 3xplorer (Q3)"
 authors:
   - name: "The Q3 Developers"
 license: Apache-2.0
 repository-code: "https://github.com/camsai/q3"
 url: "https://CAMSAI.org"
-# TODO(release): add doi (Zenodo), version, and date-released on the first
-# tagged release; replace the entity author with the flagship-paper author
-# list via preferred-citation when the paper is out.
+# TODO(release): add a Zenodo DOI for the software itself.
+preferred-citation:
+  type: article
+  title: "Quantum 3xplorer: AI-Native Engine for Next-Generation Quantum Materials Modeling"
+  journal: "arXiv"
+  year: 2026
+  doi: "10.48550/arXiv.2610.42108"
+  url: "https://arxiv.org/abs/2610.42108"
+  authors:
+    - family-names: "Biryukov"
+      given-names: "Vsevolod"
+    - family-names: "Barabash"
+      given-names: "Sergey V."
+    - family-names: "Das"
+      given-names: "Pranab Kumar"
+    - family-names: "Deslippe"
+      given-names: "Jack"
+    - family-names: "Del Ben"
+      given-names: "Mauro"
+    - family-names: "Jornada"
+      name-particle: "da"
+      given-names: "Felipe H."
+    - family-names: "Shi"
+      given-names: "Yuming"
+    - family-names: "Voss"
+      given-names: "Johannes"
+    - family-names: "Li"
+      given-names: "Zhenglu"
+    - family-names: "Altoe"
+      given-names: "Piero"
+    - family-names: "Choudhary"
+      given-names: "Kamal"
+    - family-names: "Pachter"
+      given-names: "Ruth"
+    - family-names: "Louie"
+      given-names: "Steven G."
+    - family-names: "Cohen"
+      given-names: "Marvin L."
+    - family-names: "Bazhirov"
+      given-names: "Timur"

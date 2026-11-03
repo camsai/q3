@@ -219,6 +219,7 @@ Rules:
 -   **Single source of truth**: a feature is either in `TODOs.md` (planned) or `FUNCTIONALITY.md` (done) — never both.
 -   **Handoff on ship**: any change that adds or validates a capability must, in the same PR, add/flip its row in the matching `FUNCTIONALITY.md` area (Science/Performance/Engineering) and remove the corresponding item from the same area in `TODOs.md`.
 -   **Gaps live in TODOs only**: do not restate "not implemented" notes in `FUNCTIONALITY.md`; link to the relevant `TODOs.md` section instead.
+-   **Notes are paragraphs, not block quotes**: write a note under a table as an ordinary paragraph, with a bold lead-in if it needs one (`**Note:** …`). `>` marks a quotation, and GitHub and the docs site both render it as one.
 -   **Leave `STATISTICS.md` alone**: do not edit it, and do not run the generator
     to "keep it fresh" before committing. It counts lines and test cases across
     the whole tree, so it moved with almost every commit that touched source —
@@ -247,10 +248,10 @@ Rules:
 
 ## Licensed Material and Provenance (HARD RULES)
 
-> **Read [PROVENANCE.md](PROVENANCE.md) before implementing anything another
-> computational materials science code also does.** It explains what does and does not
-> count as a derivative work, and gives the step-by-step procedure. The rules
-> below are the summary; that document is the reasoning and the recipe.
+**Read [PROVENANCE.md](PROVENANCE.md) before implementing anything another
+computational materials science code also does.** It explains what does and does not
+count as a derivative work, and gives the step-by-step procedure. The rules
+below are the summary; that document is the reasoning and the recipe.
 
 Q3 ships under Apache-2.0 and its public tree must contain only content we have
 the right to distribute. These rules bind every contributor and every coding

@@ -1,4 +1,4 @@
-# Performance Benchmarks
+# Performance
 
 Single-core and MPI-parallel performance of Q3, including comparisons against the
 Quantum ESPRESSO (QE) `develop` branch (commit
@@ -88,7 +88,7 @@ Solver stage medians, milliseconds:
 **linux-x86_64-4-core** Intel(R) Xeon(R) Processor @ 2.80GHz, 4 logical cores, Linux 6.18.44-fc-v37.
 Recorded 2026-09-21T02:01:14Z from commit `9cc05c16e915`. Source: `docs/benchmarks/baseline-linux-x86_64-4-core.json`.
 
-> Taken on a shared 4-core x86_64 development VM, not a quiet benchmark rig: single threaded, deterministic FFT planning, Release build, other jobs running on the same box. A run of the same decks with the box idle was 6-7% faster on the solver total, which is the size of the effect a busy machine has here. A same-machine reference, never a cross-machine comparison.
+Taken on a shared 4-core x86_64 development VM, not a quiet benchmark rig: single threaded, deterministic FFT planning, Release build, other jobs running on the same box. A run of the same decks with the box idle was 6-7% faster on the solver total, which is the size of the effect a busy machine has here. A same-machine reference, never a cross-machine comparison.
 
 | Deck                      | Wall (s) | Solver (ms) | Spread | SCF | Davidson |   FFT | Energy (Ry) |
 | ------------------------- | -------: | ----------: | -----: | --: | -------: | ----: | ----------: |
@@ -197,10 +197,10 @@ relaxation runs.
 
 Q3 is **2.1–5.3× faster** than QE on all 4 displaced supercell cases. All energies agree within 0.38 mRy.
 
-> **Note**: QE Cu supercell cases use `mixing_beta = 0.2` (matching Q3) since QE's default
-> `mixing_beta = 0.7` fails to converge for the displaced Cu US 3×3×3 geometry. QE's Broyden
-> mixer has a hard limit of `maxmix = 25` on `mixing_ndim`, so it uses `mixing_ndim = 8`
-> (vs Q3's `mixing_ndim = 32`).
+**Note**: QE Cu supercell cases use `mixing_beta = 0.2` (matching Q3) since QE's default
+`mixing_beta = 0.7` fails to converge for the displaced Cu US 3×3×3 geometry. QE's Broyden
+mixer has a hard limit of `maxmix = 25` on `mixing_ndim`, so it uses `mixing_ndim = 8`
+(vs Q3's `mixing_ndim = 32`).
 
 **Key observations:**
 
@@ -231,10 +231,10 @@ Q3 is **1.6–2.4× faster** than QE for all supercell relaxation cases despite 
 1 more BFGS step, because Q3's per-step SCF is **2.0–3.1× faster**. All energies agree within
 0.43 mRy.
 
-> **Note on BFGS alpha tuning**: ASE's `BFGS` optimizer was tuned with `alpha=30` (initial
-> Hessian diagonal) to match QE's step efficiency. This reduces BFGS steps from 4 (default
-> `alpha=70`) to 3 for Si NC, matching QE's total force evaluation count (4 vs 3). Values
-> below ~20 cause oscillations; values above ~50 are overly conservative.
+**Note on BFGS alpha tuning**: ASE's `BFGS` optimizer was tuned with `alpha=30` (initial
+Hessian diagonal) to match QE's step efficiency. This reduces BFGS steps from 4 (default
+`alpha=70`) to 3 for Si NC, matching QE's total force evaluation count (4 vs 3). Values
+below ~20 cause oscillations; values above ~50 are overly conservative.
 
 ---
 
@@ -250,9 +250,9 @@ in user mode. These runs use 10⁻⁸ Ry convergence.
 | Cu NC   | 2.275       | 2.192       | 3.193       | 2.767       | 0.71×      | 0.79×      |
 | Cu US   | 1.098       | 1.027       | 1.172       | 0.996       | 0.94×      | 1.03×      |
 
-> **Note on scope:** Q3 timings include forces and stress tensor computation. QE timings are for
-> SCF only (forces and stress are separate post-processing steps in QE). Despite this additional
-> work, Q3 matches or exceeds QE wall-clock performance across all examples.
+**Note on scope:** Q3 timings include forces and stress tensor computation. QE timings are for
+SCF only (forces and stress are separate post-processing steps in QE). Despite this additional
+work, Q3 matches or exceeds QE wall-clock performance across all examples.
 
 ### Raw Data
 
@@ -401,12 +401,12 @@ These are single-run measurements at 10⁻⁸ Ry convergence from an earlier cod
 | **Forces + Stress Property Run**       | 3.84 s      | 2.50 s       | **0.65×**  |
 | **Total Execution Time**               | **85.27 s** | **110.35 s** | **1.29×**  |
 
-> **Note on performance optimization**: By implementing a block orthogonalization algorithm using
-> BLAS 3 (`dgemm`/`zgemm`) for projecting out the existing basis and a fast Cholesky QR algorithm
-> (`dpotrf`/`dtrsm`) for the intra-batch orthogonalization, the Davidson diagonalizer bottleneck
-> was resolved. The total orthogonalization time was reduced from 80.1 s to 5.0 s (a **16×
-> speedup** for orthogonalization), making Q3 overall 1.29× faster than Quantum ESPRESSO for
-> this large copper supercell calculation.
+**Note on performance optimization**: By implementing a block orthogonalization algorithm using
+BLAS 3 (`dgemm`/`zgemm`) for projecting out the existing basis and a fast Cholesky QR algorithm
+(`dpotrf`/`dtrsm`) for the intra-batch orthogonalization, the Davidson diagonalizer bottleneck
+was resolved. The total orthogonalization time was reduced from 80.1 s to 5.0 s (a **16×
+speedup** for orthogonalization), making Q3 overall 1.29× faster than Quantum ESPRESSO for
+this large copper supercell calculation.
 
 ---
 
@@ -436,19 +436,19 @@ These are single-run measurements at 10⁻⁸ Ry convergence from an earlier cod
 | **Forces + Stress Property Run**       | 3.11 s      | 2.89 s      | **0.93×**  |
 | **Total Execution Time**               | **74.29 s** | **39.56 s** | **0.53×**  |
 
-> **Note on Broyden mixer optimization**: In this work, the Broyden density mixer's G-space
-> operations and history storage were restricted strictly to the smooth G-vector grid (`ngms`
-> cutoff) to precisely match Quantum ESPRESSO's mathematical formulation. This prevents the
-> highly oscillatory and noisy ultrasoft augmentation charge components (hard G-vectors from
-> `ngms` to `ngm`) from corrupting the Broyden subspace. This change successfully resolved the
-> flaky convergence behavior, ensuring stable convergence in 41 iterations across different
-> random seeds/trials.
->
-> **Update (June 2026)**: After further fixes to the D_eff integral formula in the ultrasoft
-> initialization and the Broyden w₀² regularization parameter, Cu US 3×3×3 SCF now converges
-> in 17 iterations (vs 41 previously), reducing total runtime from 74.29 s to **46 s** at
-> 10⁻⁶ Ry convergence (a 1.61× additional speedup), and achieving Q3/QE = **0.58×** (Q3 is
-> 1.7× faster than QE).
+**Note on Broyden mixer optimization**: In this work, the Broyden density mixer's G-space
+operations and history storage were restricted strictly to the smooth G-vector grid (`ngms`
+cutoff) to precisely match Quantum ESPRESSO's mathematical formulation. This prevents the
+highly oscillatory and noisy ultrasoft augmentation charge components (hard G-vectors from
+`ngms` to `ngm`) from corrupting the Broyden subspace. This change successfully resolved the
+flaky convergence behavior, ensuring stable convergence in 41 iterations across different
+random seeds/trials.
+
+**Update (June 2026)**: After further fixes to the D_eff integral formula in the ultrasoft
+initialization and the Broyden w₀² regularization parameter, Cu US 3×3×3 SCF now converges
+in 17 iterations (vs 41 previously), reducing total runtime from 74.29 s to **46 s** at
+10⁻⁶ Ry convergence (a 1.61× additional speedup), and achieving Q3/QE = **0.58×** (Q3 is
+1.7× faster than QE).
 
 ---
 
@@ -487,12 +487,12 @@ sets and implements wavefunction/charge density preloading/restarts).
 | **Subprocess**              |      No      |        2         |       3.43 s       | 1.00× (baseline)      |
 | **Bindings (with Restart)** |      No      |        2         |       2.87 s       | **1.19×**             |
 
-> **Note on restart optimization**: In bindings mode, Q3 caches the converged charge density and
-> wavefunctions from the previous ionic step. Upon restarting the next step, the Davidson
-> diagonalizer uses these preloaded states as initial trial vectors, allowing the diagonalizer to
-> converge in exactly **1 iteration** per k-point (down from 4–5 iterations on the first step).
-> This restart logic, combined with zero disk/CLI launch overhead, provides up to **1.46×
-> speedup** overall.
+**Note on restart optimization**: In bindings mode, Q3 caches the converged charge density and
+wavefunctions from the previous ionic step. Upon restarting the next step, the Davidson
+diagonalizer uses these preloaded states as initial trial vectors, allowing the diagonalizer to
+converge in exactly **1 iteration** per k-point (down from 4–5 iterations on the first step).
+This restart logic, combined with zero disk/CLI launch overhead, provides up to **1.46×
+speedup** overall.
 
 ---
 

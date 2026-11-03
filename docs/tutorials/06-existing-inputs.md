@@ -42,11 +42,11 @@ describe the same calculation — `ibrav = 2` with `celldm(1)` instead of an
 explicit lattice, `K_POINTS automatic` instead of a `kgrid` block — and Q3
 resolves both to the same thing.
 
-> **`pseudo_dir` resolves against your current directory, not the input
-> file's.** This is the same trap `outdir` sets in YAML manifests. The `cd`
-> above is load-bearing: run `build/q3 examples/.../scf_qe.in` from the
-> repository root and it fails with `Cannot open PP file`. Run QE inputs from
-> the directory they live in.
+**`pseudo_dir` resolves against your current directory, not the input
+file's.** This is the same trap `outdir` sets in YAML manifests. The `cd`
+above is load-bearing: run `build/q3 examples/.../scf_qe.in` from the
+repository root and it fails with `Cannot open PP file`. Run QE inputs from
+the directory they live in.
 
 Metals work the same way — `occupations = 'smearing'`, `smearing = 'gaussian'`
 and `degauss` map onto the smearing block from [tutorial 03](03-convergence.md):

@@ -1,4 +1,4 @@
-# Troubleshooting Guide
+# Troubleshooting
 
 Known issues, root causes, and resolutions encountered during Q3 development. Written for both humans and AI agents.
 

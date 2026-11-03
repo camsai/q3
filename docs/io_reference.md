@@ -1,4 +1,4 @@
-# Q3 Input/Output Reference
+# I/O Reference
 
 This is the field-level reference for everything Q3 reads and writes: the YAML
 manifest format, the alternative QE-namelist format, how build-time add-ons plug in
@@ -203,19 +203,19 @@ point either — seeding FeO toward the orbitally-uniform state and holding it f
 15 iterations still relaxes into the ordered minimum, because in Q3 that uniform
 state is not stable.
 
-> The bare-letter form exists because UPF makes the `PP_CHI` label optional and
-> PseudoDojo's PAW datasets omit it — QE's own `determine_hubbard_occ` refuses
-> those files for the same reason. When several shells share an angular
-> momentum, the most occupied one is selected, since a Hubbard U applies to the
-> partially-filled valence shell; an equal-occupancy tie is refused rather than
-> resolved by file order.
->
-> Atomic and ortho-atomic projectors support norm-conserving, ultrasoft, and PAW
-> datasets. Energy, forces, and stress are implemented for each combination,
-> including the generalized `<phi|S|phi>` Löwdin metric and its derivatives for
-> ultrasoft and PAW. MPI band groups deliberately refuse stress; GPU and direct
-> diagonalization deliberately refuse DFT+U. See the support matrix in
-> [FUNCTIONALITY.md](../FUNCTIONALITY.md#dftu-support-matrix).
+The bare-letter form exists because UPF makes the `PP_CHI` label optional and
+PseudoDojo's PAW datasets omit it — QE's own `determine_hubbard_occ` refuses
+those files for the same reason. When several shells share an angular
+momentum, the most occupied one is selected, since a Hubbard U applies to the
+partially-filled valence shell; an equal-occupancy tie is refused rather than
+resolved by file order.
+
+Atomic and ortho-atomic projectors support norm-conserving, ultrasoft, and PAW
+datasets. Energy, forces, and stress are implemented for each combination,
+including the generalized `<phi|S|phi>` Löwdin metric and its derivatives for
+ultrasoft and PAW. MPI band groups deliberately refuse stress; GPU and direct
+diagonalization deliberately refuse DFT+U. See the support matrix in
+[FUNCTIONALITY.md](../FUNCTIONALITY.md#dftu-support-matrix).
 
 #### 1.4.4 `method.scf.kgrid`
 

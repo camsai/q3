@@ -114,10 +114,10 @@ That first line is the whole mechanism. The converged effective potential — th
 `.save/` contents tutorial 02 listed — is read back instead of being
 recomputed, and the four k-points are diagonalized against it.
 
-> **The NSCF run overwrites `<prefix>_results.json`.** Same `outdir`, same
-> `prefix`, same filename. The SCF energies in it are replaced by NSCF
-> eigenvalues at the new k-points. Copy the SCF results aside first if you
-> need both.
+**The NSCF run overwrites `<prefix>_results.json`.** Same `outdir`, same
+`prefix`, same filename. The SCF energies in it are replaced by NSCF
+eigenvalues at the new k-points. Copy the SCF results aside first if you
+need both.
 
 Reading the eigenvalues out — silicon has 8 valence electrons, so bands 0–3 are
 occupied and band 4 is the first empty one:
@@ -203,12 +203,13 @@ right four. Silicon's experimental gap is 1.17 eV — PBE underestimates it, as
 semilocal functionals do, and 0.6 eV is the correct _PBE_ answer. Getting
 1.17 eV out of this calculation would mean something was wrong, not right.
 
-> **Two committed manifests do not run through the binary directly.** > `examples/band_structure--*/nc.yml` and `examples/density_of_states--*/nc.yml`
-> declare `calculation: band_structure` and `calculation: density_of_states`,
-> which the YAML parser accepts but the flavor factory does not implement —
-> `./build/q3` on either exits with `unsupported calculation type`. They are
-> inputs for the Python workflows above, which rewrite the calculation type to
-> `self_consistent_field` before invoking the binary.
+**Two committed manifests do not run through the binary directly.**
+`examples/band_structure--*/nc.yml` and `examples/density_of_states--*/nc.yml`
+declare `calculation: band_structure` and `calculation: density_of_states`,
+which the YAML parser accepts but the flavor factory does not implement —
+`./build/q3` on either exits with `unsupported calculation type`. They are
+inputs for the Python workflows above, which rewrite the calculation type to
+`self_consistent_field` before invoking the binary.
 
 ## 3. Density of states
 

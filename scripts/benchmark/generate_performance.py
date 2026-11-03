@@ -137,8 +137,9 @@ def render_baseline(path, payload):
         + (", worktree dirty" if metadata.get("git_worktree_dirty") else "")
         + f". Source: `{describe_source(path)}`."
     )
+    # A note is a paragraph, not a block quote (AGENTS.md: notes are paragraphs).
     if metadata.get("note"):
-        lines.extend(["", f"> {metadata['note']}"])
+        lines.extend(["", metadata["note"]])
     lines.append("")
 
     summary_rows = []

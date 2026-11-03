@@ -1,4 +1,4 @@
-# Band Structure Comparison: Q3 vs Quantum ESPRESSO
+# Band Structure Comparison
 
 This document validates Q3's band structure and density of states
 implementation against

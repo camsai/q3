@@ -26,13 +26,14 @@ From: ghcr.io/camsai/q3:latest
 
 %labels
     Author Mat3ra
-    Application Q3 DFT Engine
+    Application Quantum 3xplorer (Q3)
     Version latest
 
 %help
-    Q3 — A modern, from-scratch, extensible Density Functional Theory (DFT)
-    engine written in C++17. This container includes the q3 executable with
-    all dependencies pre-built.
+    Quantum 3xplorer (Q3) — an AI-native quantum simulation engine written in
+    C++17. Its first implementation is plane-wave density functional theory
+    (DFT). This container includes the q3 executable with all dependencies
+    pre-built.
 
     Usage:
         apptainer run q3.sif input.yml

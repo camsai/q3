@@ -1,4 +1,4 @@
-# Q3 Performance on NERSC Perlmutter
+# Performance on Perlmutter
 
 Measured numbers for the builds described in
 [build_nersc_perlmutter.md](build_nersc_perlmutter.md), and what they imply about how to

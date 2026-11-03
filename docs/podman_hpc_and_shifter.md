@@ -1,4 +1,4 @@
-# Running Q3 under podman-hpc or Shifter
+# podman-hpc and Shifter
 
 Some HPC centres provide [`podman-hpc`](https://github.com/NERSC/podman-hpc) or
 [Shifter](https://shifter.readthedocs.io/) rather than Apptainer, usually both,

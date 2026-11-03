@@ -1,4 +1,4 @@
-# Build Configuration Reference
+# Build Reference
 
 Every option the build accepts, what it defaults to, and what to set it to on
 the three kinds of machine Q3 is built on: a Homebrew Mac, an Ubuntu box, and a

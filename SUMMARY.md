@@ -1,4 +1,4 @@
-# Q3 — Summary
+# Summary
 
 ## What Is Q3?
 

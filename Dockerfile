@@ -95,7 +95,7 @@ RUN for source in build/_deps/*-src; do \
 FROM ubuntu:24.04
 
 LABEL org.opencontainers.image.title="Q3" \
-      org.opencontainers.image.description="Q3 — a modern, from-scratch, extensible Density Functional Theory engine" \
+      org.opencontainers.image.description="Quantum 3xplorer (Q3): an AI-native quantum simulation engine" \
       org.opencontainers.image.vendor="Mat3ra" \
       org.opencontainers.image.licenses="GPL-3.0-or-later" \
       q3.license.notice="This image is a combined work including FFTW and is distributed under GPL-3.0-or-later as a whole; Q3's own source is Apache-2.0."

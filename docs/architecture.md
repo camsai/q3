@@ -1,4 +1,4 @@
-# Q3 Layered Architecture
+# Architecture
 
 This document describes the physical code organization of Q3. The
 codebase is structured as a strict layered architecture where each layer may only

@@ -1,0 +1,88 @@
+/**
+ * Q3's changes to the doxygen-awesome theme. The Doxyfile lists this stylesheet after
+ * the theme's (HTML_EXTRA_STYLESHEET), so these rules win.
+ */
+
+/* On a wide screen the theme puts the project name 10px from the top of the sidebar,
+   and the page title 67px from the top of the page. Give both the same top margin:
+   a taller sidebar header, so the name and logo sit lower, and no padding above the
+   page title beyond its own margin. */
+@media screen and (min-width: 768px) {
+    html {
+        --top-height: 130px;
+    }
+
+    #titlearea {
+        padding-top: 20px;
+    }
+
+    #doc-content {
+        padding-top: 0;
+    }
+
+    /* The rule under the page title lines up with the top of the sidebar's search bar,
+       79px down, and the title's capitals sit midway between the top of the page and
+       that rule, 27px from each. The theme's 17px top margin put them 9px low. */
+    div.header .title {
+        margin-top: 8px;
+        margin-bottom: 10px;
+    }
+}
+
+/* A block quote (Q3's pages keep them for quotations; notes are paragraphs) is drawn
+   as GitHub draws it, with a bar at the left. The theme draws a pull quote, with large
+   quotation marks at both ends. */
+blockquote {
+    border-left: 4px solid var(--separator-color);
+    border-radius: 0 var(--border-radius-medium) var(--border-radius-medium) 0;
+}
+
+blockquote::before,
+blockquote::after {
+    content: none;
+}
+
+/* The sidebar row of the page being viewed (docs/navtree-expand.js marks it), also
+   when the selected row is one of the page's sections. */
+#nav-tree .q3-current-page {
+    background-color: var(--menu-selected-background);
+    border-radius: var(--border-radius-small);
+}
+
+#nav-tree .q3-current-page .label a {
+    color: var(--primary-color) !important;
+    font-weight: 600;
+}
+
+/* The theme makes tables inline blocks, so two tables in a row sat side by side;
+   GitHub puts each table on its own line. Wide tables still scroll (the theme's
+   rules on their bodies). */
+.contents table.markdownTable {
+    display: block;
+    width: fit-content;
+}
+
+/* The logo and project name in the sidebar header link to the landing page (docs.yml
+   wraps them), so the sidebar's own entry for it is hidden, and the pages under it
+   move up a level: Doxygen indents each row 16px per level. */
+/* The theme colours every link with !important, so these need it too; the more
+   specific selector then wins: the name keeps the header's colour and weight until
+   hovered. */
+#projectlogo a,
+#projectname a {
+    color: inherit !important;
+    font-weight: inherit;
+    text-decoration: none;
+}
+
+#projectname a:hover {
+    color: var(--primary-color) !important;
+}
+
+#nav-tree-contents > ul > li > div.item {
+    display: none;
+}
+
+#nav-tree-contents .arrow {
+    margin-left: -16px;
+}

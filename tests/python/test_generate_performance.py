@@ -172,11 +172,11 @@ def test_each_machine_gets_its_own_section(baseline_directory):
 
 
 def test_a_baseline_note_is_carried_into_the_document(baseline_directory):
-    """A caveat about how a baseline was taken has to travel with its numbers."""
+    """A caveat about how a baseline was taken has to travel with its numbers, as a paragraph."""
     write_baseline(
         baseline_directory, "baseline-test.json", make_baseline(note="taken on a busy box")
     )
-    assert "> taken on a busy box" in "\n".join(generator.render_section())
+    assert "taken on a busy box" in generator.render_section()
 
 
 def test_foreign_baseline_schemas_are_skipped(baseline_directory):

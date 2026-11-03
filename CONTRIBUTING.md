@@ -1,4 +1,4 @@
-# Contributing to Q3
+# Contributing
 
 Thank you for contributing. This document covers the legal and provenance
 requirements for contributions; engineering conventions live in

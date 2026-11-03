@@ -1,4 +1,4 @@
-# Building Q3 on NERSC Perlmutter
+# Building on Perlmutter
 
 A plan for producing the several builds of Q3 that Perlmutter can support — serial,
 MPI, CUDA — together with the site-specific facts each one depends on.

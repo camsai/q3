@@ -1,18 +1,18 @@
-# Q3 Data Model Ontology
+# Ontology
 
 This document defines the conceptual layers, entities, and relationships in the Q3 DFT codebase. Each layer maps to a `src/layer_N_*` directory and may only depend on layers below it — never sideways or upward. The IO slice (`src/io/`) can reach into any layer.
 
 The visual diagram is in [ontology.drawio](ontology.drawio).
 
-> **Status note (2026-07-08):** this document mixes two kinds of content: concrete
-> class hierarchies (kept in sync with the code) and the conceptual
-> DataHolder / DataCalculator / Result design pattern, whose class names
-> (`ForcesDataHolder`, `AtomicForcesResult`, `LoggableMixin`, …) describe design
-> intent and have **diverged from the implementation** — results are produced via
-> `generated::Results` (the struct generated from `schemas/q3/results.json`) and per-property structs in `layer_5_properties/*/contributions.hpp`
-> plus generated ESSE types. A full reconciliation pass, including
-> [ontology.drawio](ontology.drawio), is tracked in [TODOs.md](../TODOs.md) §3.5.
-> For the authoritative per-file map, see [architecture.md](architecture.md).
+**Status note (2026-07-08):** this document mixes two kinds of content: concrete
+class hierarchies (kept in sync with the code) and the conceptual
+DataHolder / DataCalculator / Result design pattern, whose class names
+(`ForcesDataHolder`, `AtomicForcesResult`, `LoggableMixin`, …) describe design
+intent and have **diverged from the implementation** — results are produced via
+`generated::Results` (the struct generated from `schemas/q3/results.json`) and per-property structs in `layer_5_properties/*/contributions.hpp`
+plus generated ESSE types. A full reconciliation pass, including
+[ontology.drawio](ontology.drawio), is tracked in [TODOs.md](../TODOs.md) §3.5.
+For the authoritative per-file map, see [architecture.md](architecture.md).
 
 ---
 

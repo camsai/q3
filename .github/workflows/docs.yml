@@ -1,10 +1,11 @@
 name: Deploy Documentation
 
 on:
-  # Runs by hand: GitHub Pages can be enabled only once camsai/q3 is public.
-  # After that, re-enable the push trigger below.
-  # push:
-  #   branches: ["main"]
+  # Every push to main republishes the site. Only the public repository has a
+  # Pages site, so elsewhere the docs are built (which checks they still build)
+  # but not deployed.
+  push:
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
@@ -38,13 +39,20 @@ jobs:
         run: |
           mkdir -p docs_build
           doxygen Doxyfile
-          # README.md is the main page and shows images from docs/figures/.
+          # Pages can show images from docs/figures/.
           mkdir -p docs_build/html/docs
           cp -R docs/figures docs_build/html/docs/
-          # Dark theme (doxygen-awesome-css styles html.dark-mode), and a script that
-          # opens the sidebar's second level (docs/navtree-expand.js, copied by Doxygen).
+          # Dark theme (doxygen-awesome-css styles html.dark-mode), the favicon
+          # (docs/favicon.*, the README logo, copied by Doxygen), the logo and project
+          # name in the sidebar header as a link to the landing page (docs/doxygen-q3.css
+          # hides the sidebar's own entry for it), and a script that opens the sidebar's
+          # second level and highlights the current page (docs/navtree-expand.js, copied
+          # by Doxygen). Doxygen has no option for the favicon or the header link.
           find docs_build/html -name '*.html' -print0 | xargs -0 sed -i \
             -e 's#<html #<html class="dark-mode" #' \
+            -e 's#</head>#<link rel="icon" href="favicon.ico" sizes="any"/><link rel="icon" type="image/png" href="favicon.png"/><link rel="apple-touch-icon" href="favicon.png"/></head>#' \
+            -e 's#\(<td id="projectlogo">\)\(<img [^>]*>\)#\1<a href="index.html">\2</a>#' \
+            -e 's#\(<div id="projectname">\)\([^<]*\)$#\1<a href="index.html">\2</a>#' \
             -e 's#</body>#<script src="navtree-expand.js"></script></body>#'
 
       - name: Upload Pages Artifact
@@ -53,7 +61,8 @@ jobs:
           path: docs_build/html
 
   deploy:
-    if: github.ref == 'refs/heads/main'
+    # Spelled with the clean org so the export's org rewrite leaves it alone.
+    if: github.ref == 'refs/heads/main' && github.repository == 'camsai/q3'
     needs: build-docs
     runs-on: ubuntu-24.04
 
