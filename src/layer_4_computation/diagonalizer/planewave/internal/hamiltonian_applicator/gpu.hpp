@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstddef>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -42,6 +43,7 @@
 #include "layer_3_representation/basis/planewave/internal/fft/gpu/init.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/norm_conserving/init.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/gpu_fft_batch.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/gpu_kernels.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/planewave_potential_utils.hpp"
@@ -333,50 +335,62 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
 
         /**
          * 2. Local potential via batched FFT in FP32.
-         * Scatter all bands → batch inverse FFT → V·ψ for all → batch forward FFT → gather all.
-         * This replaces 2×N single FFT calls with 2 batched kernel launches.
+         * Scatter a pass of bands → batch inverse FFT → V·ψ → batch forward FFT → gather,
+         * replacing 2×N single FFT calls with 2 batched launches per pass. A pass holds
+         * every band unless their workspace would pass the element budget in
+         * gpu_fft_batch.hpp (camsai/q3#4); every pass runs the FFT at the same batch size,
+         * so one FFT plan serves them all.
          */
-        int batch_workspace_size = local_smooth_grid_points * number_of_vectors;
-        if (static_cast<int>(device_fft_batch_workspace_single_.size()) < batch_workspace_size) {
+        const int bands_per_pass = diagonalizer::planewave::fft_batch_band_count(
+            local_smooth_grid_points, number_of_vectors);
+        const std::size_t batch_workspace_size =
+            static_cast<std::size_t>(local_smooth_grid_points) * bands_per_pass;
+        if (device_fft_batch_workspace_single_.size() < batch_workspace_size) {
             device_fft_batch_workspace_single_ =
                 execution::gpu::device::GPUDeviceBuffer<ComplexSingle>(batch_workspace_size,
                                                                        device_backend_);
         }
 
-        // Scatter all bands to contiguous FFT workspaces on GPU.
-        diagonalizer::planewave::gpu::launch_scatter_g_to_fft_grid_single(
-            number_of_vectors,
-            number_of_plane_waves,
-            local_smooth_grid_points,
-            device_g_to_fft_mapping_.data(),
-            is_gamma ? device_minus_g_to_fft_mapping_.data() : nullptr,
-            is_gamma,
-            input_wavefunctions,
-            device_fft_batch_workspace_single_.data());
+        for (int first_band = 0; first_band < number_of_vectors; first_band += bands_per_pass) {
+            const int bands_in_pass = std::min(bands_per_pass, number_of_vectors - first_band);
+            const std::size_t band_offset =
+                static_cast<std::size_t>(first_band) * number_of_plane_waves;
 
-        // Batched inverse FFT in FP32 (all bands in one kernel launch).
-        gpu_fft_grid_->inverse_raw_single_batch(device_fft_batch_workspace_single_.data(),
-                                                number_of_vectors);
+            // Scatter this pass's bands to contiguous FFT workspaces on GPU.
+            diagonalizer::planewave::gpu::launch_scatter_g_to_fft_grid_single(
+                bands_in_pass,
+                number_of_plane_waves,
+                local_smooth_grid_points,
+                device_g_to_fft_mapping_.data(),
+                is_gamma ? device_minus_g_to_fft_mapping_.data() : nullptr,
+                is_gamma,
+                input_wavefunctions + band_offset,
+                device_fft_batch_workspace_single_.data());
 
-        // Multiply each band by potential in FP32 on GPU.
-        diagonalizer::planewave::gpu::launch_multiply_potential_single(
-            number_of_vectors,
-            local_smooth_grid_points,
-            device_smooth_potential_single_.data(),
-            device_fft_batch_workspace_single_.data());
+            // Batched inverse FFT in FP32 (the whole pass in one kernel launch).
+            gpu_fft_grid_->inverse_raw_single_batch(device_fft_batch_workspace_single_.data(),
+                                                    bands_per_pass);
 
-        // Batched forward FFT in FP32 (all bands in one kernel launch).
-        gpu_fft_grid_->forward_single_batch(device_fft_batch_workspace_single_.data(),
-                                            number_of_vectors);
+            // Multiply each band by potential in FP32 on GPU.
+            diagonalizer::planewave::gpu::launch_multiply_potential_single(
+                bands_in_pass,
+                local_smooth_grid_points,
+                device_smooth_potential_single_.data(),
+                device_fft_batch_workspace_single_.data());
 
-        // Gather all bands from FFT workspaces on GPU.
-        diagonalizer::planewave::gpu::launch_gather_fft_grid_to_g_single(
-            number_of_vectors,
-            number_of_plane_waves,
-            local_smooth_grid_points,
-            device_g_to_fft_mapping_.data(),
-            device_fft_batch_workspace_single_.data(),
-            output_hamiltonian_wavefunctions);
+            // Batched forward FFT in FP32 (the whole pass in one kernel launch).
+            gpu_fft_grid_->forward_single_batch(device_fft_batch_workspace_single_.data(),
+                                                bands_per_pass);
+
+            // Gather this pass's bands from FFT workspaces on GPU.
+            diagonalizer::planewave::gpu::launch_gather_fft_grid_to_g_single(
+                bands_in_pass,
+                number_of_plane_waves,
+                local_smooth_grid_points,
+                device_g_to_fft_mapping_.data(),
+                device_fft_batch_workspace_single_.data(),
+                output_hamiltonian_wavefunctions + band_offset);
+        }
 
         // 3. Nonlocal KB projectors via GPU BLAS in FP32 (3× CGEMM).
         if (current_total_projectors_ > 0) {
@@ -467,48 +481,60 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
         if (gpu_fft_grid_ != nullptr) {
             /**
              * GPU path: batched FP64 FFTs (cuFFT Z2Z on CUDA).
-             * scatter ALL bands → batch inverse FFT → V·ψ ALL → batch forward FFT → gather ALL.
+             * scatter a pass of bands → batch inverse FFT → V·ψ → batch forward FFT → gather.
+             * A pass holds every band unless their workspace would pass the element budget
+             * in gpu_fft_batch.hpp (camsai/q3#4); every pass runs the FFT at the same batch
+             * size, so one FFT plan serves them all.
              */
-            int batch_workspace_size = local_smooth_grid_points * number_of_vectors;
-            if (static_cast<int>(device_fft_batch_workspace_.size()) < batch_workspace_size) {
+            const int bands_per_pass = diagonalizer::planewave::fft_batch_band_count(
+                local_smooth_grid_points, number_of_vectors);
+            const std::size_t batch_workspace_size =
+                static_cast<std::size_t>(local_smooth_grid_points) * bands_per_pass;
+            if (device_fft_batch_workspace_.size() < batch_workspace_size) {
                 device_fft_batch_workspace_ = execution::gpu::device::GPUDeviceBuffer<Complex>(
                     batch_workspace_size, device_backend_);
             }
 
-            // Scatter all bands to contiguous FFT workspaces on GPU.
-            diagonalizer::planewave::gpu::launch_scatter_g_to_fft_grid(
-                number_of_vectors,
-                number_of_plane_waves,
-                local_smooth_grid_points,
-                device_g_to_fft_mapping_.data(),
-                is_gamma ? device_minus_g_to_fft_mapping_.data() : nullptr,
-                is_gamma,
-                input_wavefunctions,
-                device_fft_batch_workspace_.data());
+            for (int first_band = 0; first_band < number_of_vectors; first_band += bands_per_pass) {
+                const int bands_in_pass = std::min(bands_per_pass, number_of_vectors - first_band);
+                const std::size_t band_offset =
+                    static_cast<std::size_t>(first_band) * number_of_plane_waves;
 
-            // Batched inverse FFT in FP64 (all bands in one kernel launch).
-            gpu_fft_grid_->inverse_transform_batch(device_fft_batch_workspace_.data(),
-                                                   number_of_vectors);
+                // Scatter this pass's bands to contiguous FFT workspaces on GPU.
+                diagonalizer::planewave::gpu::launch_scatter_g_to_fft_grid(
+                    bands_in_pass,
+                    number_of_plane_waves,
+                    local_smooth_grid_points,
+                    device_g_to_fft_mapping_.data(),
+                    is_gamma ? device_minus_g_to_fft_mapping_.data() : nullptr,
+                    is_gamma,
+                    input_wavefunctions + band_offset,
+                    device_fft_batch_workspace_.data());
 
-            // Multiply each band by potential on GPU.
-            diagonalizer::planewave::gpu::launch_multiply_potential(
-                number_of_vectors,
-                local_smooth_grid_points,
-                device_smooth_potential_.data(),
-                device_fft_batch_workspace_.data());
+                // Batched inverse FFT in FP64 (the whole pass in one kernel launch).
+                gpu_fft_grid_->inverse_transform_batch(device_fft_batch_workspace_.data(),
+                                                       bands_per_pass);
 
-            // Batched forward FFT in FP64 (all bands in one kernel launch).
-            gpu_fft_grid_->forward_transform_batch(device_fft_batch_workspace_.data(),
-                                                   number_of_vectors);
+                // Multiply each band by potential on GPU.
+                diagonalizer::planewave::gpu::launch_multiply_potential(
+                    bands_in_pass,
+                    local_smooth_grid_points,
+                    device_smooth_potential_.data(),
+                    device_fft_batch_workspace_.data());
 
-            // Gather all bands from FFT workspaces on GPU.
-            diagonalizer::planewave::gpu::launch_gather_fft_grid_to_g(
-                number_of_vectors,
-                number_of_plane_waves,
-                local_smooth_grid_points,
-                device_g_to_fft_mapping_.data(),
-                device_fft_batch_workspace_.data(),
-                output_hamiltonian_wavefunctions);
+                // Batched forward FFT in FP64 (the whole pass in one kernel launch).
+                gpu_fft_grid_->forward_transform_batch(device_fft_batch_workspace_.data(),
+                                                       bands_per_pass);
+
+                // Gather this pass's bands from FFT workspaces on GPU.
+                diagonalizer::planewave::gpu::launch_gather_fft_grid_to_g(
+                    bands_in_pass,
+                    number_of_plane_waves,
+                    local_smooth_grid_points,
+                    device_g_to_fft_mapping_.data(),
+                    device_fft_batch_workspace_.data(),
+                    output_hamiltonian_wavefunctions + band_offset);
+            }
         } else {
             // CPU fallback: use serial FFT grid (FFTW).
             const FFTGrid& fft_wave = planewave_basis_.fft_wave();

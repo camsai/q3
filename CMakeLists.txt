@@ -854,6 +854,7 @@ if(Q3_BUILD_TESTS)
         # layer_4_computation
         tests/unit/layer_4_computation/diagonalizer/planewave/test_factory.cpp
         tests/unit/layer_4_computation/diagonalizer/planewave/test_direct.cpp
+        tests/unit/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/test_gpu_fft_batch.cpp
         tests/unit/layer_4_computation/diagonalizer/planewave/internal/overlap/test_orbital_metric.cpp
         tests/unit/layer_4_computation/diagonalizer/planewave/subspace/test_subspace_diagonalizer.cpp
         tests/unit/layer_4_computation/effective_potential/internal/dispersion/test_d3bj.cpp
