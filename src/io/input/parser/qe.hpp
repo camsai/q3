@@ -972,10 +972,18 @@ class QEInputParser : public InputParser {
                      * a notice rather than refused, because every QE PAW reference has
                      * to be generated with `cg` (its Davidson aborts in `cegterg` on PAW
                      * datasets), and refusing it would make exactly those inputs
-                     * unreadable.
+                     * unreadable. The same holds for every other iterative solver pw.x
+                     * offers. `david` is pw.x's own name for Davidson and its default, so
+                     * it is taken without a notice; `direct` and `davidson` are Q3's names
+                     * and pass through.
                      */
                     std::string requested = strip_quotes(value);
-                    if (requested == "cg" || requested == "ppcg" || requested == "paro") {
+                    std::string requested_lower = to_lower(requested);
+                    if (requested_lower == "david") {
+                        data.diagonalization_method = "davidson";
+                    } else if (requested_lower == "cg" || requested_lower == "ppcg" ||
+                               requested_lower == "paro" || requested_lower == "rmm-davidson" ||
+                               requested_lower == "rmm-paro") {
                         log::info("     QE input requests diagonalization='{}'; using Davidson "
                                   "(same fixed point, different iteration path)",
                                   requested);

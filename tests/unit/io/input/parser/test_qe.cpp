@@ -1680,3 +1680,48 @@ TEST(QEParserMixing, ThomasFermiModesKeepTheirPreconditioners) {
     EXPECT_EQ(local.mixing_mode, "broyden");
     EXPECT_EQ(local.mixing_preconditioning, "local-tf");
 }
+
+/**
+ * pw.x's diagonalization names. `david` is pw.x's default and its name for Davidson, and
+ * Q3's own QE reference decks use it, so it has to read as Davidson rather than reach the
+ * diagonalizer factory as an unknown name. The other iterative solvers choose an iteration
+ * path, not a fixed point, and map to Davidson too.
+ */
+namespace {
+
+std::string diagonalization_read_from(const std::string& name) {
+    return parse_text(silicon_input_with("", "", "  diagonalization = '" + name + "'\n"))
+        .diagonalization_method;
+}
+
+} // namespace
+
+TEST(QEParserDiagonalization, DavidIsDavidson) {
+    EXPECT_EQ(diagonalization_read_from("david"), "davidson");
+}
+
+TEST(QEParserDiagonalization, ConjugateGradientIsDavidson) {
+    EXPECT_EQ(diagonalization_read_from("cg"), "davidson");
+}
+
+TEST(QEParserDiagonalization, ProjectedPreconditionedConjugateGradientIsDavidson) {
+    EXPECT_EQ(diagonalization_read_from("ppcg"), "davidson");
+}
+
+TEST(QEParserDiagonalization, ParallelOrbitalUpdateIsDavidsonInEitherSpelling) {
+    EXPECT_EQ(diagonalization_read_from("paro"), "davidson");
+    EXPECT_EQ(diagonalization_read_from("ParO"), "davidson");
+}
+
+TEST(QEParserDiagonalization, ResidualMinimizationDavidsonIsDavidson) {
+    EXPECT_EQ(diagonalization_read_from("rmm-davidson"), "davidson");
+}
+
+TEST(QEParserDiagonalization, ResidualMinimizationParallelOrbitalUpdateIsDavidson) {
+    EXPECT_EQ(diagonalization_read_from("rmm-paro"), "davidson");
+}
+
+TEST(QEParserDiagonalization, QThreeNamesPassThrough) {
+    EXPECT_EQ(diagonalization_read_from("davidson"), "davidson");
+    EXPECT_EQ(diagonalization_read_from("direct"), "direct");
+}

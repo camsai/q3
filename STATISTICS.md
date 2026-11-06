@@ -8,8 +8,8 @@
 | ------ | ----: |
 | Header files (`.hpp`) | 505 |
 | Translation units (`.cpp`/`.cu`/`.mm`) | 29 |
-| Lines of C++ (non-empty) | 85,806 |
-| C++ unit/integration tests | 1,669 |
+| Lines of C++ (non-empty) | 85,814 |
+| C++ unit/integration tests | 1,676 |
 | Python validation tests | 231 |
 | Python regression tests | 34 |
 | C++ standard | C++17 |
