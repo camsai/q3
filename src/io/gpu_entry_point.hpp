@@ -22,7 +22,6 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 #include "io/addon_registration.hpp"
 #include "io/cli.hpp"
@@ -32,6 +31,7 @@
 #include "io/output/companion_outputs.hpp"
 #include "layer_0_core/execution/gpu/device/factory.hpp"
 #include "layer_0_core/execution/gpu/device/init.hpp"
+#include "layer_0_core/execution/gpu/device/internal/buffer.hpp"
 #include "layer_0_core/math/linear_algebra/gpu/blas/init.hpp"
 #include "layer_0_core/math/linear_algebra/gpu/lapack/init.hpp"
 #include "layer_0_core/profiling/counters.hpp"
@@ -87,12 +87,19 @@ inline void validate_gpu_device_backend(execution::gpu::device::GPUDeviceBackend
 }
 
 inline void validate_gpu_blas(execution::gpu::blas::GPUBLAS& gpu_blas,
+                              GPUEntryPointDescriptor::DeviceBackendPointer device_backend,
                               const std::string& blas_library_name) {
     /**
      * Quick BLAS sanity: compute dot product of [1+0i, 0+1i] with itself
      * Expected: conj([1,i]) · [1,i] = 1*1 + (-i)*i = 1 + 1 = 2
+     *
+     * The operands live in the backend's unified memory, as every GPU call's
+     * must: a host std::vector is reachable from the device only where it can
+     * address pageable host memory, and elsewhere this check failed every run.
      */
-    std::vector<Complex> test_vector = {Complex(1.0, 0.0), Complex(0.0, 1.0)};
+    execution::gpu::device::GPUDeviceBuffer<Complex> test_vector(2, device_backend);
+    test_vector.data()[0] = Complex(1.0, 0.0);
+    test_vector.data()[1] = Complex(0.0, 1.0);
     Complex dot_result = gpu_blas.dot_product(2, test_vector.data(), test_vector.data());
     double error = std::abs(dot_result.real() - 2.0) + std::abs(dot_result.imag());
     if (error > 1.0e-14) {
@@ -106,12 +113,19 @@ inline void validate_gpu_blas(execution::gpu::blas::GPUBLAS& gpu_blas,
 }
 
 inline void validate_gpu_eigensolver(execution::gpu::lapack::GPUEigensolver& gpu_eigensolver,
+                                     GPUEntryPointDescriptor::DeviceBackendPointer device_backend,
                                      const std::string& eigensolver_library_name) {
     // Solve 2x2 Hermitian eigenvalue problem: A = [2,1; 1,2] -> eigenvalues = [1,3]
-    std::vector<Complex> matrix = {Complex(2, 0), Complex(1, 0), Complex(1, 0), Complex(2, 0)};
-    std::vector<Real> eigenvalues(2);
+    execution::gpu::device::GPUDeviceBuffer<Complex> matrix(4, device_backend);
+    matrix.data()[0] = Complex(2, 0);
+    matrix.data()[1] = Complex(1, 0);
+    matrix.data()[2] = Complex(1, 0);
+    matrix.data()[3] = Complex(2, 0);
+    execution::gpu::device::GPUDeviceBuffer<Real> eigenvalues(2, device_backend);
     gpu_eigensolver.hermitian_eigenvalue_solve(2, matrix.data(), 2, eigenvalues.data());
-    double eigen_error = std::abs(eigenvalues[0] - 1.0) + std::abs(eigenvalues[1] - 3.0);
+    device_backend->synchronize();
+    double eigen_error =
+        std::abs(eigenvalues.data()[0] - 1.0) + std::abs(eigenvalues.data()[1] - 3.0);
     if (eigen_error > 1.0e-12) {
         throw std::runtime_error("GPU eigensolver validation failed");
     }
@@ -216,10 +230,11 @@ inline int run_gpu_entry_point(int argc, char* argv[], const GPUEntryPointDescri
         validate_gpu_device_backend(*device_backend);
 
         auto gpu_blas = descriptor.create_blas(device_backend);
-        validate_gpu_blas(*gpu_blas, descriptor.blas_library_name);
+        validate_gpu_blas(*gpu_blas, device_backend, descriptor.blas_library_name);
 
         auto gpu_eigensolver = descriptor.create_eigensolver(device_backend);
-        validate_gpu_eigensolver(*gpu_eigensolver, descriptor.eigensolver_library_name);
+        validate_gpu_eigensolver(
+            *gpu_eigensolver, device_backend, descriptor.eigensolver_library_name);
 
         /**
          * Backends without a native GPU FFT run the FP64 path through the
