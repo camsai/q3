@@ -304,7 +304,8 @@ class PlanewaveFermiEnergyCalculator : public FermiEnergyCalculator {
          * no extra factor. Summed in one fixed order on every rank, so the two
          * bisections agree across ranks by construction, with no reduction.
          */
-        auto count_electrons = [&](Real trial_fermi_energy) {
+        auto count_electrons_with_occupations_at_trial_fermi_energy = [&](const auto& occupation,
+                                                                          Real trial_fermi_energy) {
             Real total_electrons = 0.0;
             for (int state_index = 0; state_index < number_of_global_states; state_index++) {
                 Real weight = weight_of(state_index);
@@ -312,10 +313,15 @@ class PlanewaveFermiEnergyCalculator : public FermiEnergyCalculator {
                     Real energy_difference_ratio =
                         (eigenvalue_of(state_index, band_index) - trial_fermi_energy) /
                         smearing_width;
-                    total_electrons += weight * smearing_->occupation(energy_difference_ratio);
+                    total_electrons += weight * occupation(energy_difference_ratio);
                 }
             }
             return total_electrons;
+        };
+        const auto smearing_occupation = [&](Real x) { return smearing_->occupation(x); };
+        auto count_electrons = [&](Real trial_fermi_energy) {
+            return count_electrons_with_occupations_at_trial_fermi_energy(smearing_occupation,
+                                                                          trial_fermi_energy);
         };
 
         /**
@@ -326,14 +332,14 @@ class PlanewaveFermiEnergyCalculator : public FermiEnergyCalculator {
          * count tolerance. On a metal the two differ only by that tolerance
          * divided by the density of states; across a gap they bracket it.
          */
-        auto bisect_for_fermi_energy = [&](PlateauEdge edge) {
+        auto bisect_for_fermi_energy = [&](const auto& count, PlateauEdge edge) {
             bool take_upper_edge = edge == PlateauEdge::Upper;
             Real lower_bound = eigenvalue_minimum;
             Real upper_bound = eigenvalue_maximum;
             Real trial_fermi_energy = 0.0;
             for (int iteration = 0; iteration < 100; iteration++) {
                 trial_fermi_energy = 0.5 * (lower_bound + upper_bound);
-                Real total_electrons = count_electrons(trial_fermi_energy);
+                Real total_electrons = count(trial_fermi_energy);
                 /**
                  * On the plateau the electron count equals the target, and
                  * which way the tie breaks decides which end of the plateau
@@ -397,10 +403,100 @@ class PlanewaveFermiEnergyCalculator : public FermiEnergyCalculator {
          * occupied-state count rather than the current E_F, which is a larger
          * change than this fix.
          */
-        Real fermi_energy = bisect_for_fermi_energy(PlateauEdge::Lower);
-        Real fermi_energy_plateau_top = bisect_for_fermi_energy(PlateauEdge::Upper);
-        if (fermi_energy_plateau_top - fermi_energy > smearing_width)
-            fermi_energy = 0.5 * (fermi_energy + fermi_energy_plateau_top);
+        auto bisected_fermi_energy = [&](const auto& count) {
+            Real plateau_bottom = bisect_for_fermi_energy(count, PlateauEdge::Lower);
+            Real plateau_top = bisect_for_fermi_energy(count, PlateauEdge::Upper);
+            if (plateau_top - plateau_bottom > smearing_width)
+                return 0.5 * (plateau_bottom + plateau_top);
+            return plateau_bottom;
+        };
+
+        /**
+         * The midpoint rule above assumes the count is flat from one band edge
+         * to the other, which holds only for a monotonic occupation. Cold and
+         * Methfessel-Paxton occupations overshoot, so across a gap their count
+         * reaches the target once, about one smearing width above the valence
+         * band, and stays above it for the rest of the gap unless the gap is
+         * many widths wide. The lower bisection then lands on that crossing,
+         * which partly empties the top valence band. Measured on silicon at
+         * degauss 0.02 Ry with cold smearing (camsai/q3#5): E_F 0.46 eV below
+         * where Quantum ESPRESSO 7.5 puts it and the total energy 0.32 mRy too
+         * high; 2.3 mRy at 0.03 Ry, and 9.3 mRy on a narrower-gap LiCoO2 cell.
+         *
+         * For those occupations E_F follows F. J. dos Santos and N. Marzari,
+         * Phys. Rev. B 107, 195122 (2023), Sec. II.6: start from the Fermi
+         * energy of Gaussian smearing, whose count is monotonic, and refine it
+         * by Newton's method on (N(E_F) - N)^2 (their Eqs. 30-32), taking the
+         * absolute value of the second derivative so that every step heads for
+         * a minimum. The result is kept if it yields the right number of
+         * electrons, and the bisection above is the fallback otherwise.
+         */
+        auto newton_refined_fermi_energy = [&]() {
+            const auto gaussian_occupation = [](Real x) { return 0.5 * std::erfc(x); };
+            Real trial_fermi_energy = bisected_fermi_energy([&](Real energy) {
+                return count_electrons_with_occupations_at_trial_fermi_energy(gaussian_occupation,
+                                                                              energy);
+            });
+            const auto excess = [&](Real energy) {
+                return count_electrons(energy) - number_of_electrons;
+            };
+            /**
+             * The count's first and second derivatives by central differences,
+             * at a thousandth of the smearing width: well inside the width the
+             * count varies on, and wide enough that rounding in a count of
+             * order N stays far below the curvature it measures.
+             */
+            const Real step_width = 1e-3 * smearing_width;
+            bool converged = false;
+            for (int iteration = 0; iteration < 100; iteration++) {
+                Real excess_here = excess(trial_fermi_energy);
+                Real excess_above = excess(trial_fermi_energy + step_width);
+                Real excess_below = excess(trial_fermi_energy - step_width);
+                Real slope = (excess_above - excess_below) / (2.0 * step_width);
+                Real curvature =
+                    (excess_above - 2.0 * excess_here + excess_below) / (step_width * step_width);
+                Real objective_slope = 2.0 * excess_here * slope;
+                Real objective_curvature =
+                    std::abs(2.0 * slope * slope + 2.0 * excess_here * curvature);
+                /**
+                 * No curvature means a flat count, which is a gap the start
+                 * already sits inside: done if it holds N electrons there,
+                 * a failure otherwise.
+                 */
+                if (!(objective_curvature > 0.0) || !std::isfinite(objective_curvature)) {
+                    converged =
+                        std::abs(excess_here) <= math::tolerances::fermi_electron_count_plateau;
+                    break;
+                }
+                Real newton_step = objective_slope / objective_curvature;
+                trial_fermi_energy -= newton_step;
+                if (!std::isfinite(trial_fermi_energy) || trial_fermi_energy < eigenvalue_minimum ||
+                    trial_fermi_energy > eigenvalue_maximum)
+                    break;
+                if (std::abs(newton_step) < math::tolerances::fermi_energy_bisection_convergence) {
+                    converged = true;
+                    break;
+                }
+            }
+            Real residual = converged ? std::abs(excess(trial_fermi_energy)) : 0.0;
+            if (!converged || residual > math::tolerances::fermi_newton_electron_count_acceptance) {
+                return bisected_fermi_energy(count_electrons);
+            }
+            if (residual > math::tolerances::fermi_electron_count_plateau &&
+                !has_warned_about_inexact_count_) {
+                has_warned_about_inexact_count_ = true;
+                log::warn("Fermi energy: with {} smearing the electron count comes within {:.1e} "
+                          "of {} but not closer inside the gap, which is only a few smearing "
+                          "widths wide; a smaller degauss removes the residual.",
+                          smearing_->name(),
+                          residual,
+                          number_of_electrons);
+            }
+            return trial_fermi_energy;
+        };
+        Real fermi_energy = smearing_->is_occupation_monotonic()
+                                ? bisected_fermi_energy(count_electrons)
+                                : newton_refined_fermi_energy();
 
         quantum_system_->set_fermi_energy(fermi_energy);
 
@@ -457,6 +553,7 @@ class PlanewaveFermiEnergyCalculator : public FermiEnergyCalculator {
     }
 
     mutable bool has_warned_about_missing_band_edge_ = false;
+    mutable bool has_warned_about_inexact_count_ = false;
     PlanewaveKohnShamQuantumSystem* quantum_system_ = nullptr;
     const SmearingScheme* smearing_ = nullptr;
     const execution::PlanewaveExecutionPolicy* execution_policy_ = nullptr;

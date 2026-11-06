@@ -10,6 +10,7 @@
 #include "layer_4_computation/iterator/internal/smearing/fixed.hpp"
 #include "layer_4_computation/iterator/internal/smearing/gaussian.hpp"
 #include "layer_4_computation/iterator/internal/smearing/marzari_vanderbilt.hpp"
+#include "layer_4_computation/iterator/internal/smearing/methfessel_paxton.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/execution/serial.hpp"
 
 using namespace q3;
@@ -323,15 +324,14 @@ TEST(PlanewaveFermiEnergyCalculator, GappedResultIsIndependentOfTheSmearingWidth
     }
 }
 
-TEST(PlanewaveFermiEnergyCalculator, ColdSmearingAcrossAGapStillTakesTheMidpoint) {
+TEST(PlanewaveFermiEnergyCalculator, ColdSmearingAcrossAWideGapStaysInsideIt) {
     /**
      * The FeO case itself used Marzari-Vanderbilt smearing at degauss 0.02 Ry.
      * Cold smearing overshoots: just below E_F an occupation exceeds 1, so the
      * count crosses the target close above the valence edge -- here 0.92 sigma
-     * above it -- which is where a single bisection stops. The bracket across
-     * this 12-sigma gap spans 8 smearing widths, so the midpoint is still
-     * taken: the test that keeps a metal on its exact count must not reach a
-     * gap this wide.
+     * above it -- which is where a single bisection stops. Across this
+     * 12-sigma gap the Gaussian start already sits where the cold count is N,
+     * well away from both edges.
      */
     KPointsGrid kpoint_grid;
     auto quantum_system = build_test_quantum_system(kpoint_grid,
@@ -527,4 +527,126 @@ TEST(PlanewaveFermiEnergyCalculator, PoolParallelBisectionGathersOnceAndMatchesS
     EXPECT_EQ(policy.gathers, 1);
     EXPECT_EQ(policy.scalar_reductions, 1);
     EXPECT_EQ(serial_fermi_energy, pooled_fermi_energy);
+}
+
+/**
+ * Cold smearing across a gap only a few smearing widths wide (camsai/q3#5).
+ *
+ * The eigenvalues are silicon's on Q3's NC reference deck (2x2x2 shifted
+ * k-points, two irreducible points weighted 1/4 and 3/4), as a cold-smearing
+ * run at degauss 0.02 Ry printed them. Its valence maximum is 5.297 eV and its
+ * conduction minimum 7.574 eV. The count never returns exactly to N inside that
+ * gap at 0.03 Ry and above, and the first crossing sits about one width above
+ * the valence band. Quantum ESPRESSO 7.5, given the same deck, places E_F at
+ * 6.6154 eV (0.02 Ry), 6.6876 eV (0.03 Ry) and 5.7980 eV (0.04 Ry, where it
+ * reports falling back to bisection); the old bisection gave 6.1579 and
+ * 5.6729 eV for the first two, each with a spurious smearing term.
+ */
+namespace {
+
+constexpr Real electronvolts_per_rydberg = 13.605693122994;
+
+Real silicon_cold_smearing_fermi_energy_in_electronvolts(const SmearingScheme& smearing,
+                                                         std::vector<Real>* occupations = nullptr) {
+    const std::vector<std::vector<Real>> eigenvalues_in_electronvolts = {
+        {-4.9945, 2.1498, 5.2973, 5.2973, 7.9882, 9.5174, 9.5174, 12.7831},
+        {-3.1149, -0.2879, 2.5716, 3.8767, 7.5743, 10.4706, 11.6790, 11.9088}};
+    KPointsGrid kpoint_grid;
+    for (Real weight : {0.5, 1.5}) {
+        KPoint kpoint;
+        kpoint.weight = weight;
+        kpoint_grid.add_kpoint(kpoint);
+    }
+    TestableQuantumSystem quantum_system(kpoint_grid, 8, 1, 8.0);
+    quantum_system.allocate_electronic_states(std::vector<int>(2, 0));
+    for (int kpoint_index = 0; kpoint_index < 2; kpoint_index++) {
+        for (int band_index = 0; band_index < 8; band_index++) {
+            quantum_system.set_eigenvalue(kpoint_index,
+                                          band_index,
+                                          eigenvalues_in_electronvolts[kpoint_index][band_index] /
+                                              electronvolts_per_rydberg);
+        }
+    }
+    PlanewaveFermiEnergyCalculator calculator(quantum_system, &smearing);
+    Real fermi_energy = calculator.calculate_occupations();
+    if (occupations != nullptr) {
+        occupations->clear();
+        for (int kpoint_index = 0; kpoint_index < 2; kpoint_index++) {
+            for (int band_index = 0; band_index < 8; band_index++) {
+                occupations->push_back(
+                    quantum_system.occupation_by_kpoint_state_index_and_band_index(kpoint_index,
+                                                                                   band_index));
+            }
+        }
+    }
+    return fermi_energy * electronvolts_per_rydberg;
+}
+
+} // namespace
+
+TEST(PlanewaveFermiEnergyCalculator, ColdSmearingAcrossANarrowGapFindsTheMinimumNotTheEdge) {
+    // The input eigenvalues are rounded to 0.1 meV, so E_F is compared to 2 meV.
+    MarzariVanderbiltSmearing at_two_hundredths(0.02);
+    EXPECT_NEAR(
+        silicon_cold_smearing_fermi_energy_in_electronvolts(at_two_hundredths), 6.6154, 2e-3);
+    MarzariVanderbiltSmearing at_three_hundredths(0.03);
+    EXPECT_NEAR(
+        silicon_cold_smearing_fermi_energy_in_electronvolts(at_three_hundredths), 6.6876, 2e-3);
+}
+
+TEST(PlanewaveFermiEnergyCalculator, ColdSmearingKeepsTheTopValenceBandFull) {
+    // At 0.02 Ry the in-gap minimum holds N to 2.4e-8: no band is partly emptied.
+    MarzariVanderbiltSmearing cold_smearing(0.02);
+    std::vector<Real> occupations;
+    silicon_cold_smearing_fermi_energy_in_electronvolts(cold_smearing, &occupations);
+    for (int kpoint_index = 0; kpoint_index < 2; kpoint_index++) {
+        for (int band_index = 0; band_index < 4; band_index++) {
+            EXPECT_NEAR(occupations[kpoint_index * 8 + band_index], 1.0, 1e-6)
+                << "k " << kpoint_index << " band " << band_index;
+        }
+    }
+}
+
+TEST(PlanewaveFermiEnergyCalculator, ColdSmearingTooWideForTheGapFallsBackToBisection) {
+    // At 0.04 Ry the in-gap minimum is 1.1e-2 electrons off, too far to accept.
+    MarzariVanderbiltSmearing cold_smearing(0.04);
+    EXPECT_NEAR(silicon_cold_smearing_fermi_energy_in_electronvolts(cold_smearing), 5.7980, 2e-3);
+}
+
+TEST(PlanewaveFermiEnergyCalculator, ColdSmearingOnAMetalLeavesTheCellNeutral) {
+    // The Newton refinement converges on the root itself, so the count is exact.
+    for (Real smearing_width : {0.01, 0.05}) {
+        KPointsGrid kpoint_grid;
+        auto quantum_system = build_test_quantum_system(kpoint_grid,
+                                                        /*number_of_kpoints_x=*/1,
+                                                        /*number_of_bands=*/3,
+                                                        /*number_of_spin_components=*/1,
+                                                        /*number_of_electrons=*/3.0);
+        quantum_system.set_eigenvalue(0, 0, -0.20);
+        quantum_system.set_eigenvalue(0, 1, 0.00);
+        quantum_system.set_eigenvalue(0, 2, 0.20);
+
+        MarzariVanderbiltSmearing cold_smearing(smearing_width);
+        PlanewaveFermiEnergyCalculator calculator(quantum_system, &cold_smearing);
+        calculator.calculate_occupations();
+
+        Real number_of_electrons = 0.0;
+        for (int band_index = 0; band_index < 3; band_index++) {
+            number_of_electrons +=
+                kpoint_grid[0].weight *
+                quantum_system.occupation_by_kpoint_state_index_and_band_index(0, band_index);
+        }
+        EXPECT_NEAR(number_of_electrons, 3.0, 1e-9) << "smearing width " << smearing_width;
+    }
+}
+
+TEST(PlanewaveFermiEnergyCalculator, MethfesselPaxtonAcrossANarrowGapStaysInsideIt) {
+    // Methfessel-Paxton occupations overshoot too, so they take the same route.
+    MethfesselPaxtonSmearing methfessel_paxton(0.02);
+    EXPECT_FALSE(methfessel_paxton.is_occupation_monotonic());
+    std::vector<Real> occupations;
+    Real fermi_energy =
+        silicon_cold_smearing_fermi_energy_in_electronvolts(methfessel_paxton, &occupations);
+    EXPECT_GT(fermi_energy, 5.297 + 1.0);
+    EXPECT_LT(fermi_energy, 7.574 - 0.5);
 }

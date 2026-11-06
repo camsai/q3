@@ -734,6 +734,45 @@ same density: before and after agree to 1e-7 Ry on both slabs below, at threshol
 `tests/validation/test_qe_plain_mixing_slab.py` runs the Cu slab against a bound of 36
 iterations. Both fail on the old reader.
 
+### Cold smearing across a narrow gap pulled E_F toward the valence band (resolved 2026-11-05)
+
+**Affected:** every run with Marzari-Vanderbilt or Methfessel-Paxton smearing on a system
+whose gap is less than about 10 smearing widths. Reported as camsai/q3#5. Those occupations
+overshoot, so the electron count reaches N once, about 0.9 σ above the valence maximum, and
+stays above it across most of the gap. The lower bisection landed on that crossing and the
+midpoint rule above assumed a flat count. The top valence band was then partly emptied. On
+silicon (Q3's NC reference deck, 2×2×2 k-points) the total energy was 0.32 mRy above pw.x at
+degauss 0.02 Ry and 2.3 mRy at 0.03 Ry. On a 12-atom LiCoO2 cell it was 9.3 mRy above, and
+the SCF took 87 iterations against 15.
+
+**Fix.** For non-monotonic occupations, E_F follows F. J. dos Santos and N. Marzari, PRB
+107, 195122 (2023): start from the Gaussian-smearing E_F and refine it by Newton's method on
+(N(E_F) − N)². The result is kept if its count is within 1e-3 of N, and the old bisection is
+the fallback. Silicon now agrees with pw.x to 0.002 mRy at both widths, the Gaussian
+baseline, and the copper cold-smearing example is unchanged to every printed digit. Across a
+gap only a few widths wide, the count can come within 1e-3 of N but no closer. The run then
+warns once and suggests a smaller degauss, as the paper does.
+
+### A large Γ-only cell crashed the GPU Davidson at its first H·ψ (resolved 2026-11-05)
+
+**Affected:** `q3_gpu_cuda` (and the other GPU backends) on cells where FFT grid points ×
+bands exceeded 2³¹ − 1, e.g. a 144³ grid with 800 bands. Reported as camsai/q3#4. The
+batched FFT workspace size overflowed a 32-bit `int` and stayed empty, and the scatter
+kernel wrote through a null pointer.
+
+**Fix.** The applicator applies the local potential in passes whose workspace stays at or
+below 2²⁸ elements (`hamiltonian_applicator/fft_batch.hpp`). Runs that already fit take one
+pass, as before. Not yet run on a GPU at the reported size.
+
+### pw.x's default `diagonalization = 'david'` was refused (resolved 2026-11-05)
+
+**Affected:** every QE deck naming `'david'`, including four of Q3's own QE reference
+inputs. Reported as camsai/q3#3. The CPU binaries stopped with "Unknown diagonalizer". The
+GPU binaries ran but left the Davidson basis out of the run summary and the memory estimate.
+
+**Fix.** The reader maps `'david'` to Davidson, and `'ParO'`, `'rmm-davidson'` and
+`'rmm-paro'` to Davidson with the notice `cg`/`ppcg`/`paro` already get.
+
 ### A smeared metal kept half a micro-electron too many (resolved 2026-10-20)
 
 **Affected:** every run with smearing on a metal since 2026-08-18. The Fermi energy sat

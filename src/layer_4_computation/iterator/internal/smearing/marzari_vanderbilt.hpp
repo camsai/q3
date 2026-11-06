@@ -58,6 +58,11 @@ class MarzariVanderbiltSmearing : public SmearingScheme {
     [[nodiscard]] std::string name() const override {
         return "marzari-vanderbilt";
     }
+
+    /// Overshoots 1 below E_F, peaking at 1.083 at x = -sqrt(2).
+    [[nodiscard]] bool is_occupation_monotonic() const override {
+        return false;
+    }
 };
 
 } // namespace q3

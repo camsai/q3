@@ -87,6 +87,11 @@ class MethfesselPaxtonSmearing : public SmearingScheme {
         return "methfessel-paxton";
     }
 
+    /// Overshoots 1 below E_F and undershoots 0 above it.
+    [[nodiscard]] bool is_occupation_monotonic() const override {
+        return false;
+    }
+
     /// Expansion order N.
     [[nodiscard]] int order() const {
         return order_;

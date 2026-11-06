@@ -29,6 +29,20 @@ class SmearingScheme {
 
     [[nodiscard]] virtual std::string name() const = 0;
 
+    /**
+     * Whether occupation(x) never increases with x.
+     *
+     * Gaussian and Fermi-Dirac occupations fall monotonically from 1 to 0, so
+     * the electron count is monotonic in E_F and a bisection finds it. Cold and
+     * Methfessel-Paxton occupations overshoot 1 (and Methfessel-Paxton's also
+     * undershoot 0), so the count
+     * can reach the target more than once, and the Fermi energy is found the
+     * way PlanewaveFermiEnergyCalculator describes for that case.
+     */
+    [[nodiscard]] virtual bool is_occupation_monotonic() const {
+        return true;
+    }
+
     /// Smearing width σ (degauss) in Ry.
     [[nodiscard]] Real smearing_width() const {
         return smearing_width_;

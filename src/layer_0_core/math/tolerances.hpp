@@ -177,6 +177,24 @@ inline constexpr double fermi_energy_bisection_convergence = 1e-12;
 inline constexpr double fermi_electron_count_plateau = 1e-6;
 
 /**
+ * Largest electron-count error a Newton-refined Fermi energy may carry and
+ * still be accepted, for smearings whose occupations are not monotonic.
+ *
+ * Implements the acceptance step of the protocol in F. J. dos Santos and
+ * N. Marzari, Phys. Rev. B 107, 195122 (2023): the Newton minimum of
+ * (N(E_F) - N)^2 is kept only if it yields the right number of electrons, and
+ * bisection is used otherwise. The paper gives no number. Across a gap only a
+ * few smearing widths wide, cold smearing's count never returns exactly to N
+ * (its Sec. III.1), so the minimum carries a residual that grows as the gap
+ * narrows. Measured on silicon (Q3's NC reference deck, 2x2x2 k-points): the
+ * in-gap minimum is off by 2.4e-8 electrons at degauss 0.02 Ry, 3.9e-4 at
+ * 0.03 and 1.1e-2 at 0.04, where the gap is 4.2 widths. This bound keeps the
+ * first two and rejects the third. Cross-checked numerically against Quantum
+ * ESPRESSO 7.5, which places E_F at all three widths where this bound does.
+ */
+inline constexpr double fermi_newton_electron_count_acceptance = 1e-3;
+
+/**
  * How far a k-point weight sum may sit from the spin degeneracy and still count
  * as a Brillouin-zone sampling.
  *
