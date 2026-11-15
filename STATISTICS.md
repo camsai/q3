@@ -6,10 +6,10 @@
 
 | Metric | Value |
 | ------ | ----: |
-| Header files (`.hpp`) | 506 |
+| Header files (`.hpp`) | 508 |
 | Translation units (`.cpp`/`.cu`/`.mm`) | 29 |
-| Lines of C++ (non-empty) | 86,026 |
-| C++ unit/integration tests | 1,686 |
+| Lines of C++ (non-empty) | 87,044 |
+| C++ unit/integration tests | 1,697 |
 | Python validation tests | 231 |
 | Python regression tests | 34 |
 | C++ standard | C++17 |

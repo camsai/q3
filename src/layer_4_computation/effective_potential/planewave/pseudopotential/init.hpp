@@ -44,13 +44,12 @@ class NormConservingPlanewaveEffectivePotentialCalculator
         int number_of_spin_components,
         std::vector<std::vector<Real>>& exchange_correlation_density,
         std::vector<std::vector<Complex>>& exchange_correlation_density_g) const override {
-        int number_of_g_vectors = planewave_basis_.number_of_g_vectors();
         int local_grid_points = planewave_basis_.fft_rho().local_grid_points();
 
         exchange_correlation_density.assign(number_of_spin_components,
                                             std::vector<Real>(local_grid_points));
-        exchange_correlation_density_g.assign(number_of_spin_components,
-                                              std::vector<Complex>(number_of_g_vectors));
+        exchange_correlation_density_g.assign(number_of_spin_components, {});
+        const LocalDensityGLayout& layout = planewave_basis_.local_density_g_layout();
 
         // Cache the real-space core charge density (constant throughout SCF)
         if (!core_charge_density_g_.empty() && cached_core_charge_density_real_.empty()) {
@@ -69,14 +68,16 @@ class NormConservingPlanewaveEffectivePotentialCalculator
                 }
             }
 
-            planewave_basis_.rho_r_to_g(charge_density_real[spin_index],
-                                        exchange_correlation_density_g[spin_index]);
-            for (int g_vector_index = 0;
-                 g_vector_index < static_cast<int>(core_charge_density_g_.size());
-                 ++g_vector_index) {
-                exchange_correlation_density_g[spin_index][g_vector_index] +=
-                    core_charge_density_g_[g_vector_index] /
-                    static_cast<Real>(number_of_spin_components);
+            // Compact, as the base class documents: this rank's G-vectors only.
+            planewave_basis_.rho_r_to_compact_g(charge_density_real[spin_index],
+                                                exchange_correlation_density_g[spin_index]);
+            for (int entry = 0; entry < layout.size(); ++entry) {
+                const int g_vector_index = layout.global_g_indices()[entry];
+                if (g_vector_index < static_cast<int>(core_charge_density_g_.size())) {
+                    exchange_correlation_density_g[spin_index][entry] +=
+                        core_charge_density_g_[g_vector_index] /
+                        static_cast<Real>(number_of_spin_components);
+                }
             }
         }
     }

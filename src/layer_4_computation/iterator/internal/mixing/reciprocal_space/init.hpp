@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_4_computation/iterator/internal/mixing/init.hpp"
 
 namespace q3 {
@@ -36,6 +37,7 @@ class ReciprocalSpaceMixer : public Mixer {
         first_nonzero_g_index_ = environment.first_nonzero_g_index;
         is_gamma_only_ = environment.is_gamma_only;
         number_of_smooth_g_vectors_ = environment.number_of_smooth_g_vectors;
+        reduce_reciprocal_space_sums_ = environment.reduce_reciprocal_space_sums;
     }
 
     void mix(const std::vector<std::vector<Real>>& input_density,
@@ -54,9 +56,12 @@ class ReciprocalSpaceMixer : public Mixer {
 
         std::vector<std::vector<Complex>> input_density_g(number_of_spin_components);
         std::vector<std::vector<Complex>> output_density_g(number_of_spin_components);
-        for (int spin_index = 0; spin_index < number_of_spin_components; ++spin_index) {
-            to_reciprocal_space_(input_density[spin_index], input_density_g[spin_index]);
-            to_reciprocal_space_(output_density[spin_index], output_density_g[spin_index]);
+        {
+            StageTimer stage_timer("mixing.to_reciprocal_space");
+            for (int spin_index = 0; spin_index < number_of_spin_components; ++spin_index) {
+                to_reciprocal_space_(input_density[spin_index], input_density_g[spin_index]);
+                to_reciprocal_space_(output_density[spin_index], output_density_g[spin_index]);
+            }
         }
 
         /**
@@ -72,7 +77,10 @@ class ReciprocalSpaceMixer : public Mixer {
             convert_up_down_to_total_magnetization(output_density_g);
         }
 
-        mix_in_reciprocal_space(input_density_g, output_density_g, number_of_spin_components);
+        {
+            StageTimer stage_timer("mixing.update");
+            mix_in_reciprocal_space(input_density_g, output_density_g, number_of_spin_components);
+        }
 
         /**
          * For dual-grid (ultrasoft/PAW) calculations, the hard G-vectors (above the smooth
@@ -98,6 +106,7 @@ class ReciprocalSpaceMixer : public Mixer {
             convert_total_magnetization_to_up_down(input_density_g);
         }
 
+        StageTimer stage_timer("mixing.to_real_space");
         for (int spin_index = 0; spin_index < number_of_spin_components; ++spin_index) {
             to_real_space_(input_density_g[spin_index], output_density[spin_index]);
         }
@@ -197,7 +206,20 @@ class ReciprocalSpaceMixer : public Mixer {
             }
         }
 
-        return result;
+        std::vector<Real> partial{result};
+        reduce_reciprocal_space_sums(partial);
+        return partial[0];
+    }
+
+    /**
+     * Complete partial G-space sums across the ranks that share the G-vectors. A mixer's
+     * vectors may hold only this rank's G-vectors; every inner product built from them goes
+     * through here before it is used.
+     */
+    void reduce_reciprocal_space_sums(std::vector<Real>& partial_sums) const {
+        if (reduce_reciprocal_space_sums_) {
+            reduce_reciprocal_space_sums_(partial_sums);
+        }
     }
 
     std::function<void(const std::vector<Real>&, std::vector<Complex>&)> to_reciprocal_space_;
@@ -208,6 +230,7 @@ class ReciprocalSpaceMixer : public Mixer {
     int first_nonzero_g_index_{0};
     bool is_gamma_only_{false};
     int number_of_smooth_g_vectors_{0};
+    std::function<void(std::vector<Real>&)> reduce_reciprocal_space_sums_;
 };
 
 } // namespace q3

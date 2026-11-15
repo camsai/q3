@@ -49,6 +49,14 @@ class PlanewaveFFTPair {
          * InputData::use_deterministic_fft_planning).
          */
         fft_rho_ = fft_grid_factory.create_fft_grid();
+        /**
+         * The density grid makes a few dozen transforms an iteration, against thousands on the
+         * wavefunction grid, so its planning is capped. Unbounded, FFTW_MEASURE spent 0.85 s
+         * planning it on a full 128-rank node -- every rank timing candidates at once -- which
+         * its transforms never win back. The wavefunction grid keeps the exhaustive search:
+         * capping it too cost more in the solver than it saved in setup.
+         */
+        fft_rho_->limit_planning_time(density_grid_planning_seconds_per_plan);
         fft_rho_->init(grid_dimension_rho_1,
                        grid_dimension_rho_2,
                        grid_dimension_rho_3,
@@ -95,11 +103,17 @@ class PlanewaveFFTPair {
          * Every rank gets a full-sized serial grid so each can do independent
          * FFTs for its assigned bands without MPI collective calls.
          */
+        /**
+         * Planned by estimate whatever the other grids use: nothing executes these plans
+         * today (only the grid's index mapping is read), and FFTW_MEASURE times real
+         * transforms of the full wave grid on every rank at once -- seconds of setup for a
+         * 96^3 grid on 128 ranks of one node.
+         */
         fft_wave_serial_ = std::make_unique<SerialFFTGrid>();
         fft_wave_serial_->init(grid_dimension_wave_1,
                                grid_dimension_wave_2,
                                grid_dimension_wave_3,
-                               use_measured_fft_planning);
+                               /*use_measured_planning=*/false);
     }
 
     [[nodiscard]] FFTGrid& fft_rho() {
@@ -126,6 +140,8 @@ class PlanewaveFFTPair {
     std::unique_ptr<FFTGrid> fft_rho_;
     std::unique_ptr<FFTGrid> fft_wave_;
     std::unique_ptr<SerialFFTGrid> fft_wave_serial_;
+    /// Planner time cap per density-grid plan, seconds; see initialize().
+    static constexpr double density_grid_planning_seconds_per_plan = 0.02;
 };
 
 } // namespace q3

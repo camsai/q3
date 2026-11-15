@@ -27,6 +27,7 @@
 #include "io/logger.hpp"
 #include "layer_0_core/math/phase_factor.hpp"
 #include "layer_0_core/math/tolerances.hpp"
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_0_core/types/constants.hpp"
 #include "layer_2_quantum_system/derived/magnetization.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
@@ -487,6 +488,7 @@ class PlanewaveKohnShamSCFIterator : public KohnShamSCFIterator {
             owned_execution_policy_ = std::make_unique<execution::PlanewaveSerialExecutionPolicy>();
             execution_policy_ = owned_execution_policy_.get();
         }
+        std::optional<StageTimer> basis_timer(std::in_place, "setup.basis");
         planewave_basis_.generate(*execution_policy_,
                                   crystal_structure(),
                                   wavefunction_energy_cutoff_,
@@ -507,6 +509,7 @@ class PlanewaveKohnShamSCFIterator : public KohnShamSCFIterator {
                                       config_.use_exact_wavefunction_grid);
         }
 
+        basis_timer.reset();
         number_of_electrons_ = compute_number_of_electrons();
         number_of_bands_ = resolve_number_of_bands();
 
@@ -537,18 +540,25 @@ class PlanewaveKohnShamSCFIterator : public KohnShamSCFIterator {
         fermi_energy_calculator_ = PlanewaveFermiEnergyCalculator(
             quantum_system_, smearing_scheme_.get(), execution_policy_);
 
-        build_kpoint_plane_wave_data();
-        allocate_electronic_states();
+        {
+            StageTimer stage_timer("setup.kpoint_plane_waves");
+            build_kpoint_plane_wave_data();
+            allocate_electronic_states();
+        }
         ProfilingCounters::instance().log_resident_checkpoint("basis + wavefunctions");
         charge_density_accumulator_ = std::make_unique<PlanewaveChargeDensityAccumulator>(
             planewave_basis_, kpoint_grid(), quantum_system_);
         energy_calculator_ = std::make_unique<PlanewaveKohnShamEnergyCalculator>(
             kpoint_grid(), quantum_system_, smearing_scheme_.get());
 
-        planewave_energies_mutable().ewald_energy =
-            compute_ewald(crystal_structure(), planewave_basis_);
+        {
+            StageTimer stage_timer("setup.ewald");
+            planewave_energies_mutable().ewald_energy =
+                compute_ewald(crystal_structure(), planewave_basis_);
+        }
 
         if (!config_.disable_symmetry) {
+            StageTimer stage_timer("setup.symmetry_shells");
             density_symmetrizer_.build_shells(crystal_structure(), planewave_basis_);
         }
 
@@ -556,15 +566,31 @@ class PlanewaveKohnShamSCFIterator : public KohnShamSCFIterator {
     }
 
     void initiate_mixer() override {
+        StageTimer stage_timer("setup.mixer");
+        /**
+         * The mixer works on this rank's density G-vectors only -- those on its own FFT
+         * sticks, in global order -- and completes its inner products across the pool. Its
+         * vectors were whole until 2026-11, which made every mixing transform an all-reduce
+         * of the full G-vector set and every Gram-matrix entry a loop over all of it on every
+         * rank: 2.4 s of a 64-atom silicon run on 32 ranks per pool, growing with the rank
+         * count. Every quantity indexed by G below is built whole and then compacted, so
+         * "below the smooth cutoff" and "G = 0 first" keep their meaning.
+         */
+        const LocalDensityGLayout& layout = planewave_basis_.local_density_g_layout();
         MixerEnvironment environment;
         environment.to_reciprocal_space = [this](const std::vector<Real>& density_real,
                                                  std::vector<Complex>& density_g) {
-            planewave_basis_.rho_r_to_g(density_real, density_g);
+            planewave_basis_.rho_r_to_compact_g(density_real, density_g);
         };
         environment.to_real_space = [this](const std::vector<Complex>& density_g,
                                            std::vector<Real>& density_real) {
-            planewave_basis_.rho_g_to_r(density_g, density_real);
+            planewave_basis_.rho_compact_g_to_r(density_g, density_real);
         };
+        if (!layout.holds_every_g_vector() && execution_policy_ != nullptr) {
+            environment.reduce_reciprocal_space_sums = [this](std::vector<Real>& partial_sums) {
+                execution_policy_->reduce_within_pool_vector(partial_sums);
+            };
+        }
 
         int number_of_g_vectors = planewave_basis_.number_of_g_vectors();
         Real two_pi_over_lattice_parameter_squared =
@@ -603,11 +629,15 @@ class PlanewaveKohnShamSCFIterator : public KohnShamSCFIterator {
                 planewave_basis_.g_vectors()[g_index].magnitude_squared *
                 two_pi_over_lattice_parameter_squared;
         }
+        preconditioner_environment.g_squared = layout.compact(preconditioner_environment.g_squared);
         preconditioner_environment.q0_squared = mixing_q0_ * mixing_q0_;
-        preconditioner_environment.first_nonzero_g_index = environment.first_nonzero_g_index;
+        preconditioner_environment.first_nonzero_g_index =
+            layout.count_below(environment.first_nonzero_g_index);
         preconditioner_environment.to_reciprocal_space = environment.to_reciprocal_space;
         preconditioner_environment.to_real_space = environment.to_real_space;
         preconditioner_environment.global_reduce = environment.global_reduce;
+        preconditioner_environment.reduce_reciprocal_space_sums =
+            environment.reduce_reciprocal_space_sums;
         environment.preconditioner =
             PreconditionerFactory::create(mixing_preconditioning_, preconditioner_environment);
 
@@ -656,6 +686,19 @@ class PlanewaveKohnShamSCFIterator : public KohnShamSCFIterator {
             number_of_smooth_g_vectors_ = number_of_g_vectors;
         }
 
+        environment.charge_metric_weights = layout.compact(environment.charge_metric_weights);
+        const bool dual_grid = environment.number_of_smooth_g_vectors < number_of_g_vectors;
+        environment.number_of_smooth_g_vectors =
+            layout.count_below(environment.number_of_smooth_g_vectors);
+        if (dual_grid && environment.number_of_smooth_g_vectors == 0 && layout.size() > 0) {
+            /**
+             * The mixers read 0 as "single grid". Sticks are dealt heaviest -- most central --
+             * first, so a rank holding only hard G-vectors takes far more ranks than sticks.
+             */
+            log::warn("     Mixing: this rank holds no smooth G-vector; its hard G-vectors are "
+                      "mixed as smooth ones");
+        }
+        environment.first_nonzero_g_index = layout.count_below(environment.first_nonzero_g_index);
         mixer_->initialize(environment);
     }
 
@@ -864,15 +907,30 @@ class PlanewaveKohnShamSCFIterator : public KohnShamSCFIterator {
         Real gamma_factor = planewave_basis_.is_gamma_only() ? 2.0 : 1.0;
 
         if (number_of_spin_components() == 1) {
-            std::vector<Complex> input_density_g;
-            std::vector<Complex> output_density_g;
-            planewave_basis_.rho_r_to_g(density_in[0], input_density_g);
-            planewave_basis_.rho_r_to_g(density_out[0], output_density_g);
-            for (int g_vector_index = first_nonzero_g_index; g_vector_index < residual_g_count;
-                 ++g_vector_index) {
-                Complex delta = output_density_g[g_vector_index] - input_density_g[g_vector_index];
+            /**
+             * One transform of rho_out - rho_in, of this rank's G-vectors, and a sum completed
+             * across the pool -- in place of two transforms each completed by an all-reduce of
+             * every G-vector, then a sum every rank repeated in full. The transform is linear,
+             * so it is the same quantity, and every rank of the pool still returns it.
+             */
+            const int local_grid_points = static_cast<int>(density_out[0].size());
+            std::vector<Real> density_change(static_cast<std::size_t>(local_grid_points));
+            for (int grid_index = 0; grid_index < local_grid_points; ++grid_index) {
+                density_change[grid_index] = density_out[0][grid_index] - density_in[0][grid_index];
+            }
+            std::vector<Complex> density_change_g;
+            planewave_basis_.rho_r_to_compact_g(density_change, density_change_g);
+            const LocalDensityGLayout& layout = planewave_basis_.local_density_g_layout();
+            for (int entry = 0; entry < layout.size(); ++entry) {
+                const int g_vector_index = layout.global_g_indices()[entry];
+                if (g_vector_index < first_nonzero_g_index || g_vector_index >= residual_g_count) {
+                    continue;
+                }
                 Real g_squared = planewave_basis_.g_vectors()[g_vector_index].magnitude_squared;
-                density_residual += std::norm(delta) / g_squared * gamma_factor;
+                density_residual += std::norm(density_change_g[entry]) / g_squared * gamma_factor;
+            }
+            if (!layout.holds_every_g_vector() && execution_policy_ != nullptr) {
+                execution_policy_->reduce_within_pool_scalar(density_residual);
             }
             return density_residual * hartree_metric_prefactor();
         }

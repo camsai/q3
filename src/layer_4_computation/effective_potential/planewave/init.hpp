@@ -18,8 +18,10 @@
 #include <cmath>
 #include <complex>
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_0_core/types/constants.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
@@ -53,6 +55,7 @@ class PlanewaveEffectivePotentialCalculator {
                                      int number_of_spin_components,
                                      const std::vector<Complex>& local_ionic_potential_g) const {
         EffectivePotentialResult output;
+        StageTimer stage_timer("potential.total");
         int total_grid_points = planewave_basis_.fft_rho().total_grid_points();
         int local_grid_points = planewave_basis_.fft_rho().local_grid_points();
 
@@ -65,15 +68,24 @@ class PlanewaveEffectivePotentialCalculator {
         }
         planewave_basis_.rho_r_to_g(total_charge_density_real, output.charge_density_g);
 
-        std::vector<Real> hartree_potential_real = compute_hartree_potential(output);
+        std::vector<Real> hartree_potential_real;
+        std::vector<Complex> hartree_potential_g;
+        {
+            StageTimer hartree_timer("potential.hartree");
+            hartree_potential_real = compute_hartree_potential(output, hartree_potential_g);
+        }
 
         std::vector<std::vector<Real>> exchange_correlation_density;
         std::vector<std::vector<Complex>> exchange_correlation_density_g;
+        std::optional<StageTimer> density_timer(std::in_place,
+                                                "potential.exchange_correlation_density");
         build_exchange_correlation_density(charge_density_real,
                                            number_of_spin_components,
                                            exchange_correlation_density,
                                            exchange_correlation_density_g);
 
+        density_timer.reset();
+        std::optional<StageTimer> evaluation_timer(std::in_place, "potential.exchange_correlation");
         std::vector<std::vector<Real>> exchange_correlation_potential_by_spin(
             number_of_spin_components, std::vector<Real>(local_grid_points));
         if (number_of_spin_components == 1) {
@@ -99,8 +111,11 @@ class PlanewaveEffectivePotentialCalculator {
          */
         execution_policy_.reduce_within_pool_scalar(output.exchange_correlation_energy);
         execution_policy_.reduce_within_pool_scalar(output.exchange_correlation_potential_energy);
+        evaluation_timer.reset();
 
+        StageTimer assemble_timer("potential.assemble");
         assemble_effective_potential(hartree_potential_real,
+                                     hartree_potential_g,
                                      exchange_correlation_potential_by_spin,
                                      number_of_spin_components,
                                      local_ionic_potential_g,
@@ -122,19 +137,22 @@ class PlanewaveEffectivePotentialCalculator {
      * Build the density seen by the XC functional.
      * Base implementation copies the valence charge density directly.
      * Subclasses override to include additional contributions (e.g., NLCC core charge).
+     *
+     * The reciprocal-space density is compact: this rank's G-vectors, in the basis'
+     * local_density_g_layout(). Its only consumer, the gradient of a GGA, multiplies by iG
+     * and transforms straight back, which needs nothing more -- so completing it across
+     * the pool, an all-reduce of every G-vector, was a cost with no reader.
      */
     virtual void build_exchange_correlation_density(
         const std::vector<std::vector<Real>>& charge_density_real,
         int number_of_spin_components,
         std::vector<std::vector<Real>>& exchange_correlation_density,
         std::vector<std::vector<Complex>>& exchange_correlation_density_g) const {
-        int number_of_g_vectors = planewave_basis_.number_of_g_vectors();
         int local_grid_points = planewave_basis_.fft_rho().local_grid_points();
 
         exchange_correlation_density.assign(number_of_spin_components,
                                             std::vector<Real>(local_grid_points));
-        exchange_correlation_density_g.assign(number_of_spin_components,
-                                              std::vector<Complex>(number_of_g_vectors));
+        exchange_correlation_density_g.assign(number_of_spin_components, {});
 
         for (int spin_index = 0; spin_index < number_of_spin_components; ++spin_index) {
             for (int grid_index = 0; grid_index < local_grid_points; ++grid_index) {
@@ -142,20 +160,21 @@ class PlanewaveEffectivePotentialCalculator {
                     charge_density_real[spin_index][grid_index];
             }
 
-            planewave_basis_.rho_r_to_g(charge_density_real[spin_index],
-                                        exchange_correlation_density_g[spin_index]);
+            planewave_basis_.rho_r_to_compact_g(charge_density_real[spin_index],
+                                                exchange_correlation_density_g[spin_index]);
         }
     }
 
   private:
-    std::vector<Real> compute_hartree_potential(EffectivePotentialResult& output) const {
+    std::vector<Real> compute_hartree_potential(EffectivePotentialResult& output,
+                                                std::vector<Complex>& hartree_potential_g) const {
         int number_of_g_vectors = planewave_basis_.number_of_g_vectors();
         int first_nonzero_g_index = planewave_basis_.first_nonzero_g_index();
         Real cell_volume = crystal_structure_.cell_volume();
         Real two_pi_over_lattice_parameter_squared =
             crystal_structure_.two_pi_over_lattice_parameter_squared();
 
-        std::vector<Complex> hartree_potential_g(number_of_g_vectors, Complex(0.0, 0.0));
+        hartree_potential_g.assign(number_of_g_vectors, Complex(0.0, 0.0));
         Real hartree_energy_local = 0.0;
         bool is_gamma_only = planewave_basis_.is_gamma_only();
         for (int g_vector_index = first_nonzero_g_index; g_vector_index < number_of_g_vectors;
@@ -266,6 +285,7 @@ class PlanewaveEffectivePotentialCalculator {
      */
     void assemble_effective_potential(
         const std::vector<Real>& hartree_potential_real,
+        const std::vector<Complex>& hartree_potential_g,
         const std::vector<std::vector<Real>>& exchange_correlation_potential_by_spin,
         int number_of_spin_components,
         const std::vector<Complex>& local_ionic_potential_g,
@@ -307,19 +327,33 @@ class PlanewaveEffectivePotentialCalculator {
          * correct thing for an unpolarized cell.
          */
         output.total_potential_g_by_spin.resize(number_of_spin_components);
-        for (int spin_index = 0; spin_index < number_of_spin_components; ++spin_index) {
-            planewave_basis_.rho_r_to_g(output.real_space_potential[spin_index],
-                                        output.total_potential_g_by_spin[spin_index]);
+        if (number_of_spin_components == 1) {
+            // One channel: its potential is the average above, bit for bit (x / 1 == x).
+            output.total_potential_g_by_spin[0] = output.total_potential_g;
+        } else {
+            for (int spin_index = 0; spin_index < number_of_spin_components; ++spin_index) {
+                planewave_basis_.rho_r_to_g(output.real_space_potential[spin_index],
+                                            output.total_potential_g_by_spin[spin_index]);
+            }
         }
 
-        std::vector<Real> exchange_correlation_potential_average(local_grid_points, 0.0);
-        for (int grid_index = 0; grid_index < local_grid_points; ++grid_index) {
-            exchange_correlation_potential_average[grid_index] =
-                spin_averaged_potential[grid_index] - hartree_potential_real[grid_index] -
-                local_potential_real_space[grid_index];
+        /**
+         * V_xc averaged over spin, in G-space, as V_eff - V_H - V_loc: the transform is linear
+         * and the grid holds the whole G sphere, so this is the transform of the real-space
+         * difference it replaces, to rounding, without a transform (and an all-reduce of
+         * every G-vector) of its own.
+         */
+        const std::size_t number_of_g_vectors = output.total_potential_g.size();
+        output.exchange_correlation_potential_g.assign(number_of_g_vectors, Complex(0.0, 0.0));
+        for (std::size_t g_vector_index = 0; g_vector_index < number_of_g_vectors;
+             ++g_vector_index) {
+            Complex local_ionic = g_vector_index < local_ionic_potential_g.size()
+                                      ? local_ionic_potential_g[g_vector_index]
+                                      : Complex(0.0, 0.0);
+            output.exchange_correlation_potential_g[g_vector_index] =
+                output.total_potential_g[g_vector_index] - hartree_potential_g[g_vector_index] -
+                local_ionic;
         }
-        planewave_basis_.rho_r_to_g(exchange_correlation_potential_average,
-                                    output.exchange_correlation_potential_g);
     }
 };
 

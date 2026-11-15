@@ -588,7 +588,8 @@ class PlanewaveChargeDensityAccumulator {
                                                 g_to_smooth_mapping,
                                                 minus_g_to_smooth_mapping,
                                                 fft_workspace);
-                        basis_.fft_wave().inverse_raw_on_slot(fft_workspace.data(), transform_slot);
+                        basis_.fft_wave().wavefunction_inverse_raw_on_slot(fft_workspace.data(),
+                                                                           transform_slot);
 
                         Real weight_1 = kpoint_weight * occupation_1 * inverse_cell_volume;
                         Real weight_2 = kpoint_weight * occupation_2 * inverse_cell_volume;
@@ -626,7 +627,8 @@ class PlanewaveChargeDensityAccumulator {
                                                      minus_g_to_smooth_mapping,
                                                      false,
                                                      fft_workspace);
-                        basis_.fft_wave().inverse_raw_on_slot(fft_workspace.data(), transform_slot);
+                        basis_.fft_wave().wavefunction_inverse_raw_on_slot(fft_workspace.data(),
+                                                                           transform_slot);
 
                         Real weight_factor = kpoint_weight * occupation * inverse_cell_volume;
                         for (int grid_index = 0; grid_index < smooth_local_points; ++grid_index) {

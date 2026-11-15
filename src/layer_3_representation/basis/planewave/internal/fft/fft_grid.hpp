@@ -106,6 +106,16 @@ class FFTGrid {
     virtual void assign_sticks(const std::vector<int>& /*stick_weights*/) {}
 
     /**
+     * The same, with a second weight per stick saying which sticks can hold a wavefunction
+     * coefficient (nonzero) -- the only ones the wavefunction transforms below need to touch.
+     * Ownership still follows `stick_weights`. A grid that cannot use the distinction ignores it.
+     */
+    virtual void assign_sticks(const std::vector<int>& stick_weights,
+                               const std::vector<int>& /*wavefunction_stick_weights*/) {
+        assign_sticks(stick_weights);
+    }
+
+    /**
      * Whether a G-vector and its negative are always held by the same rank.
      * True for a serial grid and for the stick layout; false for slabs, which
      * is what forced the gamma-only path off under MPI.
@@ -277,6 +287,48 @@ class FFTGrid {
      */
     virtual void inverse_raw_on_slot(Complex* data, int /*slot*/) const {
         inverse_raw(data);
+    }
+
+    /**
+     * Cap the time measured planning may spend per plan (FFTW's planner time limit), for a
+     * grid whose transforms are too few to repay an exhaustive search. Within the cap the
+     * planner keeps the best plan it has timed. A grid that plans nothing ignores it.
+     */
+    virtual void limit_planning_time(double /*seconds_per_plan*/) {}
+
+    /**
+     * Transforms of one wavefunction. Its coefficients lie inside the wavefunction cutoff
+     * sphere, a fifth or so of the sticks of a grid sized for the density, so a grid that
+     * distributes by stick need not transform or transport the rest: the inverse treats every
+     * other stick as zero, and the forward leaves every other stick undefined. Callers that
+     * scatter only plane waves into the input and gather only plane waves from the output --
+     * a Hamiltonian application, |psi|^2 from one band -- use these; anything that reads the
+     * whole reciprocal-space buffer (the transform of a density) does not.
+     *
+     * A grid with nothing to skip transforms in full, which these defaults do.
+     */
+    virtual void execute_wavefunction_inverse_on_slot(int slot) const {
+        execute_inverse_raw_on_slot(slot);
+    }
+
+    /// Forward transform of a wavefunction product; see execute_wavefunction_inverse_on_slot().
+    virtual void execute_wavefunction_forward_on_slot(int slot) const {
+        execute_forward_on_slot(slot);
+    }
+
+    /// In-place wavefunction inverse of a caller-owned array; see above.
+    virtual void wavefunction_inverse_raw_on_slot(Complex* data, int slot) const {
+        inverse_raw_on_slot(data, slot);
+    }
+
+    /// In-place wavefunction inverse of a caller-owned array; see above.
+    virtual void wavefunction_inverse_raw(Complex* data) const {
+        inverse_raw(data);
+    }
+
+    /// In-place wavefunction forward of a caller-owned array; see above.
+    virtual void wavefunction_forward(Complex* data) const {
+        forward(data);
     }
 
     /**

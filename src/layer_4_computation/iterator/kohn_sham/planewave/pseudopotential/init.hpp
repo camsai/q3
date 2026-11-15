@@ -36,6 +36,7 @@
 #include "layer_0_core/math/linear_algebra/blas.hpp"
 #include "layer_0_core/math/phase_factor.hpp"
 #include "layer_0_core/math/tolerances.hpp"
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_0_core/types/constants.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/atomic_orbital_builder.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/lowdin_orthogonalization.hpp"
@@ -511,7 +512,11 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
     }
 
     void initialize_charge_density() override {
-        create_norm_conserving_quantum_system_snapshot();
+        StageTimer stage_timer("setup.charge_density");
+        {
+            StageTimer snapshot_timer("setup.quantum_system");
+            create_norm_conserving_quantum_system_snapshot();
+        }
         if (has_preloaded_charge_density_ && preloaded_charge_density_is_a_starting_guess_) {
             if (loaded_charge_density_fits_grid()) {
                 scale_loaded_charge_density_to_electron_count();
@@ -525,6 +530,7 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
             preload_charge_density();
             on_charge_density_initialized();
         } else {
+            StageTimer superposition_timer("setup.atomic_superposition");
             initialize_charge_density_from_atomic_superposition();
         }
     }
@@ -845,22 +851,30 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
          * topology. Wherever there were more atomic orbitals than bands, the bands
          * kept were chosen with it.
          */
+        std::optional<StageTimer> smooth_potential_timer(std::in_place,
+                                                         "setup.starting_guess_smooth_potential");
         int total_smooth_points = planewave_basis_.fft_wave().total_grid_points();
         std::vector<std::vector<Real>> starting_guess_potential(
             static_cast<std::size_t>(number_of_spin_components()));
         for (int spin_index = 0; spin_index < number_of_spin_components(); ++spin_index) {
-            auto smooth_potential_g = compute_smooth_grid_potential_from_dense(
-                real_space_potential_[spin_index], planewave_basis_);
-            execution_policy_->reduce_group_distributed_result(smooth_potential_g.data(),
-                                                               total_smooth_points);
             auto& potential = starting_guess_potential[static_cast<std::size_t>(spin_index)];
-            potential = inverse_fft_smooth_potential(smooth_potential_g, planewave_basis_);
+            if (planewave_basis_.wavefunction_grid_is_density_grid()) {
+                // The restriction is the identity on a shared grid; see the basis.
+                potential = real_space_potential_[spin_index];
+            } else {
+                auto smooth_potential_g = compute_smooth_grid_potential_from_dense(
+                    real_space_potential_[spin_index], planewave_basis_);
+                execution_policy_->reduce_group_distributed_result(smooth_potential_g.data(),
+                                                                   total_smooth_points);
+                potential = inverse_fft_smooth_potential(smooth_potential_g, planewave_basis_);
+            }
             Real inverse_smooth_points = 1.0 / total_smooth_points;
             for (auto& value : potential) {
                 value *= inverse_smooth_points;
             }
         }
 
+        smooth_potential_timer.reset();
         int number_of_kpoint_states = number_of_kpoints * number_of_spin_components();
 
         /**
@@ -948,6 +962,19 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
         ProfilingCounters::instance().release_unused_heap("wavefunction init");
         ProfilingCounters::instance().log_resident_checkpoint("wavefunction init");
 
+        {
+            auto& counters = ProfilingCounters::instance();
+            auto milliseconds = [](auto begin, auto end) {
+                return std::chrono::duration<double, std::milli>(end - begin).count();
+            };
+            counters.add_stage_time("setup.interpolation_tables", milliseconds(timer_0, timer_1));
+            counters.add_stage_time("setup.starting_potential", milliseconds(timer_1, timer_2));
+            counters.add_stage_time("setup.projectors", milliseconds(timer_2, timer_3));
+            counters.add_stage_time("setup.atomic_wavefunctions", atomic_wfc_ms);
+            counters.add_stage_time("setup.wavefunction_rotation", rotate_ms);
+            counters.add_stage_time("setup.wavefunction_initialization",
+                                    milliseconds(timer_3, timer_4));
+        }
         log::debug("     wfc_init breakdown:");
         log::debug("       interp_table+count: {:.1f} ms",
                    std::chrono::duration<double, std::milli>(timer_1 - timer_0).count());
@@ -1781,7 +1808,14 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
 
     // ─── Effective potential ─────────────────────────────────────────
     void compute_effective_potential_from_density() override {
-        if (planewave_energies().ewald_energy < math::tolerances::numerical_zero_threshold) {
+        /**
+         * Only an energy never computed is zero; initialize_representation() sets it on every
+         * path that builds a geometry. The test is on the magnitude: an ion lattice's Ewald
+         * energy is almost always negative, and `ewald_energy < threshold` was true for all of
+         * them, re-running the sum (0.6 s for 64 silicon atoms) on every potential update.
+         */
+        if (std::abs(planewave_energies().ewald_energy) <
+            math::tolerances::numerical_zero_threshold) {
             energies_.ewald_energy = compute_ewald(crystal_structure(), planewave_basis_);
         }
         /**
@@ -2040,13 +2074,25 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
                                          " atoms");
         }
 
-        charge_density_g_.resize(number_of_g_vectors, Complex(0.0, 0.0));
-        for (int g_vector_index = 0; g_vector_index < number_of_g_vectors; ++g_vector_index) {
-            for (int atom_index = 0; atom_index < crystal_structure().number_of_atoms();
-                 ++atom_index) {
+        /**
+         * Each rank computes the G-vectors on its own density sticks, and one reduction
+         * completes the vector: every entry is still computed once, by one rank, the same
+         * way, so the result is the one every rank used to compute in full -- 64 atoms times
+         * 396,599 G-vectors of structure factors on each of 32 ranks, for a 64-atom cell.
+         */
+        charge_density_g_.assign(number_of_g_vectors, Complex(0.0, 0.0));
+        const int number_of_atoms = crystal_structure().number_of_atoms();
+        std::vector<Vector3D> atomic_positions(static_cast<std::size_t>(number_of_atoms));
+        for (int atom_index = 0; atom_index < number_of_atoms; ++atom_index) {
+            atomic_positions[atom_index] =
+                crystal_structure().convert_from_crystal_to_cartesian(atom_index);
+        }
+        const LocalDensityGLayout& layout = planewave_basis_.local_density_g_layout();
+        for (int entry = 0; entry < layout.size(); ++entry) {
+            const int g_vector_index = layout.global_g_indices()[entry];
+            for (int atom_index = 0; atom_index < number_of_atoms; ++atom_index) {
                 int species_type = crystal_structure().species_type_index(atom_index);
-                Vector3D position =
-                    crystal_structure().convert_from_crystal_to_cartesian(atom_index);
+                const Vector3D& position = atomic_positions[atom_index];
                 const auto& g_vector = planewave_basis_.g_vectors()[g_vector_index];
                 Real phase = constants::two_pi * g_vector.g_cart.dot(position);
                 Complex structure_factor = compute_phase_factor(phase);
@@ -2068,6 +2114,12 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
                         atom_magnetization * atomic_contribution;
                 }
             }
+        }
+
+        planewave_basis_.fft_rho().reduce_g_space(charge_density_g_.data(), number_of_g_vectors);
+        if (spin_polarized) {
+            planewave_basis_.fft_rho().reduce_g_space(magnetization_density_g.data(),
+                                                      number_of_g_vectors);
         }
 
         Real total_starting_charge = charge_density_g_[0].real() * cell_volume;

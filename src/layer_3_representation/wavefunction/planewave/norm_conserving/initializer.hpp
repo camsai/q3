@@ -770,7 +770,7 @@ class NormConservingPlanewaveWavefunctionInitializer {
                 }
 
                 // Inverse FFT → real space
-                planewave_basis.fft_wave().inverse_raw(psi_real_space.data());
+                planewave_basis.fft_wave().wavefunction_inverse_raw(psi_real_space.data());
 
                 /**
                  * Multiply by V(r): both bands simultaneously
@@ -782,7 +782,7 @@ class NormConservingPlanewaveWavefunctionInitializer {
                 }
 
                 // Forward FFT → G-space
-                planewave_basis.fft_wave().forward(psi_real_space.data());
+                planewave_basis.fft_wave().wavefunction_forward(psi_real_space.data());
 
                 /**
                  * Separate the two bands using ±G symmetry:
@@ -849,11 +849,11 @@ class NormConservingPlanewaveWavefunctionInitializer {
                         psi_real_space[fft_index] = psi_vector[g_index];
                     }
                 }
-                planewave_basis.fft_wave().inverse_raw(psi_real_space.data());
+                planewave_basis.fft_wave().wavefunction_inverse_raw(psi_real_space.data());
                 for (int index_grid = 0; index_grid < local_smooth_grid_points; ++index_grid) {
                     psi_real_space[index_grid] *= smooth_potential[index_grid];
                 }
-                planewave_basis.fft_wave().forward(psi_real_space.data());
+                planewave_basis.fft_wave().wavefunction_forward(psi_real_space.data());
                 for (int g_index = 0; g_index < number_of_plane_waves; ++g_index) {
                     int fft_index = g_to_fft_mapping[g_index];
                     if (fft_index >= 0) {

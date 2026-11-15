@@ -97,8 +97,10 @@ class PlanewaveBasis {
          * layout can balance them and skip the empty ones. A grid that does
          * not distribute by stick ignores this.
          */
-        fft_pair_.fft_rho().assign_sticks(
+        assign_every_stick(
+            fft_pair_.fft_rho(),
             stick_weights_for_grid(fft_pair_.fft_rho(), [](const GVector&) { return true; }));
+        local_density_g_layout_.build(g_vectors_, fft_pair_.fft_rho());
     }
 
     /**
@@ -124,20 +126,26 @@ class PlanewaveBasis {
             int wrapped_2 = miller_2 >= 0 ? miller_2 : miller_2 + dimension_2;
             weights[static_cast<std::size_t>(wrapped_1) * dimension_2 + wrapped_2] += 1;
         }
-        /**
-         * Every stick is owned, balanced by how much of the sphere it carries.
-         * A stick outside the sphere could be dropped, but two consumers here
-         * still read the whole grid box -- the
-         * dense-to-smooth potential copy and the smooth-to-dense density
-         * transfer -- and truncating would change their answer against a
-         * serial run. Transporting the empty sticks costs the all-to-all the
-         * same volume the slab transpose moved; skipping them is a later
-         * optimisation that wants those two loops made sphere-only first.
-         */
-        for (auto& weight : weights) {
+        return weights;
+    }
+
+    /**
+     * Every stick is owned, balanced by how much of the sphere it carries.
+     * A stick outside the sphere could be dropped, but two consumers here
+     * still read the whole grid box -- the
+     * dense-to-smooth potential copy and the smooth-to-dense density
+     * transfer -- and truncating would change their answer against a
+     * serial run. Transporting the empty sticks costs the all-to-all the
+     * same volume the slab transpose moved; the raw counts go along too, so a
+     * stick grid can skip the empty sticks in the transforms that never read
+     * them (FFTGrid::execute_wavefunction_inverse_on_slot).
+     */
+    static void assign_every_stick(FFTGrid& grid, const std::vector<int>& raw_weights) {
+        std::vector<int> ownership_weights = raw_weights;
+        for (auto& weight : ownership_weights) {
             weight = std::max(weight, 1);
         }
-        return weights;
+        grid.assign_sticks(ownership_weights, raw_weights);
     }
 
     // ─── Charge-density G-vectors ──────────────────────────────────
@@ -227,7 +235,8 @@ class PlanewaveBasis {
                           crystal_structure.two_pi_over_lattice_parameter_squared());
             Real radius_squared = (cutoff_radius + largest_k) * (cutoff_radius + largest_k) *
                                   (1.0 + math::tolerances::energy_cutoff_rounding_tolerance);
-            fft_pair_.fft_wave().assign_sticks(
+            assign_every_stick(
+                fft_pair_.fft_wave(),
                 stick_weights_for_grid(fft_pair_.fft_wave(), [radius_squared](const GVector& g) {
                     return g.g_cart.norm2() <= radius_squared;
                 }));
@@ -327,14 +336,110 @@ class PlanewaveBasis {
 
     void rho_g_to_r(const std::vector<Complex>& charge_density_g_space,
                     std::vector<Real>& charge_density_real_space) const {
-        ChargeDensityTransformer::rho_g_to_r(
-            g_vectors_, fft_pair_.fft_rho(), charge_density_g_space, charge_density_real_space);
+        ChargeDensityTransformer::rho_g_to_r(local_density_g_layout_,
+                                             fft_pair_.fft_rho(),
+                                             charge_density_g_space,
+                                             charge_density_real_space);
     }
 
     void rho_r_to_g(const std::vector<Real>& charge_density_real_space,
                     std::vector<Complex>& charge_density_g_space) const {
-        ChargeDensityTransformer::rho_r_to_g(
-            g_vectors_, fft_pair_.fft_rho(), charge_density_real_space, charge_density_g_space);
+        ChargeDensityTransformer::rho_r_to_g(local_density_g_layout_,
+                                             g_vectors_.number_of_g_vectors(),
+                                             fft_pair_.fft_rho(),
+                                             charge_density_real_space,
+                                             charge_density_g_space);
+    }
+
+    /**
+     * Whether the wavefunction grid is the density grid in all but name: the same dimensions,
+     * and this rank holding the same real-space points of both. Then restricting a density-grid
+     * function to the wavefunction grid (forward transform, keep what fits, inverse) maps every
+     * point to itself and is the identity up to rounding, and callers can copy instead. The
+     * exact wavefunction grid -- 4 x ecutwfc, the QE-format default -- is this case whenever
+     * the density cutoff is also 4 x ecutwfc. Every rank gets the same answer: equal dimensions
+     * give equal plane splits, as both grids divide planes by the same rule.
+     */
+    [[nodiscard]] bool wavefunction_grid_is_density_grid() const {
+        const FFTGrid& wave = fft_pair_.fft_wave();
+        const FFTGrid& density = fft_pair_.fft_rho();
+        return wave.grid_dimension_1() == density.grid_dimension_1() &&
+               wave.grid_dimension_2() == density.grid_dimension_2() &&
+               wave.grid_dimension_3() == density.grid_dimension_3() &&
+               wave.local_grid_points() == density.local_grid_points() &&
+               wave.local_offset() == density.local_offset();
+    }
+
+    /**
+     * The density G-vectors held on this rank's sticks, and the transforms that work on
+     * them alone -- see LocalDensityGLayout for which consumers can.
+     */
+    [[nodiscard]] const LocalDensityGLayout& local_density_g_layout() const {
+        return local_density_g_layout_;
+    }
+
+    /**
+     * Complete sums over density G-vectors that each rank took over only its own (those of
+     * local_density_g_layout()), across the ranks sharing the density grid. A no-op when every
+     * rank holds every G-vector. Collective: every rank of the pool must call it.
+     *
+     * Carried by the density grid's own reduction, which sums complex values, so real
+     * partial sums travel two to a complex number.
+     */
+    void complete_density_g_sums(std::vector<Real>& partial_sums) const {
+        if (local_density_g_layout_.holds_every_g_vector() || partial_sums.empty()) {
+            return;
+        }
+        std::vector<Complex> packed((partial_sums.size() + 1) / 2, Complex(0.0, 0.0));
+        for (std::size_t index = 0; index < partial_sums.size(); ++index) {
+            if (index % 2 == 0) {
+                packed[index / 2].real(partial_sums[index]);
+            } else {
+                packed[index / 2].imag(partial_sums[index]);
+            }
+        }
+        fft_pair_.fft_rho().reduce_g_space(packed.data(), static_cast<int>(packed.size()));
+        for (std::size_t index = 0; index < partial_sums.size(); ++index) {
+            partial_sums[index] =
+                (index % 2 == 0) ? packed[index / 2].real() : packed[index / 2].imag();
+        }
+    }
+
+    /// The same, for one three-vector per atom (a force, say).
+    void complete_density_g_sums(std::vector<Vector3D>& partial_sums) const {
+        if (local_density_g_layout_.holds_every_g_vector() || partial_sums.empty()) {
+            return;
+        }
+        std::vector<Real> flat(3 * partial_sums.size());
+        for (std::size_t index = 0; index < partial_sums.size(); ++index) {
+            for (int direction = 0; direction < 3; ++direction) {
+                flat[3 * index + direction] = partial_sums[index][direction];
+            }
+        }
+        complete_density_g_sums(flat);
+        for (std::size_t index = 0; index < partial_sums.size(); ++index) {
+            for (int direction = 0; direction < 3; ++direction) {
+                partial_sums[index][direction] = flat[3 * index + direction];
+            }
+        }
+    }
+
+    /// Real-space density from this rank's compact G-space entries (no pool reduction needed).
+    void rho_compact_g_to_r(const std::vector<Complex>& compact_density_g,
+                            std::vector<Real>& charge_density_real_space) const {
+        ChargeDensityTransformer::compact_rho_g_to_r(local_density_g_layout_,
+                                                     fft_pair_.fft_rho(),
+                                                     compact_density_g,
+                                                     charge_density_real_space);
+    }
+
+    /// This rank's compact G-space entries of a real-space density, without the pool reduction.
+    void rho_r_to_compact_g(const std::vector<Real>& charge_density_real_space,
+                            std::vector<Complex>& compact_density_g) const {
+        ChargeDensityTransformer::rho_r_to_compact_g(local_density_g_layout_,
+                                                     fft_pair_.fft_rho(),
+                                                     charge_density_real_space,
+                                                     compact_density_g);
     }
 
     // ─── Cutoffs ───────────────────────────────────────────────────
@@ -364,6 +469,7 @@ class PlanewaveBasis {
     PlanewaveFFTPair fft_pair_;
     GVectorsGrid g_vectors_;
     PlaneWaveTable plane_wave_table_;
+    LocalDensityGLayout local_density_g_layout_;
     int maximum_plane_waves_per_kpoint_{};
     bool is_gamma_only_{false};
     bool gamma_origin_is_local_{true};

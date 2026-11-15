@@ -264,6 +264,8 @@ class BroydenMixer : public ReciprocalSpaceMixer {
                     gram_matrix[history_column + history_row * actual_history] = dot;
                 }
             }
+            // One reduction for the whole matrix: each entry is so far this rank's part.
+            reduce_reciprocal_space_sums(gram_matrix);
 
             /**
              * No diagonal regularization: the Gram matrix is inverted as built, with no w0²
@@ -339,6 +341,7 @@ class BroydenMixer : public ReciprocalSpaceMixer {
                                                   preconditioned_residual,
                                                   number_of_spin_components);
             }
+            reduce_reciprocal_space_sums(projection);
 
             /**
              * Apply the Broyden update over the smooth G-vectors only. On a dual grid the
@@ -488,8 +491,9 @@ class BroydenMixer : public ReciprocalSpaceMixer {
     }
 
     /**
-     * ⟨scaled_a | raw_b⟩ in the mixing metric, given scaled_a is already
-     * metric-scaled (see build_metric_scaled_copy()). Reduces to a plain complex
+     * This rank's part of ⟨scaled_a | raw_b⟩ in the mixing metric, given scaled_a is
+     * already metric-scaled (see build_metric_scaled_copy()). The caller completes it with
+     * reduce_reciprocal_space_sums(), once per batch of products. Reduces to a plain complex
      * conjugate dot product per spin channel -- a BLAS Level-1-style operation
      * (q3_complex_conjugate_dot_product, same helper used by
      * layer_0_core/execution/serial.hpp) with no per-element weight lookup or

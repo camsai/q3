@@ -124,6 +124,20 @@ struct ProfilingCounters {
     DavidsonTimingAccumulator davidson_timing{};
 
     /**
+     * Named stage totals in milliseconds, filled by StageTimer. Ordered so the results file
+     * lists them the same way every run.
+     */
+    std::map<std::string, double> stage_time_ms;
+    /// How many times each stage ran, so a total can be read as calls times cost per call.
+    std::map<std::string, long long> stage_call_count;
+
+    /// Add one completed run of a named stage to its total and its call count.
+    void add_stage_time(const std::string& name, double milliseconds) {
+        stage_time_ms[name] += milliseconds;
+        stage_call_count[name]++;
+    }
+
+    /**
      * Take a resident-memory reading and keep it if it is the largest so far.
      *
      * Returns the sample so a caller that wants to log the current value does
@@ -236,6 +250,8 @@ struct ProfilingCounters {
         hamiltonian_application_count.store(0, std::memory_order_relaxed);
         peak_resident_bytes.store(0, std::memory_order_relaxed);
         davidson_timing.reset();
+        stage_time_ms.clear();
+        stage_call_count.clear();
     }
 
   private:

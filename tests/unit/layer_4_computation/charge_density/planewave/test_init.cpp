@@ -195,6 +195,34 @@ Real max_invariance_violation(const PlanewaveBasis& basis,
     return worst;
 }
 
+/**
+ * The group average written out directly, one G-vector at a time and every operation at once:
+ * rho_sym(G) = (1/N) sum_{S|t} rho(S G) exp(+2 pi i (S G) . t). It shares nothing with the
+ * symmetrizer's shells, coset representatives or translation mask, which is what makes it a
+ * reference for them.
+ */
+std::vector<Complex> direct_group_average(const PlanewaveBasis& basis,
+                                          const std::map<MillerIndices, int>& index_of,
+                                          const std::vector<SymmetryOperation>& operations,
+                                          const std::vector<Complex>& density) {
+    const auto& g_vectors = basis.g_vectors();
+    std::vector<Complex> averaged(density.size(), Complex(0.0, 0.0));
+    for (int g_vector_index = 0; g_vector_index < basis.number_of_g_vectors(); g_vector_index++) {
+        const auto& miller = g_vectors[g_vector_index].miller;
+        Complex sum(0.0, 0.0);
+        for (const auto& operation : operations) {
+            MillerIndices rotated = rotate(operation, {miller.x, miller.y, miller.z});
+            const auto& translation = operation.fractional_translation;
+            Real argument =
+                constants::two_pi * (rotated[0] * translation.x + rotated[1] * translation.y +
+                                     rotated[2] * translation.z);
+            sum += density[index_of.at(rotated)] * Complex(std::cos(argument), std::sin(argument));
+        }
+        averaged[g_vector_index] = sum / static_cast<Real>(operations.size());
+    }
+    return averaged;
+}
+
 Real max_difference(const std::vector<Complex>& first, const std::vector<Complex>& second) {
     Real worst = 0.0;
     for (std::size_t index = 0; index < first.size(); index++) {
@@ -283,6 +311,50 @@ TEST(PlanewaveChargeDensitySymmetrizer, SupercellKeepsThePureTranslations) {
 
     auto twice = symmetrized(symmetrizer, basis, once);
     EXPECT_LT(max_difference(twice, once), invariance_tolerance) << "not idempotent";
+}
+
+/**
+ * A supercell's 384 operations are 48 rotations times 8 pure translations, and the symmetrizer
+ * averages over one representative per rotation after masking out what the translations forbid
+ * -- 48 terms per shell rather than 384. That is only a cost saving if it is the same average:
+ * this compares it, component by component, with the 384-term sum taken directly.
+ */
+TEST(PlanewaveChargeDensitySymmetrizer, SupercellFactorizedAverageEqualsTheDirectGroupAverage) {
+    Crystal crystal = make_bond_centred_silicon_2x2x2();
+    PlanewaveBasis basis;
+    generate_basis(crystal, basis);
+    auto operations = SymmetryAnalyzer::get_symmetry_operations(crystal);
+    ASSERT_EQ(operations.size(), 384u);
+
+    PlanewaveChargeDensitySymmetrizer symmetrizer;
+    symmetrizer.build_shells(crystal, basis);
+    EXPECT_EQ(symmetrizer.number_of_symmetry_operations(), 384);
+    EXPECT_EQ(symmetrizer.number_of_averaging_operations(), 48)
+        << "one representative per rotation once the pure translations are factored out";
+
+    auto index_of = miller_index_map(basis);
+    auto density = hermitian_pseudo_random_density(basis, index_of, 19);
+    auto factorized = symmetrized(symmetrizer, basis, density);
+    auto direct = direct_group_average(basis, index_of, operations, density);
+    EXPECT_LT(max_difference(factorized, direct), invariance_tolerance);
+}
+
+TEST(PlanewaveChargeDensitySymmetrizer, PrimitiveCellAveragesDirectlyOverEveryOperation) {
+    Crystal crystal = make_bond_centred_silicon();
+    PlanewaveBasis basis;
+    generate_basis(crystal, basis);
+    auto operations = SymmetryAnalyzer::get_symmetry_operations(crystal);
+
+    PlanewaveChargeDensitySymmetrizer symmetrizer;
+    symmetrizer.build_shells(crystal, basis);
+    EXPECT_EQ(symmetrizer.number_of_averaging_operations(), 48)
+        << "a primitive cell has no pure translation but the identity";
+
+    auto index_of = miller_index_map(basis);
+    auto density = hermitian_pseudo_random_density(basis, index_of, 23);
+    EXPECT_LT(max_difference(symmetrized(symmetrizer, basis, density),
+                             direct_group_average(basis, index_of, operations, density)),
+              invariance_tolerance);
 }
 
 TEST(PlanewaveChargeDensitySymmetrizer, SupercellFoldsOntoThePrimitiveCell) {

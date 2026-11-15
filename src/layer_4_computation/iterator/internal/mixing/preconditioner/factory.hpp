@@ -36,6 +36,8 @@ struct PreconditionerEnvironment {
     std::function<void(const std::vector<Complex>&, std::vector<Real>&)> to_real_space;
     /// Sums real-space integrals over the ranks sharing this pool's grid.
     std::function<void(std::vector<Real>&)> global_reduce;
+    /// Completes G-space sums when each rank holds part of the G-vectors; see MixerEnvironment.
+    std::function<void(std::vector<Real>&)> reduce_reciprocal_space_sums;
 };
 
 namespace PreconditionerFactory {
@@ -56,12 +58,14 @@ inline std::unique_ptr<Preconditioner> create(const std::string& name,
             environment.g_squared, environment.q0_squared, environment.first_nonzero_g_index);
     }
     if (name == "local-tf") {
-        return std::make_unique<LocalThomasFermiPreconditioner>(environment.g_squared,
-                                                                environment.q0_squared,
-                                                                environment.first_nonzero_g_index,
-                                                                environment.to_reciprocal_space,
-                                                                environment.to_real_space,
-                                                                environment.global_reduce);
+        return std::make_unique<LocalThomasFermiPreconditioner>(
+            environment.g_squared,
+            environment.q0_squared,
+            environment.first_nonzero_g_index,
+            environment.to_reciprocal_space,
+            environment.to_real_space,
+            environment.global_reduce,
+            environment.reduce_reciprocal_space_sums);
     }
     throw std::runtime_error("Unknown mixing preconditioner: '" + name +
                              "'. Supported values: 'none', 'kerker', 'local-tf' "

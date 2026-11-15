@@ -42,16 +42,31 @@ class LocalPseudopotentialForceCalculator {
          */
         Real half_sphere_scale = planewave_basis_.is_gamma_only() ? 2.0 : 1.0;
 
-        for (int atom_index = 0; atom_index < crystal_structure_.number_of_atoms(); atom_index++) {
-            int species_index = crystal_structure_.species_type_index(atom_index);
-            Vector3D atomic_position =
+        /**
+         * Each rank sums over the density G-vectors of its own sticks and one reduction
+         * completes the forces: the same terms, split across the pool instead of repeated
+         * on every rank of it. Positions are converted once, and each phase is taken once.
+         */
+        const int number_of_atoms = crystal_structure_.number_of_atoms();
+        std::vector<Vector3D> atomic_positions(static_cast<std::size_t>(number_of_atoms));
+        for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+            atomic_positions[atom_index] =
                 crystal_structure_.convert_from_crystal_to_cartesian(atom_index);
+        }
+        const Real two_pi_over_lattice_parameter =
+            crystal_structure_.two_pi_over_lattice_parameter();
+        const Real cell_volume = crystal_structure_.cell_volume();
+        const LocalDensityGLayout& layout = planewave_basis_.local_density_g_layout();
 
-            for (int g_vector_index = first_nonzero_g_index;
-                 g_vector_index < planewave_basis_.number_of_g_vectors();
-                 g_vector_index++) {
-                const auto& g_vector = planewave_basis_.g_vectors()[g_vector_index];
-                Real phase = constants::two_pi * g_vector.g_cart.dot(atomic_position);
+        for (int entry = 0; entry < layout.size(); entry++) {
+            const int g_vector_index = layout.global_g_indices()[entry];
+            if (g_vector_index < first_nonzero_g_index) {
+                continue;
+            }
+            const auto& g_vector = planewave_basis_.g_vectors()[g_vector_index];
+            for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+                int species_index = crystal_structure_.species_type_index(atom_index);
+                Real phase = constants::two_pi * g_vector.g_cart.dot(atomic_positions[atom_index]);
                 /**
                  * F_{α,na} = Ω · G_α · Im[ V_loc(G) · ρ(G) · e^{+iGτ} ]  (full sphere)
                  * Full-sphere sum over both G and -G: the -G term contributes the same as G,
@@ -61,18 +76,17 @@ class LocalPseudopotentialForceCalculator {
                     pseudopotential_basis_.local_potential_g(species_index)[g_vector_index] *
                     charge_density_g[g_vector_index];
                 Complex exp_i_phase(std::cos(phase), std::sin(phase)); // e^{+iGτ}
+                Complex contribution = vloc_rho * exp_i_phase;
 
                 for (int direction = 0; direction < 3; direction++) {
                     Real g_cartesian_component =
-                        g_vector.g_cart[direction] *
-                        crystal_structure_.two_pi_over_lattice_parameter(); // G_α in a.u.
-                    Complex contribution = vloc_rho * exp_i_phase;
-                    forces[atom_index][direction] += half_sphere_scale *
-                                                     crystal_structure_.cell_volume() *
+                        g_vector.g_cart[direction] * two_pi_over_lattice_parameter; // G_α in a.u.
+                    forces[atom_index][direction] += half_sphere_scale * cell_volume *
                                                      g_cartesian_component * contribution.imag();
                 }
             }
         }
+        planewave_basis_.complete_density_g_sums(forces);
 
         return forces;
     }

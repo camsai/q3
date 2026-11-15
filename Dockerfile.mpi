@@ -140,6 +140,10 @@ COPY . /opt/q3-src
 RUN python3 -m venv /opt/q3-src/.venv \
     && /opt/q3-src/.venv/bin/pip install --no-cache-dir ".[build]"
 
+# The q3 Python package as a wheel for the runtime stage, as in Dockerfile.
+RUN /opt/q3-src/.venv/bin/pip wheel --no-deps --no-cache-dir -w /opt/q3-wheel /opt/q3-src \
+    && rm -rf /opt/q3-src/build /opt/q3-src/src/py/q3.egg-info
+
 # FFTW_ROOT is read by CMakeLists.txt's own hint list, which is how the
 # source-built FFTW is found ahead of anything else. find_package(MPI) picks
 # up the source-built MPICH from PATH.
@@ -205,8 +209,21 @@ COPY --from=builder /opt/fftw /opt/fftw
 # whatever base image the builder used.
 COPY --from=builder /opt/q3/bin/ /usr/local/bin/
 
-ENV PATH=/opt/mpich/bin:/usr/local/bin:$PATH \
+# The q3 Python package in its own venv, as in Dockerfile. The workflows start
+# the engine themselves; pass execution_policy= to run it under mpiexec.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /opt/q3-wheel/ /tmp/q3-wheel/
+RUN python3 -m venv /opt/q3-venv \
+    && /opt/q3-venv/bin/pip install --no-cache-dir /tmp/q3-wheel/*.whl \
+    && rm -rf /tmp/q3-wheel \
+    && /opt/q3-venv/bin/python -c "import q3.workflows"
+
+ENV PATH=/opt/q3-venv/bin:/opt/mpich/bin:/usr/local/bin:$PATH \
     LD_LIBRARY_PATH=/opt/mpich/lib:/opt/fftw/lib \
+    Q3_BINARY=/usr/local/bin/q3 \
     OMP_NUM_THREADS=1
 
 # A missing runtime library is a wrong copy above, and it must fail the build

@@ -64,6 +64,10 @@ source package for each version the image installs, at
 | GCC runtime libraries                                              | GPL-3.0-or-later WITH GCC-exception-3.1 | <https://gcc.gnu.org/>                  |
 | GNU C Library                                                      | LGPL-2.1-or-later                       | <https://www.gnu.org/software/libc/>    |
 | NVIDIA CUDA runtime libraries (`-cuda` image, from its base image) | NVIDIA CUDA Toolkit EULA (proprietary)  | <https://docs.nvidia.com/cuda/eula/>    |
+| mat3ra-code, mat3ra-esse, mat3ra-made (Python)                     | Apache-2.0                              | <https://github.com/mat3ra>             |
+| mat3ra-periodic-table, mat3ra-utils (Python)                       | Apache-2.0                              | <https://github.com/mat3ra>             |
+| ASE (Python)                                                       | LGPL-2.1-or-later                       | <https://pypi.org/project/ase/>         |
+| NumPy, SciPy, matplotlib, pydantic and their dependencies          | Per package, in each `*.dist-info`      | <https://pypi.org/>                     |
 | Ubuntu 24.04 base system                                           | Per package                             | <https://ubuntu.com/>                   |
 
 `CMakeLists.txt` pins the versions of the dependencies compiled into the binaries; the

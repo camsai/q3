@@ -171,22 +171,24 @@ class GradientCorrectedExchangeCorrelationPotentialCalculator
                                   std::vector<Real>& gradient_x,
                                   std::vector<Real>& gradient_y,
                                   std::vector<Real>& gradient_z) const {
-        int number_of_g_vectors = planewave_basis_.number_of_g_vectors();
+        // density_g is compact (this rank's G-vectors, in the basis' local layout).
+        const LocalDensityGLayout& layout = planewave_basis_.local_density_g_layout();
         Real two_pi_over_lattice_parameter = crystal_structure_.two_pi_over_lattice_parameter();
-        std::vector<Complex> gradient_gx(number_of_g_vectors);
-        std::vector<Complex> gradient_gy(number_of_g_vectors);
-        std::vector<Complex> gradient_gz(number_of_g_vectors);
-        for (int g_vector_index = 0; g_vector_index < number_of_g_vectors; ++g_vector_index) {
-            Complex imaginary_rho_g = Complex(0.0, 1.0) * density_g[g_vector_index];
+        std::vector<Complex> gradient_gx(static_cast<std::size_t>(layout.size()));
+        std::vector<Complex> gradient_gy(static_cast<std::size_t>(layout.size()));
+        std::vector<Complex> gradient_gz(static_cast<std::size_t>(layout.size()));
+        for (int entry = 0; entry < layout.size(); ++entry) {
+            Complex imaginary_rho_g = Complex(0.0, 1.0) * density_g[entry];
             Vector3D g_cartesian =
-                planewave_basis_.g_vectors()[g_vector_index].g_cart * two_pi_over_lattice_parameter;
-            gradient_gx[g_vector_index] = imaginary_rho_g * g_cartesian.x;
-            gradient_gy[g_vector_index] = imaginary_rho_g * g_cartesian.y;
-            gradient_gz[g_vector_index] = imaginary_rho_g * g_cartesian.z;
+                planewave_basis_.g_vectors()[layout.global_g_indices()[entry]].g_cart *
+                two_pi_over_lattice_parameter;
+            gradient_gx[entry] = imaginary_rho_g * g_cartesian.x;
+            gradient_gy[entry] = imaginary_rho_g * g_cartesian.y;
+            gradient_gz[entry] = imaginary_rho_g * g_cartesian.z;
         }
-        planewave_basis_.rho_g_to_r(gradient_gx, gradient_x);
-        planewave_basis_.rho_g_to_r(gradient_gy, gradient_y);
-        planewave_basis_.rho_g_to_r(gradient_gz, gradient_z);
+        planewave_basis_.rho_compact_g_to_r(gradient_gx, gradient_x);
+        planewave_basis_.rho_compact_g_to_r(gradient_gy, gradient_y);
+        planewave_basis_.rho_compact_g_to_r(gradient_gz, gradient_z);
     }
 
     /// Subtract the divergence of the gradient-correction vector field from the potential.
@@ -194,28 +196,29 @@ class GradientCorrectedExchangeCorrelationPotentialCalculator
                                       const std::vector<Real>& field_y,
                                       const std::vector<Real>& field_z,
                                       std::vector<Real>& potential) const {
-        int number_of_g_vectors = planewave_basis_.number_of_g_vectors();
+        // Forward, multiply by iG, back: every step is local to this rank's G-vectors.
+        const LocalDensityGLayout& layout = planewave_basis_.local_density_g_layout();
         int local_grid_points = planewave_basis_.fft_rho().local_grid_points();
         Real two_pi_over_lattice_parameter = crystal_structure_.two_pi_over_lattice_parameter();
 
         std::vector<Complex> field_gx;
         std::vector<Complex> field_gy;
         std::vector<Complex> field_gz;
-        planewave_basis_.rho_r_to_g(field_x, field_gx);
-        planewave_basis_.rho_r_to_g(field_y, field_gy);
-        planewave_basis_.rho_r_to_g(field_z, field_gz);
+        planewave_basis_.rho_r_to_compact_g(field_x, field_gx);
+        planewave_basis_.rho_r_to_compact_g(field_y, field_gy);
+        planewave_basis_.rho_r_to_compact_g(field_z, field_gz);
 
-        std::vector<Complex> divergence_g(number_of_g_vectors);
-        for (int g_vector_index = 0; g_vector_index < number_of_g_vectors; ++g_vector_index) {
+        std::vector<Complex> divergence_g(static_cast<std::size_t>(layout.size()));
+        for (int entry = 0; entry < layout.size(); ++entry) {
             Vector3D g_cartesian =
-                planewave_basis_.g_vectors()[g_vector_index].g_cart * two_pi_over_lattice_parameter;
-            divergence_g[g_vector_index] =
-                Complex(0.0, 1.0) * (g_cartesian.x * field_gx[g_vector_index] +
-                                     g_cartesian.y * field_gy[g_vector_index] +
-                                     g_cartesian.z * field_gz[g_vector_index]);
+                planewave_basis_.g_vectors()[layout.global_g_indices()[entry]].g_cart *
+                two_pi_over_lattice_parameter;
+            divergence_g[entry] = Complex(0.0, 1.0) * (g_cartesian.x * field_gx[entry] +
+                                                       g_cartesian.y * field_gy[entry] +
+                                                       g_cartesian.z * field_gz[entry]);
         }
         std::vector<Real> divergence_real;
-        planewave_basis_.rho_g_to_r(divergence_g, divergence_real);
+        planewave_basis_.rho_compact_g_to_r(divergence_g, divergence_real);
         for (int grid_index = 0; grid_index < local_grid_points; ++grid_index) {
             potential[grid_index] -= divergence_real[grid_index];
         }

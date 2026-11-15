@@ -113,30 +113,65 @@ class FFTGridSticks : public FFTGrid {
      * the communication plan and the FFTW plans to match.
      */
     void assign_sticks(const std::vector<int>& stick_weights) override {
+        assign_sticks(stick_weights, stick_weights);
+    }
+
+    /**
+     * Ownership follows `stick_weights`; `wavefunction_stick_weights` says which owned sticks
+     * can hold a wavefunction coefficient. Those are listed first on every rank, so the
+     * wavefunction transforms work on a prefix of each rank's sticks: one batched 1D plan over
+     * the prefix, and an all-to-all with the same displacements and smaller counts.
+     */
+    void assign_sticks(const std::vector<int>& stick_weights,
+                       const std::vector<int>& wavefunction_stick_weights) override {
         partition_.build(grid_dimension_1_, grid_dimension_2_, stick_weights, size_);
 
         /**
          * Every rank enumerates every rank's sticks in the same order, so the
-         * transpose can be unpacked without exchanging index lists.
+         * transpose can be unpacked without exchanging index lists: first the
+         * sticks a wavefunction can reach, then the rest.
          */
         sticks_by_rank_.assign(static_cast<std::size_t>(size_), {});
+        wavefunction_sticks_by_rank_.assign(static_cast<std::size_t>(size_), 0);
         stick_local_index_.assign(static_cast<std::size_t>(grid_dimension_1_) * grid_dimension_2_,
                                   -1);
-        for (int first = 0; first < grid_dimension_1_; ++first) {
-            for (int second = 0; second < grid_dimension_2_; ++second) {
-                int owner = partition_.owner_of(first, second);
-                if (owner == FFTStickPartition::unassigned) {
-                    continue;
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool listing_wavefunction_sticks = (pass == 0);
+            for (int first = 0; first < grid_dimension_1_; ++first) {
+                for (int second = 0; second < grid_dimension_2_; ++second) {
+                    int owner = partition_.owner_of(first, second);
+                    if (owner == FFTStickPartition::unassigned) {
+                        continue;
+                    }
+                    std::size_t stick =
+                        static_cast<std::size_t>(first) * grid_dimension_2_ + second;
+                    /**
+                     * A stick carries if it or its mirror does. A gamma-only basis lists half
+                     * the sphere, so only one stick of a mirror pair gets a count -- but the
+                     * transform writes conj(psi(G)) onto the other, so both must be moved.
+                     */
+                    std::size_t mirror =
+                        static_cast<std::size_t>((grid_dimension_1_ - first) % grid_dimension_1_) *
+                            grid_dimension_2_ +
+                        (grid_dimension_2_ - second) % grid_dimension_2_;
+                    bool carries_wavefunctions = wavefunction_stick_weights[stick] > 0 ||
+                                                 wavefunction_stick_weights[mirror] > 0;
+                    if (carries_wavefunctions != listing_wavefunction_sticks) {
+                        continue;
+                    }
+                    auto& list = sticks_by_rank_[static_cast<std::size_t>(owner)];
+                    if (owner == rank_) {
+                        stick_local_index_[stick] = static_cast<int>(list.size());
+                    }
+                    list.push_back(first * grid_dimension_2_ + second);
+                    if (listing_wavefunction_sticks) {
+                        wavefunction_sticks_by_rank_[static_cast<std::size_t>(owner)]++;
+                    }
                 }
-                auto& list = sticks_by_rank_[static_cast<std::size_t>(owner)];
-                if (owner == rank_) {
-                    stick_local_index_[static_cast<std::size_t>(first) * grid_dimension_2_ +
-                                       second] = static_cast<int>(list.size());
-                }
-                list.push_back(first * grid_dimension_2_ + second);
             }
         }
         local_sticks_ = static_cast<int>(sticks_by_rank_[static_cast<std::size_t>(rank_)].size());
+        local_wavefunction_sticks_ = wavefunction_sticks_by_rank_[static_cast<std::size_t>(rank_)];
         local_g_space_points_ = local_sticks_ * grid_dimension_3_;
 
         /**
@@ -154,6 +189,14 @@ class FFTGridSticks : public FFTGrid {
             recv_counts_[static_cast<std::size_t>(other)] =
                 static_cast<int>(sticks_by_rank_[static_cast<std::size_t>(other)].size()) *
                 local_planes_;
+        }
+        wavefunction_send_counts_.assign(static_cast<std::size_t>(size_), 0);
+        wavefunction_recv_counts_.assign(static_cast<std::size_t>(size_), 0);
+        for (int other = 0; other < size_; ++other) {
+            wavefunction_send_counts_[static_cast<std::size_t>(other)] =
+                local_wavefunction_sticks_ * plane_counts_[static_cast<std::size_t>(other)];
+            wavefunction_recv_counts_[static_cast<std::size_t>(other)] =
+                wavefunction_sticks_by_rank_[static_cast<std::size_t>(other)] * local_planes_;
         }
         for (int other = 1; other < size_; ++other) {
             send_displacements_[static_cast<std::size_t>(other)] =
@@ -180,7 +223,14 @@ class FFTGridSticks : public FFTGrid {
         transpose_buffer_.assign(std::max<std::size_t>(static_cast<std::size_t>(transpose_size), 1),
                                  Complex(0.0, 0.0));
 
-        create_plans();
+        /**
+         * Planned at the first transform, not here: init() lays out every stick and the
+         * basis reassigns them straight after, so planning eagerly measured each grid's
+         * plans twice -- the first set never used. FFTW_MEASURE times real transforms, on
+         * every rank at once, which made planning a second of setup on a full node.
+         */
+        destroy_plans();
+        plans_current_ = false;
     }
 
     [[nodiscard]] int grid_dimension_1() const override {
@@ -293,6 +343,57 @@ class FFTGridSticks : public FFTGrid {
     /// The forward transform consumes the plane buffer directly.
     void prepare_forward_from_output() const override {}
 
+    // ─── Wavefunction transforms: the sticks a wavefunction can reach ──
+
+    /// Inverse transform of the stick buffer, moving only the wavefunction sticks.
+    void execute_wavefunction_inverse_on_slot(int /*slot*/) const override {
+        sticks_to_planes(stick_buffer_.data(), plane_buffer_.data(), true);
+    }
+
+    /// Only the wavefunction sticks are computed, so only they are copied to the output.
+    void execute_wavefunction_forward_on_slot(int /*slot*/) const override {
+        planes_to_sticks(plane_buffer_.data(), stick_buffer_.data(), true);
+        std::memcpy(plane_buffer_.data(),
+                    stick_buffer_.data(),
+                    static_cast<std::size_t>(local_wavefunction_sticks_) * grid_dimension_3_ *
+                        sizeof(Complex));
+    }
+
+    /// Slot form of wavefunction_inverse_raw; this grid has one buffer set.
+    void wavefunction_inverse_raw_on_slot(Complex* data, int /*slot*/) const override {
+        wavefunction_inverse_raw(data);
+    }
+
+    /// Inverse transform of stick-layout data to local planes, over the wavefunction sticks.
+    void wavefunction_inverse_raw(Complex* data) const override {
+        std::memcpy(stick_buffer_.data(),
+                    data,
+                    static_cast<std::size_t>(local_wavefunction_sticks_) * grid_dimension_3_ *
+                        sizeof(Complex));
+        sticks_to_planes(stick_buffer_.data(), plane_buffer_.data(), true);
+        std::memcpy(data, plane_buffer_.data(), local_grid_points_ * sizeof(Complex));
+    }
+
+    /// Forward transform of local planes to sticks, filling only the wavefunction sticks.
+    void wavefunction_forward(Complex* data) const override {
+        std::memcpy(plane_buffer_.data(), data, local_grid_points_ * sizeof(Complex));
+        planes_to_sticks(plane_buffer_.data(), stick_buffer_.data(), true);
+        std::memcpy(data,
+                    stick_buffer_.data(),
+                    static_cast<std::size_t>(local_wavefunction_sticks_) * grid_dimension_3_ *
+                        sizeof(Complex));
+    }
+
+    /// Cap FFTW's plan search for this grid's plans; applied when the plans are next made.
+    void limit_planning_time(double seconds_per_plan) override {
+        planning_seconds_per_plan_ = seconds_per_plan;
+    }
+
+    /// Sticks on this rank that can hold a wavefunction coefficient; they come first.
+    [[nodiscard]] int local_wavefunction_sticks() const {
+        return local_wavefunction_sticks_;
+    }
+
     // ─── Pointer forms ─────────────────────────────────────────────────
 
     void forward(Complex* data) const override {
@@ -329,9 +430,17 @@ class FFTGridSticks : public FFTGrid {
      * each destination, its plane range of every local stick, which is a
      * contiguous run of the stick.
      */
-    void sticks_to_planes(Complex* sticks, Complex* planes) const {
-        if (local_sticks_ > 0) {
-            fftw_execute_dft(plan_sticks_inverse_,
+    void sticks_to_planes(Complex* sticks, Complex* planes, bool wavefunction_only = false) const {
+        ensure_plans();
+        // A wavefunction is zero off its sticks: they are a prefix, transformed and sent alone.
+        const int sticks_to_send = wavefunction_only ? local_wavefunction_sticks_ : local_sticks_;
+        const std::vector<int>& send_counts =
+            wavefunction_only ? wavefunction_send_counts_ : send_counts_;
+        const std::vector<int>& recv_counts =
+            wavefunction_only ? wavefunction_recv_counts_ : recv_counts_;
+        if (sticks_to_send > 0) {
+            fftw_execute_dft(wavefunction_only ? plan_wavefunction_sticks_inverse_
+                                               : plan_sticks_inverse_,
                              reinterpret_cast<fftw_complex*>(sticks),
                              reinterpret_cast<fftw_complex*>(sticks));
         }
@@ -341,7 +450,7 @@ class FFTGridSticks : public FFTGrid {
             int plane_start = plane_offsets_[static_cast<std::size_t>(other)];
             int plane_count = plane_counts_[static_cast<std::size_t>(other)];
             Complex* destination = send + send_displacements_[static_cast<std::size_t>(other)];
-            for (int stick = 0; stick < local_sticks_; ++stick) {
+            for (int stick = 0; stick < sticks_to_send; ++stick) {
                 std::memcpy(destination + static_cast<std::size_t>(stick) * plane_count,
                             sticks + static_cast<std::size_t>(stick) * grid_dimension_3_ +
                                 plane_start,
@@ -353,11 +462,11 @@ class FFTGridSticks : public FFTGrid {
         receive.resize(std::max<std::size_t>(
             static_cast<std::size_t>(recv_displacements_.back() + recv_counts_.back()), 1));
         MPI_Alltoallv(send,
-                      send_counts_.data(),
+                      send_counts.data(),
                       send_displacements_.data(),
                       MPI_C_DOUBLE_COMPLEX,
                       receive.data(),
-                      recv_counts_.data(),
+                      recv_counts.data(),
                       recv_displacements_.data(),
                       MPI_C_DOUBLE_COMPLEX,
                       communicator_);
@@ -372,7 +481,12 @@ class FFTGridSticks : public FFTGrid {
             const auto& their_sticks = sticks_by_rank_[static_cast<std::size_t>(other)];
             const Complex* source =
                 receive.data() + recv_displacements_[static_cast<std::size_t>(other)];
-            for (std::size_t stick = 0; stick < their_sticks.size(); ++stick) {
+            const std::size_t their_count =
+                wavefunction_only
+                    ? static_cast<std::size_t>(
+                          wavefunction_sticks_by_rank_[static_cast<std::size_t>(other)])
+                    : their_sticks.size();
+            for (std::size_t stick = 0; stick < their_count; ++stick) {
                 int position = their_sticks[stick]; // first * dimension_2 + second
                 for (int plane = 0; plane < local_planes_; ++plane) {
                     planes[static_cast<std::size_t>(plane) * plane_stride + position] =
@@ -389,7 +503,15 @@ class FFTGridSticks : public FFTGrid {
     }
 
     /// Planes to sticks: the same three steps, reversed.
-    void planes_to_sticks(Complex* planes, Complex* sticks) const {
+    void planes_to_sticks(Complex* planes, Complex* sticks, bool wavefunction_only = false) const {
+        ensure_plans();
+        // Only the wavefunction sticks are wanted back: they are packed, sent and transformed.
+        const int sticks_to_receive =
+            wavefunction_only ? local_wavefunction_sticks_ : local_sticks_;
+        const std::vector<int>& send_counts =
+            wavefunction_only ? wavefunction_send_counts_ : send_counts_;
+        const std::vector<int>& recv_counts =
+            wavefunction_only ? wavefunction_recv_counts_ : recv_counts_;
         if (local_planes_ > 0) {
             fftw_execute_dft(plan_planes_forward_,
                              reinterpret_cast<fftw_complex*>(planes),
@@ -409,7 +531,12 @@ class FFTGridSticks : public FFTGrid {
             const auto& their_sticks = sticks_by_rank_[static_cast<std::size_t>(other)];
             Complex* destination =
                 send.data() + recv_displacements_[static_cast<std::size_t>(other)];
-            for (std::size_t stick = 0; stick < their_sticks.size(); ++stick) {
+            const std::size_t their_count =
+                wavefunction_only
+                    ? static_cast<std::size_t>(
+                          wavefunction_sticks_by_rank_[static_cast<std::size_t>(other)])
+                    : their_sticks.size();
+            for (std::size_t stick = 0; stick < their_count; ++stick) {
                 int position = their_sticks[stick];
                 for (int plane = 0; plane < local_planes_; ++plane) {
                     destination[stick * static_cast<std::size_t>(local_planes_) + plane] =
@@ -420,11 +547,11 @@ class FFTGridSticks : public FFTGrid {
 
         Complex* receive = transpose_buffer_.data();
         MPI_Alltoallv(send.data(),
-                      recv_counts_.data(),
+                      recv_counts.data(),
                       recv_displacements_.data(),
                       MPI_C_DOUBLE_COMPLEX,
                       receive,
-                      send_counts_.data(),
+                      send_counts.data(),
                       send_displacements_.data(),
                       MPI_C_DOUBLE_COMPLEX,
                       communicator_);
@@ -433,7 +560,7 @@ class FFTGridSticks : public FFTGrid {
             int plane_start = plane_offsets_[static_cast<std::size_t>(other)];
             int plane_count = plane_counts_[static_cast<std::size_t>(other)];
             const Complex* source = receive + send_displacements_[static_cast<std::size_t>(other)];
-            for (int stick = 0; stick < local_sticks_; ++stick) {
+            for (int stick = 0; stick < sticks_to_receive; ++stick) {
                 std::memcpy(sticks + static_cast<std::size_t>(stick) * grid_dimension_3_ +
                                 plane_start,
                             source + static_cast<std::size_t>(stick) * plane_count,
@@ -441,8 +568,9 @@ class FFTGridSticks : public FFTGrid {
             }
         }
 
-        if (local_sticks_ > 0) {
-            fftw_execute_dft(plan_sticks_forward_,
+        if (sticks_to_receive > 0) {
+            fftw_execute_dft(wavefunction_only ? plan_wavefunction_sticks_forward_
+                                               : plan_sticks_forward_,
                              reinterpret_cast<fftw_complex*>(sticks),
                              reinterpret_cast<fftw_complex*>(sticks));
         }
@@ -450,14 +578,42 @@ class FFTGridSticks : public FFTGrid {
 
     // ─── Plans ─────────────────────────────────────────────────────────
 
-    void create_plans() {
+    /**
+     * Plan on first use. FFTW_MEASURE overwrites the arrays it plans on, and by now a caller
+     * may have written its input into them (input_buffer() is the stick buffer), so their
+     * contents are saved and put back. Plans are made on these same arrays because they are
+     * the ones every transform executes on.
+     */
+    void ensure_plans() const {
+        if (plans_current_) {
+            return;
+        }
+        const std::vector<Complex> saved_sticks = stick_buffer_;
+        const std::vector<Complex> saved_planes = plane_buffer_;
+        create_plans();
+        stick_buffer_ = saved_sticks;
+        plane_buffer_ = saved_planes;
+        plans_current_ = true;
+    }
+
+    void create_plans() const {
         destroy_plans();
         unsigned flags = use_measured_planning_ ? FFTW_MEASURE : FFTW_ESTIMATE;
         /**
-         * FFTW_MEASURE would overwrite the buffers while planning, so plan on
-         * the buffers we own before any data is placed in them -- which is the
-         * case here, since assign_sticks() reallocates them just above.
+         * Measured planning is capped where it does not pay. The full-stick plans serve
+         * density transforms -- a few per iteration even on the wavefunction grid -- and are
+         * the costliest to measure, every stick in one batch: capped on every grid. The plane
+         * and wavefunction-stick plans carry every band transform, so they keep the exhaustive
+         * search unless the grid was told otherwise (limit_planning_time()). Measured on a full
+         * 128-rank node, the uncapped full-stick plans were most of a second of setup, and
+         * capping the band plans as well cost more in the solver than it saved.
          */
+        auto cap_planning = [this](double seconds_per_plan) {
+            if (use_measured_planning_) {
+                fftw_set_timelimit(seconds_per_plan > 0.0 ? seconds_per_plan : FFTW_NO_TIMELIMIT);
+            }
+        };
+        cap_planning(full_stick_planning_seconds_per_plan);
         if (local_sticks_ > 0) {
             int length = grid_dimension_3_;
             auto* buffer = reinterpret_cast<fftw_complex*>(stick_buffer_.data());
@@ -487,6 +643,28 @@ class FFTGridSticks : public FFTGrid {
                                                       length,
                                                       FFTW_BACKWARD,
                                                       flags);
+        }
+        cap_planning(planning_seconds_per_plan_);
+        if (local_wavefunction_sticks_ > 0) {
+            int length = grid_dimension_3_;
+            auto* buffer = reinterpret_cast<fftw_complex*>(stick_buffer_.data());
+            for (int direction : {FFTW_FORWARD, FFTW_BACKWARD}) {
+                fftw_plan plan = fftw_plan_many_dft(1,
+                                                    &length,
+                                                    local_wavefunction_sticks_,
+                                                    buffer,
+                                                    nullptr,
+                                                    1,
+                                                    length,
+                                                    buffer,
+                                                    nullptr,
+                                                    1,
+                                                    length,
+                                                    direction,
+                                                    flags);
+                (direction == FFTW_FORWARD ? plan_wavefunction_sticks_forward_
+                                           : plan_wavefunction_sticks_inverse_) = plan;
+            }
         }
         if (local_planes_ > 0) {
             int lengths[2] = {grid_dimension_1_, grid_dimension_2_};
@@ -519,11 +697,14 @@ class FFTGridSticks : public FFTGrid {
                                                       FFTW_BACKWARD,
                                                       flags);
         }
+        fftw_set_timelimit(FFTW_NO_TIMELIMIT);
     }
 
-    void destroy_plans() {
+    void destroy_plans() const {
         for (fftw_plan* plan : {&plan_sticks_forward_,
                                 &plan_sticks_inverse_,
+                                &plan_wavefunction_sticks_forward_,
+                                &plan_wavefunction_sticks_inverse_,
                                 &plan_planes_forward_,
                                 &plan_planes_inverse_}) {
             if (*plan != nullptr) {
@@ -551,21 +732,33 @@ class FFTGridSticks : public FFTGrid {
 
     FFTStickPartition partition_;
     std::vector<std::vector<int>> sticks_by_rank_;
+    /// How many of each rank's sticks, the leading ones, can hold a wavefunction coefficient.
+    std::vector<int> wavefunction_sticks_by_rank_;
     std::vector<int> stick_local_index_;
     int local_sticks_ = 0;
+    int local_wavefunction_sticks_ = 0;
     int local_g_space_points_ = 0;
 
     std::vector<int> send_counts_, recv_counts_, send_displacements_, recv_displacements_;
+    std::vector<int> wavefunction_send_counts_, wavefunction_recv_counts_;
 
     mutable std::vector<Complex> stick_buffer_;
     mutable std::vector<Complex> plane_buffer_;
     mutable std::vector<Complex> transpose_buffer_;
     mutable std::vector<Complex> receive_buffer_;
 
-    fftw_plan plan_sticks_forward_ = nullptr;
-    fftw_plan plan_sticks_inverse_ = nullptr;
-    fftw_plan plan_planes_forward_ = nullptr;
-    fftw_plan plan_planes_inverse_ = nullptr;
+    /// Planner time cap per measured band-transform plan, or 0 for none; see limit_planning_time().
+    double planning_seconds_per_plan_ = 0.0;
+    /// Planner time cap per full-stick plan; see create_plans().
+    static constexpr double full_stick_planning_seconds_per_plan = 0.02;
+    // Made lazily by ensure_plans(), hence mutable.
+    mutable bool plans_current_ = false;
+    mutable fftw_plan plan_sticks_forward_ = nullptr;
+    mutable fftw_plan plan_sticks_inverse_ = nullptr;
+    mutable fftw_plan plan_wavefunction_sticks_forward_ = nullptr;
+    mutable fftw_plan plan_wavefunction_sticks_inverse_ = nullptr;
+    mutable fftw_plan plan_planes_forward_ = nullptr;
+    mutable fftw_plan plan_planes_inverse_ = nullptr;
 };
 
 } // namespace q3

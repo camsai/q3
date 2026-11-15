@@ -65,11 +65,25 @@ class EwaldForceCalculator {
         std::vector<Vector3D> forces(crystal_structure_.number_of_atoms(), {0.0, 0.0, 0.0});
         int first_nonzero_g_index = planewave_basis_.first_nonzero_g_index();
 
-        // G-space sum
-        for (int g_vector_index = first_nonzero_g_index;
-             g_vector_index < planewave_basis_.number_of_g_vectors();
-             g_vector_index++) {
-            Real g_vector_squared = planewave_basis_.g_vectors()[g_vector_index].magnitude_squared *
+        // G-space sum, over this rank's density G-vectors; completed across the pool below.
+        const int number_of_atoms = crystal_structure_.number_of_atoms();
+        std::vector<Vector3D> atomic_positions(static_cast<std::size_t>(number_of_atoms));
+        std::vector<Real> valence_charges(static_cast<std::size_t>(number_of_atoms));
+        for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+            atomic_positions[atom_index] =
+                crystal_structure_.convert_from_crystal_to_cartesian(atom_index);
+            valence_charges[atom_index] = crystal_structure_.valence_charge(
+                crystal_structure_.species_type_index(atom_index));
+        }
+        std::vector<Complex> structure_factors(static_cast<std::size_t>(number_of_atoms));
+        const LocalDensityGLayout& layout = planewave_basis_.local_density_g_layout();
+        for (int entry = 0; entry < layout.size(); entry++) {
+            const int g_vector_index = layout.global_g_indices()[entry];
+            if (g_vector_index < first_nonzero_g_index) {
+                continue;
+            }
+            const auto& g_vector = planewave_basis_.g_vectors()[g_vector_index];
+            Real g_vector_squared = g_vector.magnitude_squared *
                                     crystal_structure_.two_pi_over_lattice_parameter_squared();
             /**
              * factor = 2 · exp(-G²/4α) / G², doubled again on a half sphere.
@@ -92,32 +106,22 @@ class EwaldForceCalculator {
             Real factor = std::exp(-g_vector_squared / alpha / 4.0) / g_vector_squared * 2.0 *
                           half_sphere_scale;
 
+            // Each atom's phase once: it enters S(G) and that atom's own term below.
             Complex valence_charge_density_g(0.0, 0.0);
-            for (int atom_index = 0; atom_index < crystal_structure_.number_of_atoms();
-                 atom_index++) {
-                Vector3D atomic_position =
-                    crystal_structure_.convert_from_crystal_to_cartesian(atom_index);
-                Real phase = two_pi * planewave_basis_.g_vectors()[g_vector_index].g_cart.dot(
-                                          atomic_position);
-                valence_charge_density_g += crystal_structure_.valence_charge(
-                                                crystal_structure_.species_type_index(atom_index)) *
-                                            compute_phase_factor(phase);
+            for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+                Real phase = two_pi * g_vector.g_cart.dot(atomic_positions[atom_index]);
+                structure_factors[atom_index] = compute_phase_factor(phase);
+                valence_charge_density_g +=
+                    valence_charges[atom_index] * structure_factors[atom_index];
             }
 
-            for (int atom_index = 0; atom_index < crystal_structure_.number_of_atoms();
-                 atom_index++) {
-                Vector3D atomic_position =
-                    crystal_structure_.convert_from_crystal_to_cartesian(atom_index);
-                Real phase = two_pi * planewave_basis_.g_vectors()[g_vector_index].g_cart.dot(
-                                          atomic_position);
-                Complex structure_factor_i = compute_phase_factor(phase);
-                Real valence_charge_i = crystal_structure_.valence_charge(
-                    crystal_structure_.species_type_index(atom_index));
+            for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+                const Complex& structure_factor_i = structure_factors[atom_index];
+                Real valence_charge_i = valence_charges[atom_index];
 
                 for (int direction = 0; direction < 3; direction++) {
-                    Real g_cartesian_component =
-                        planewave_basis_.g_vectors()[g_vector_index].g_cart[direction] *
-                        crystal_structure_.two_pi_over_lattice_parameter();
+                    Real g_cartesian_component = g_vector.g_cart[direction] *
+                                                 crystal_structure_.two_pi_over_lattice_parameter();
                     Real force_prefactor = valence_charge_i * factor * g_cartesian_component;
                     Complex complex_product =
                         valence_charge_density_g * std::conj(structure_factor_i);
@@ -133,6 +137,7 @@ class EwaldForceCalculator {
                 }
             }
         }
+        planewave_basis_.complete_density_g_sums(forces);
 
         // R-space sum
         Real rmax_bohr = 4.0 / std::sqrt(alpha);

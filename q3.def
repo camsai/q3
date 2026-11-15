@@ -41,7 +41,8 @@ From: ghcr.io/camsai/q3:latest
         apptainer exec q3.sif q3_utility convert <save-directory> --format berkeleygw
 
 %environment
-    export PATH=/usr/local/bin:$PATH
+    export PATH=/opt/q3-venv/bin:/usr/local/bin:$PATH
+    export Q3_BINARY=${Q3_BINARY:-/usr/local/bin/q3}
     export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
 
 %runscript
@@ -49,3 +50,4 @@ From: ghcr.io/camsai/q3:latest
 
 %test
     test -x /usr/local/bin/q3
+    /opt/q3-venv/bin/python -c "import q3.workflows"

@@ -20,6 +20,7 @@
 #include "layer_0_core/execution/init.hpp"
 #include "layer_0_core/math/tolerances.hpp"
 #include "layer_0_core/profiling/counters.hpp"
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_0_core/types/matrix.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
@@ -330,6 +331,18 @@ class KohnShamSCFIterator : public SCFIterator {
          * residual, corrupting its history and causing ~30 extra iterations.
          */
 
+        {
+            auto& counters = ProfilingCounters::instance();
+            counters.add_stage_time(
+                "setup.representation",
+                std::chrono::duration<double, std::milli>(timer_repr - timer_start).count());
+            counters.add_stage_time(
+                "setup.charge_density_and_mixer",
+                std::chrono::duration<double, std::milli>(timer_charge - timer_repr).count());
+            counters.add_stage_time(
+                "setup.single_particle_states",
+                std::chrono::duration<double, std::milli>(timer_wfc - timer_charge).count());
+        }
         log::debug("     Init timing breakdown:");
         log::debug("       representation:      {:.1f} ms",
                    std::chrono::duration<double, std::milli>(timer_repr - timer_start).count());
@@ -432,6 +445,20 @@ class KohnShamSCFIterator : public SCFIterator {
         auto timer_residual_end = std::chrono::high_resolution_clock::now();
 
         auto log_iteration_timing = [&](auto timer_mix_end, auto timer_potential_end) {
+            auto& counters = ProfilingCounters::instance();
+            auto record = [&](const char* stage, auto begin, auto end) {
+                counters.add_stage_time(
+                    stage, std::chrono::duration<double, std::milli>(end - begin).count());
+            };
+            record("scf.prepare_hamiltonian", timer_iter_start, timer_prep_end);
+            record("scf.solve_states", timer_prep_end, timer_solve_end);
+            record("scf.update_occupations", timer_solve_end, timer_occupations_end);
+            record("scf.construct_density", timer_occupations_end, timer_density_end);
+            record("scf.symmetrize_density", timer_density_end, timer_symm_end);
+            record("scf.double_counting_and_residual", timer_symm_end, timer_residual_end);
+            record("scf.mix_density", timer_residual_end, timer_mix_end);
+            record("scf.update_potential", timer_mix_end, timer_potential_end);
+            record("scf.iteration", timer_iter_start, timer_potential_end);
             log::debug("     Iteration timing breakdown:");
             log::debug("       prepare_hamiltonian: {:.1f} ms",
                        std::chrono::duration<double, std::milli>(timer_prep_end - timer_iter_start)
@@ -477,7 +504,10 @@ class KohnShamSCFIterator : public SCFIterator {
         }
 
         // 5. Mix density to get next input density
-        mix_density(mixing_input_density);
+        {
+            StageTimer stage_timer("scf.mix_density_call");
+            mix_density(mixing_input_density);
+        }
 
         synchronize_smooth_density_from_mixed();
         auto timer_mix_end = std::chrono::high_resolution_clock::now();

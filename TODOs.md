@@ -615,17 +615,20 @@ subspace path. Remaining work:
         nonlocal stress from 3.0 to 1.4 s; the stress tensor agrees with the whole-cell
         version to 5e-11 kbar on displaced norm-conserving, ultrasoft and PAW silicon and on
         spin-polarized iron. Shared-pool runs still skip the stress.
--   [ ] **[S]** **Stop transporting empty sticks** — every stick is owned today because two
-        consumers read the whole grid box rather than the cutoff sphere: the dense-to-smooth
+-   [ ] **[S]** **Stop transporting empty sticks in density transforms** — band transforms
+        already skip every stick a wavefunction cannot reach (see FUNCTIONALITY.md §2,
+        "Wavefunction-only stick transforms"). Density transforms still move the whole grid
+        box, because two consumers read it rather than the cutoff sphere: the dense-to-smooth
         potential copy in `planewave_potential_utils.hpp` and the smooth-to-dense density
-        transfer in the accumulator. Make those two loops sphere-only, then let
-        `stick_weights_for_grid` leave out-of-sphere sticks at weight zero. Roughly halves
-        the all-to-all volume.
+        transfer in the accumulator. Make those two loops sphere-only, then let density
+        transforms skip out-of-sphere sticks too.
 -   [ ] **[M]** **Distribute the density G-vector list** — `PlanewaveBasis::g_vectors_` is
-        the full density sphere on every rank whatever the grid does, and Ewald, the local
-        potential, the mixer history and the G-vector table loop over it. About twenty
-        consumer sites, each needing its own reduction. Small in bytes next to the solver,
-        but it is the last replicated term that scales with the cell.
+        still the full density sphere on every rank. The loops over it that cost time
+        already take a rank's own share (`LocalDensityGLayout`; FUNCTIONALITY.md §2, "Density work
+        split within a pool"); what remains replicated is the list itself, the stored
+        density and potential in G-space, and the full-vector all-reduce in
+        `ChargeDensityTransformer::rho_r_to_g` that keeps them whole. Small in bytes next to
+        the solver, but it is the last replicated term that scales with the cell.
 -   [ ] **[S]** **Shrink what is left of the wavefunction-initialization spike** — the
         atomic-orbital start still holds four arrays of `max(natwfc, nbnd) x npw` at once
         (the identity-overlap copy is gone), and the orbitals are built into a vector of

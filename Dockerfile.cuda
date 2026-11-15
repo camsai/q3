@@ -71,6 +71,10 @@ COPY . /opt/q3-src
 RUN python3 -m venv /opt/q3-src/.venv \
     && /opt/q3-src/.venv/bin/pip install --no-cache-dir ".[build]"
 
+# The q3 Python package as a wheel for the runtime stage, as in Dockerfile.
+RUN /opt/q3-src/.venv/bin/pip wheel --no-deps --no-cache-dir -w /opt/q3-wheel /opt/q3-src \
+    && rm -rf /opt/q3-src/build /opt/q3-src/src/py/q3.egg-info
+
 # One engine binary ships: the CUDA build, installed as q3 with q3_gpu_cuda as a
 # symlink to it, so the image is invoked like every other one (#316). The
 # serial reference the CPU/GPU parity check compares against is the plain
@@ -138,7 +142,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # whatever base image the builder used.
 COPY --from=builder /opt/q3/bin/ /usr/local/bin/
 
-ENV PATH=/usr/local/bin:$PATH \
+# The q3 Python package in its own venv, as in Dockerfile.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /opt/q3-wheel/ /tmp/q3-wheel/
+RUN python3 -m venv /opt/q3-venv \
+    && /opt/q3-venv/bin/pip install --no-cache-dir /tmp/q3-wheel/*.whl \
+    && rm -rf /tmp/q3-wheel \
+    && /opt/q3-venv/bin/python -c "import q3.workflows"
+
+ENV PATH=/opt/q3-venv/bin:/usr/local/bin:$PATH \
+    Q3_BINARY=/usr/local/bin/q3 \
     OMP_NUM_THREADS=1
 
 RUN if ldd /usr/local/bin/* | grep 'not found'; then exit 1; fi \

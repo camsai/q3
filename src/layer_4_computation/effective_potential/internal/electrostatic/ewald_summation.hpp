@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <complex>
+#include <vector>
 
 #include "io/logger.hpp"
 #include "layer_0_core/math/phase_factor.hpp"
@@ -21,7 +22,6 @@ namespace q3 {
 inline Real compute_ewald(const Crystal& crystal_structure, const PlanewaveBasis& planewave_basis) {
     using namespace constants;
     int number_of_atoms = crystal_structure.number_of_atoms();
-    int number_of_g_vectors = planewave_basis.number_of_g_vectors();
     Real two_pi_over_lattice_parameter_squared =
         crystal_structure.two_pi_over_lattice_parameter_squared();
     Real cell_volume = crystal_structure.cell_volume();
@@ -57,19 +57,35 @@ inline Real compute_ewald(const Crystal& crystal_structure, const PlanewaveBasis
         ewald_g_space_sum = -charge * charge / alpha / 4.0;
     }
 
-    for (int g_index = first_nonzero_g_index; g_index < number_of_g_vectors; g_index++) {
-        Complex charge_density_coefficient(0.0, 0.0);
-        for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
-            Vector3D atomic_position =
-                crystal_structure.convert_from_crystal_to_cartesian(atom_index);
-            const auto& g_vector = planewave_basis.g_vectors()[g_index];
-            Real phase_angle = two_pi * g_vector.g_cart.dot(atomic_position);
-            charge_density_coefficient +=
-                crystal_structure.valence_charge(crystal_structure.species_type_index(atom_index)) *
-                compute_phase_factor(phase_angle);
+    // Positions and charges once, not once per G-vector: same values, same order of terms.
+    std::vector<Vector3D> atomic_positions(static_cast<std::size_t>(number_of_atoms));
+    std::vector<Real> atomic_charges(static_cast<std::size_t>(number_of_atoms));
+    for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+        atomic_positions[atom_index] =
+            crystal_structure.convert_from_crystal_to_cartesian(atom_index);
+        atomic_charges[atom_index] =
+            crystal_structure.valence_charge(crystal_structure.species_type_index(atom_index));
+    }
+
+    /**
+     * Over this rank's density G-vectors, completed across the pool: the terms are those
+     * every rank used to sum in full, now each taken once.
+     */
+    Real local_g_space_sum = 0.0;
+    const LocalDensityGLayout& layout = planewave_basis.local_density_g_layout();
+    for (int entry = 0; entry < layout.size(); entry++) {
+        const int g_index = layout.global_g_indices()[entry];
+        if (g_index < first_nonzero_g_index) {
+            continue;
         }
-        Real g_squared = planewave_basis.g_vectors()[g_index].magnitude_squared *
-                         two_pi_over_lattice_parameter_squared;
+        Complex charge_density_coefficient(0.0, 0.0);
+        const auto& g_vector = planewave_basis.g_vectors()[g_index];
+        for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+            Real phase_angle = two_pi * g_vector.g_cart.dot(atomic_positions[atom_index]);
+            charge_density_coefficient +=
+                atomic_charges[atom_index] * compute_phase_factor(phase_angle);
+        }
+        Real g_squared = g_vector.magnitude_squared * two_pi_over_lattice_parameter_squared;
         Real term =
             std::norm(charge_density_coefficient) * std::exp(-g_squared / alpha / 4.0) / g_squared;
         /**
@@ -79,8 +95,11 @@ inline Real compute_ewald(const Crystal& crystal_structure, const PlanewaveBasis
         if (planewave_basis.is_gamma_only()) {
             term *= 2.0;
         }
-        ewald_g_space_sum += term;
+        local_g_space_sum += term;
     }
+    std::vector<Real> partial_sum{local_g_space_sum};
+    planewave_basis.complete_density_g_sums(partial_sum);
+    ewald_g_space_sum += partial_sum[0];
     ewald_g_space_sum = 2.0 * two_pi / cell_volume * ewald_g_space_sum;
 
     // Self-energy correction

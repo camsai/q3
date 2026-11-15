@@ -261,3 +261,146 @@ TEST(FFTGridSticks, UnweightedSticksAreDroppedAndTheRestUntouched) {
     }
     EXPECT_LT(worst, 1e-12);
 }
+
+// ─── Wavefunction transforms ────────────────────────────────────────────────
+
+/**
+ * A wavefunction occupies only the sticks inside its cutoff sphere, and the wavefunction
+ * transforms move and transform only those. For a field that lives on them, the inverse
+ * must give the full inverse's real-space result, and the forward must give the full
+ * forward's coefficients on those sticks -- which is all a Hamiltonian application reads.
+ * Every stick stays owned, so the layout is the full transform's.
+ */
+TEST(FFTGridSticks, WavefunctionTransformsMatchTheFullOnesOnWavefunctionSticks) {
+    const int d1 = 12, d2 = 10, d3 = 9;
+    const int radius = 3; // sticks with |i1|, |i2| <= radius (wrapped) carry the wavefunction
+    auto signed_index = [](int index, int dimension) {
+        return index <= dimension / 2 ? index : index - dimension;
+    };
+    std::vector<int> ownership(static_cast<std::size_t>(d1 * d2), 1);
+    std::vector<int> wavefunction(static_cast<std::size_t>(d1 * d2), 0);
+    for (int i1 = 0; i1 < d1; ++i1) {
+        for (int i2 = 0; i2 < d2; ++i2) {
+            if (std::abs(signed_index(i1, d1)) <= radius &&
+                std::abs(signed_index(i2, d2)) <= radius) {
+                wavefunction[static_cast<std::size_t>(i1 * d2 + i2)] = d3;
+            }
+        }
+    }
+    FFTGridSticks grid(MPI_COMM_WORLD);
+    grid.init(d1, d2, d3);
+    grid.assign_sticks(ownership, wavefunction);
+    EXPECT_GT(grid.local_sticks(), 0);
+
+    auto on_wavefunction_sticks = [&](int i1, int i2) {
+        return wavefunction[static_cast<std::size_t>(i1 * d2 + i2)] > 0;
+    };
+    std::vector<Complex> coefficients(
+        static_cast<std::size_t>(std::max(grid.local_g_space_points(), grid.local_grid_points())),
+        Complex(0.0, 0.0));
+    for (int i1 = 0; i1 < d1; ++i1) {
+        for (int i2 = 0; i2 < d2; ++i2) {
+            for (int i3 = 0; i3 < d3; ++i3) {
+                int index = grid.g_vector_to_fft_grid_index(i1, i2, i3);
+                if (index >= 0 && on_wavefunction_sticks(i1, i2)) {
+                    coefficients[static_cast<std::size_t>(index)] = sample(i1, i2, i3);
+                }
+            }
+        }
+    }
+
+    std::vector<Complex> full = coefficients;
+    std::vector<Complex> reduced = coefficients;
+    grid.inverse_raw(full.data());
+    grid.wavefunction_inverse_raw(reduced.data());
+    double worst_inverse = 0.0;
+    for (int index = 0; index < grid.local_grid_points(); ++index) {
+        worst_inverse = std::max(worst_inverse,
+                                 std::abs(full[static_cast<std::size_t>(index)] -
+                                          reduced[static_cast<std::size_t>(index)]));
+    }
+    EXPECT_LT(worst_inverse, 1e-12);
+
+    // A real-space product, then back: compare on the wavefunction sticks only.
+    for (int index = 0; index < grid.local_grid_points(); ++index) {
+        full[static_cast<std::size_t>(index)] *= 0.5 + 0.01 * (index % 7);
+    }
+    reduced = full;
+    grid.forward(full.data());
+    grid.wavefunction_forward(reduced.data());
+    double worst_forward = 0.0;
+    int compared = 0;
+    for (int i1 = 0; i1 < d1; ++i1) {
+        for (int i2 = 0; i2 < d2; ++i2) {
+            if (!on_wavefunction_sticks(i1, i2)) {
+                continue;
+            }
+            for (int i3 = 0; i3 < d3; ++i3) {
+                int index = grid.g_vector_to_fft_grid_index(i1, i2, i3);
+                if (index < 0) {
+                    continue;
+                }
+                worst_forward = std::max(worst_forward,
+                                         std::abs(full[static_cast<std::size_t>(index)] -
+                                                  reduced[static_cast<std::size_t>(index)]));
+                compared++;
+            }
+        }
+    }
+    (void)compared; // a rank may own none of the wavefunction sticks
+    EXPECT_LT(worst_forward, 1e-10);
+}
+
+/**
+ * A gamma-only basis lists half the sphere, so the wavefunction weights count only one stick
+ * of each mirror pair -- while the gamma transform writes conj(psi(G)) onto the other. The
+ * mirror must be moved too: weighting only the half with i1 > 0 (and i1 = 0, i2 >= 0), a field
+ * on the whole symmetric disc must still transform exactly as the full transform does.
+ */
+TEST(FFTGridSticks, WavefunctionSticksIncludeTheMirrorsOfAHalfSphere) {
+    const int d1 = 10, d2 = 8, d3 = 6;
+    const int radius = 2;
+    auto signed_index = [](int index, int dimension) {
+        return index <= dimension / 2 ? index : index - dimension;
+    };
+    std::vector<int> ownership(static_cast<std::size_t>(d1 * d2), 1);
+    std::vector<int> half_weights(static_cast<std::size_t>(d1 * d2), 0);
+    auto inside = [&](int i1, int i2) {
+        return std::abs(signed_index(i1, d1)) <= radius && std::abs(signed_index(i2, d2)) <= radius;
+    };
+    for (int i1 = 0; i1 < d1; ++i1) {
+        for (int i2 = 0; i2 < d2; ++i2) {
+            int s1 = signed_index(i1, d1), s2 = signed_index(i2, d2);
+            bool upper_half = s1 > 0 || (s1 == 0 && s2 >= 0);
+            if (inside(i1, i2) && upper_half) {
+                half_weights[static_cast<std::size_t>(i1 * d2 + i2)] = d3;
+            }
+        }
+    }
+    FFTGridSticks grid(MPI_COMM_WORLD);
+    grid.init(d1, d2, d3);
+    grid.assign_sticks(ownership, half_weights);
+
+    std::vector<Complex> coefficients(
+        static_cast<std::size_t>(std::max(grid.local_g_space_points(), grid.local_grid_points())),
+        Complex(0.0, 0.0));
+    for (int i1 = 0; i1 < d1; ++i1)
+        for (int i2 = 0; i2 < d2; ++i2)
+            for (int i3 = 0; i3 < d3; ++i3) {
+                int index = grid.g_vector_to_fft_grid_index(i1, i2, i3);
+                if (index >= 0 && inside(i1, i2)) {
+                    coefficients[static_cast<std::size_t>(index)] = sample(i1, i2, i3);
+                }
+            }
+    std::vector<Complex> full = coefficients;
+    std::vector<Complex> reduced = coefficients;
+    grid.inverse_raw(full.data());
+    grid.wavefunction_inverse_raw(reduced.data());
+    double worst = 0.0;
+    for (int index = 0; index < grid.local_grid_points(); ++index) {
+        worst = std::max(worst,
+                         std::abs(full[static_cast<std::size_t>(index)] -
+                                  reduced[static_cast<std::size_t>(index)]));
+    }
+    EXPECT_LT(worst, 1e-12);
+}

@@ -125,6 +125,11 @@ class SelfConsistentFieldFlavor : public Flavor {
                 static_cast<double>(counters.davidson_iteration_count.load());
             timings["hamiltonian_applications"] =
                 static_cast<double>(counters.hamiltonian_application_count.load());
+            for (const auto& [stage, milliseconds] : counters.stage_time_ms) {
+                timings[stage] = milliseconds;
+                timings[stage + ".calls"] =
+                    static_cast<double>(counters.stage_call_count.at(stage));
+            }
             if (!timings.empty()) {
                 results.runtime_log.timings_ms = timings;
             }

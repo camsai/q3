@@ -662,6 +662,64 @@ runs with it excluded.
 
 ## Resolved
 
+### A shared k-point pool stopped scaling past 32 ranks on a supercell (resolved 2026-11-14)
+
+**Affected:** every run whose ranks share a k-point pool (`--pools` smaller than the rank
+count), most of all supercells, whose symmetry group carries pure translations. Measured
+on 64-atom silicon, 2x2x2 k-points, one 128-core Perlmutter CPU node: wall time stopped
+falling at 64 ranks and rose at 128.
+
+Six things, each harmless at a few ranks, grew with the cell or did not shrink with the
+ranks:
+
+-   **Supercell density symmetrization averaged over every space-group operation.** The 64-atom
+    cell has 1536 of them, 48 rotations times 32 pure translations, and the averaging kept a
+    per-G, per-operation index map: 2.45 GiB per rank, about 12 s of setup and 0.9 s per
+    iteration. The pure translations only zero the G-vectors they forbid, so the same projector
+    is a translation mask followed by an average over one representative per rotation.
+-   **Every rank of a pool repeated the whole density-space work.** Each forward density
+    transform ended in an all-reduce of the full 396,599-vector density (6.3 MB), and the mixer,
+    the Hartree and gradient-correction steps, the residual, Ewald, the local-potential and
+    core-charge structure factors, the starting density and the force sums then looped over
+    every G-vector on every rank.
+-   **The Ewald energy was recomputed on every potential update.** Its "not computed yet" test
+    was `ewald_energy < threshold`, true for every negative energy.
+-   **Band transforms moved every stick of the wavefunction grid**, 9216, of which about 20% can
+    hold a wavefunction coefficient.
+-   **FFT plans were measured twice** per grid, and the density grid's exhaustive planning cost
+    seconds at high rank counts for transforms that run a few dozen times.
+-   **The dense-to-smooth potential copy was a full-box round trip** (FFT, 14 MB all-reduce,
+    inverse FFT) on every update, although the two grids coincide.
+
+| Ranks | Wall before (s) | Wall after (s) |
+| ----: | --------------: | -------------: |
+|     8 |             150 |             98 |
+|    16 |              92 |             53 |
+|    32 |              77 |             34 |
+|    64 |            66.5 |           24.1 |
+|   128 |            71.2 |           25.2 |
+
+At 128 ranks, mixing fell from 2.4 s to 0.1 s, the potential update from 7.3 s to 0.9 s,
+forces from 3.7 s to 0.5 s, and a Hamiltonian band transform from 2.32 ms to 0.82 ms. The
+total energy, -541.596421439 Ry, is unchanged to every printed digit.
+
+**Fix.** The supercell average uses the translation mask and the coset representatives,
+falling back to the full group when the cosets are not all the same size.
+`LocalDensityGLayout` lists the G-vectors on a rank's own sticks; the density-space steps
+above work on that compact list and complete their sums with one pool reduction. The Ewald
+test compares the magnitude. Sticks that carry a wavefunction coefficient, or whose mirror
+does (so a gamma-only half sphere keeps both halves), are numbered first, and band
+transforms move only those. Plans are made on first use; the density grid and the
+full-stick plans cap FFTW's search at 20 ms per plan, while band-transform plans keep the
+exhaustive search. The potential copy is skipped when the grids coincide. Each setup and
+SCF stage is now timed in `runtime_log.timings_ms`, with a `.calls` count beside it.
+
+New unit tests check the factorized average against the direct average over all 384
+operations of a 2x2x2 cell, the wavefunction-only transforms against the full ones, the
+mirror sticks of a half sphere, the compact layout and the stage timer. The shared-pool
+gamma-only MPI validation tests failed (energies off by 1e-5 to 4.6e-3 Ry) on a first
+version that numbered only one stick of each mirror pair; they pass now.
+
 ### The BerkeleyGW export's Vxc included the core charge, and ParaBands had no inputs (resolved 2026-10-24)
 
 **Affected:** `vxc.dat` from any `mean_field_export: berkeleygw` run whose datasets carry a

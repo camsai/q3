@@ -67,6 +67,14 @@ COPY . /opt/q3-src
 RUN python3 -m venv /opt/q3-src/.venv \
     && /opt/q3-src/.venv/bin/pip install --no-cache-dir ".[build]"
 
+# The q3 Python package (src/py/q3: the band-structure, DOS, PDOS, phonon, ...
+# workflows) as a wheel for the runtime stage. Pure Python, so no compiler is
+# involved; --no-deps because the runtime stage resolves the dependencies
+# itself, into its own venv. setuptools stages the wheel in build/, the
+# directory cmake configures below, so its leftovers are removed here.
+RUN /opt/q3-src/.venv/bin/pip wheel --no-deps --no-cache-dir -w /opt/q3-wheel /opt/q3-src \
+    && rm -rf /opt/q3-src/build /opt/q3-src/src/py/q3.egg-info
+
 # The commit this image was built from, stamped into q3 --version and every
 # results.json. .dockerignore drops .git/ from the build context (see there),
 # so the SHA has to be handed in; an empty value is the honest default and
@@ -137,7 +145,20 @@ COPY --from=builder /opt/q3/bin/ /usr/local/bin/
 RUN if ldd /usr/local/bin/* | grep 'not found'; then exit 1; fi \
     && q3 --version > /dev/null
 
-ENV PATH=/usr/local/bin:$PATH \
+# Include the q3 Python package in its own venv, and add it to the PATH.
+# The import check makes sure the package is correctly installed and imported.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /opt/q3-wheel/ /tmp/q3-wheel/
+RUN python3 -m venv /opt/q3-venv \
+    && /opt/q3-venv/bin/pip install --no-cache-dir /tmp/q3-wheel/*.whl \
+    && rm -rf /tmp/q3-wheel \
+    && /opt/q3-venv/bin/python -c "import q3.workflows"
+
+ENV PATH=/opt/q3-venv/bin:/usr/local/bin:$PATH \
+    Q3_BINARY=/usr/local/bin/q3 \
     OMP_NUM_THREADS=1
 
 # The notices and license texts (THIRD_PARTY_NOTICES.md says what is where),

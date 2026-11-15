@@ -26,6 +26,18 @@
  * shifted mesh invariant, so the supercell converged to the unsymmetrized-mesh
  * density and sat 1.4e-4 Ry above eight primitive cells (camsai/q3#6).
  *
+ * The average is taken in two exact steps, because a supercell's group is mostly
+ * translations: 64-atom diamond silicon has 1536 operations, 48 rotations times 32
+ * pure translations of the primitive lattice. The pure translations form a normal
+ * subgroup T, and every operation is one rotation's representative {R|t_R}
+ * followed by an element of T. Averaging over T multiplies rho(G) by
+ * (1/|T|) sum_tau exp(2 pi i G.tau), which is exactly 1 or exactly 0, and the
+ * rotations map the surviving sublattice onto itself; the full average is
+ * therefore that mask followed by the average over the 48 representatives. Doing
+ * it that way is the same projector at 1/|T| of the cost: the per-shell map holds
+ * 48 entries per G-vector instead of 1536 (2.4 GB per rank at 396,599 G-vectors),
+ * and an iteration evaluates 48 phases per shell instead of 1536.
+ *
  * A G-vector that every rotation leaves in place is a shell of its own, and
  * for it the average is a multiplication: by the mean of the operations'
  * fractional-translation phases, exp(2 pi i G.t). Those phases form a
@@ -43,10 +55,12 @@
  * degenerate at K, A, L and H came out split by meV (camsai/q3#24).
  */
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <complex>
 #include <cstdint>
+#include <numeric>
 #include <unordered_map>
 #include <vector>
 
@@ -79,6 +93,8 @@ class PlanewaveChargeDensitySymmetrizer {
             symmetry_initialized_ = false;
             return;
         }
+        choose_coset_representatives();
+        const int number_of_averaging_operations = static_cast<int>(averaging_operations_.size());
 
         int number_of_g_vectors = planewave_basis.number_of_g_vectors();
         const auto& g_vectors = planewave_basis.g_vectors();
@@ -114,9 +130,11 @@ class PlanewaveChargeDensitySymmetrizer {
             const auto& miller = g_vectors[g_vector_index].miller;
             std::array<int, 3> miller_indices = {miller.x, miller.y, miller.z};
 
-            for (int operation_index = 0; operation_index < number_of_symmetry_operations;
+            // The orbit under the rotations is the orbit under the whole group: T moves no G.
+            for (int operation_index = 0; operation_index < number_of_averaging_operations;
                  operation_index++) {
-                std::array<int, 3> rotated = rotate_miller_indices(operation_index, miller_indices);
+                std::array<int, 3> rotated =
+                    rotate_miller_indices(averaging_operations_[operation_index], miller_indices);
                 int64_t key = miller_to_key(rotated[0], rotated[1], rotated[2]);
                 auto it = miller_index_map.find(key);
                 if (it == miller_index_map.end()) {
@@ -124,22 +142,15 @@ class PlanewaveChargeDensitySymmetrizer {
                 }
                 int rotated_index = it->second;
                 if (assigned[rotated_index]) {
-                    continue;
+                    continue; // already a member: assigned is set on insertion
                 }
-                bool already_in_shell = false;
-                for (int existing_index : shell.g_vector_indices) {
-                    if (existing_index == rotated_index) {
-                        already_in_shell = true;
-                        break;
-                    }
-                }
-                if (!already_in_shell) {
-                    shell.g_vector_indices.push_back(rotated_index);
-                    assigned[rotated_index] = true;
-                }
+                shell.g_vector_indices.push_back(rotated_index);
+                assigned[rotated_index] = true;
             }
 
             if (!shell.g_vector_indices.empty()) {
+                shell.forbidden_by_pure_translations =
+                    is_forbidden_by_pure_translations(miller_indices);
                 build_rotated_member_indices(g_vectors, shell);
                 symmetry_shells_.push_back(std::move(shell));
             }
@@ -183,21 +194,7 @@ class PlanewaveChargeDensitySymmetrizer {
             return;
         }
 
-        int number_of_symmetry_operations = static_cast<int>(symmetry_operations_.size());
-
-        std::vector<bool> is_non_symmorphic(number_of_symmetry_operations, false);
-        for (int operation_index = 0; operation_index < number_of_symmetry_operations;
-             operation_index++) {
-            const auto& fractional_translation =
-                symmetry_operations_[operation_index].fractional_translation;
-            is_non_symmorphic[operation_index] =
-                (std::abs(fractional_translation.x) >
-                     math::tolerances::zero_vector_magnitude_threshold ||
-                 std::abs(fractional_translation.y) >
-                     math::tolerances::zero_vector_magnitude_threshold ||
-                 std::abs(fractional_translation.z) >
-                     math::tolerances::zero_vector_magnitude_threshold);
-        }
+        const std::vector<bool> is_non_symmorphic = averaging_operation_is_non_symmorphic();
 
         for (const auto& shell : symmetry_shells_) {
             if (static_cast<int>(shell.g_vector_indices.size()) <= 1) {
@@ -226,27 +223,13 @@ class PlanewaveChargeDensitySymmetrizer {
             return;
         }
 
-        int number_of_symmetry_operations = static_cast<int>(symmetry_operations_.size());
-
         std::vector<std::vector<Complex>> charge_density_g_components(number_of_spin_components);
         for (int spin_index = 0; spin_index < number_of_spin_components; spin_index++) {
             planewave_basis.rho_r_to_g(charge_density_real[spin_index],
                                        charge_density_g_components[spin_index]);
         }
 
-        std::vector<bool> is_non_symmorphic(number_of_symmetry_operations, false);
-        for (int operation_index = 0; operation_index < number_of_symmetry_operations;
-             operation_index++) {
-            const auto& fractional_translation =
-                symmetry_operations_[operation_index].fractional_translation;
-            is_non_symmorphic[operation_index] =
-                (std::abs(fractional_translation.x) >
-                     math::tolerances::zero_vector_magnitude_threshold ||
-                 std::abs(fractional_translation.y) >
-                     math::tolerances::zero_vector_magnitude_threshold ||
-                 std::abs(fractional_translation.z) >
-                     math::tolerances::zero_vector_magnitude_threshold);
-        }
+        const std::vector<bool> is_non_symmorphic = averaging_operation_is_non_symmorphic();
 
         for (const auto& shell : symmetry_shells_) {
             if (static_cast<int>(shell.g_vector_indices.size()) <= 1) {
@@ -276,6 +259,14 @@ class PlanewaveChargeDensitySymmetrizer {
     [[nodiscard]] int number_of_symmetry_operations() const {
         return static_cast<int>(symmetry_operations_.size());
     }
+    /**
+     * Operations the per-shell average runs over: one per rotation, the pure translations
+     * having been folded into a mask. Equal to number_of_symmetry_operations() for a
+     * primitive cell.
+     */
+    [[nodiscard]] int number_of_averaging_operations() const {
+        return static_cast<int>(averaging_operations_.size());
+    }
     /// G-vectors whose component a screw axis or glide forbids; zero unless the group is polar.
     [[nodiscard]] int number_of_systematically_absent_g_vectors() const {
         return static_cast<int>(systematically_absent_g_vector_indices_.size());
@@ -298,8 +289,19 @@ class PlanewaveChargeDensitySymmetrizer {
          * have changed.
          */
         std::vector<std::vector<int>> rotated_member_indices;
+
+        /**
+         * Whether the average over the pure translations is zero here. It is a property of
+         * the shell, not of one member: the rotations map the lattice the translations
+         * leave alone onto itself.
+         */
+        bool forbidden_by_pure_translations{false};
     };
     std::vector<SymmetryOperation> symmetry_operations_;
+    /// Index into symmetry_operations_ of each rotation's representative.
+    std::vector<int> averaging_operations_;
+    /// The fractional translations of the operations whose rotation is the identity.
+    std::vector<Vector3D> pure_translations_;
     std::vector<SymmetryShell> symmetry_shells_;
     /// One-member shells whose translation phases cancel; zeroed after every average.
     std::vector<int> systematically_absent_g_vector_indices_;
@@ -334,6 +336,82 @@ class PlanewaveChargeDensitySymmetrizer {
             fixing_operations++;
         }
         return fixing_operations > 0 && std::abs(phase_sum) < 0.5 * fixing_operations;
+    }
+
+    /**
+     * One operation per distinct rotation, and the pure translations.
+     *
+     * Operations sharing a rotation differ by a pure translation, so they form one coset of T,
+     * and any member stands for the coset. If the cosets are not all the size of T the list is
+     * not the group this factorization assumes, and every operation is averaged over directly.
+     */
+    void choose_coset_representatives() {
+        averaging_operations_.clear();
+        pure_translations_.clear();
+        const std::array<std::array<int, 3>, 3> identity{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
+        std::vector<std::array<std::array<int, 3>, 3>> rotations;
+        std::vector<int> coset_sizes;
+        for (int operation_index = 0;
+             operation_index < static_cast<int>(symmetry_operations_.size());
+             operation_index++) {
+            const auto& operation = symmetry_operations_[operation_index];
+            if (operation.reciprocal_rotation == identity) {
+                pure_translations_.push_back(operation.fractional_translation);
+            }
+            auto found =
+                std::find(rotations.begin(), rotations.end(), operation.reciprocal_rotation);
+            if (found == rotations.end()) {
+                rotations.push_back(operation.reciprocal_rotation);
+                averaging_operations_.push_back(operation_index);
+                coset_sizes.push_back(1);
+            } else {
+                coset_sizes[found - rotations.begin()]++;
+            }
+        }
+        const int translation_count = static_cast<int>(pure_translations_.size());
+        const bool factorizes = translation_count >= 1 &&
+                                std::all_of(coset_sizes.begin(), coset_sizes.end(), [&](int size) {
+                                    return size == translation_count;
+                                });
+        if (!factorizes) {
+            log::warn("     Density symmetrization: the operations do not split into cosets of "
+                      "the pure translations; averaging over all {} directly",
+                      symmetry_operations_.size());
+            averaging_operations_.resize(symmetry_operations_.size());
+            std::iota(averaging_operations_.begin(), averaging_operations_.end(), 0);
+            pure_translations_.assign(1, Vector3D{0.0, 0.0, 0.0});
+        }
+    }
+
+    /**
+     * Whether the average of exp(2 pi i G.tau) over the pure translations is zero. The phases
+     * are a character of T, so the mean is exactly 1 or exactly 0, and it is compared against
+     * the midpoint.
+     */
+    [[nodiscard]] bool is_forbidden_by_pure_translations(const std::array<int, 3>& miller) const {
+        Complex phase_sum(0.0, 0.0);
+        for (const auto& translation : pure_translations_) {
+            Real argument =
+                constants::two_pi *
+                (miller[0] * translation.x + miller[1] * translation.y + miller[2] * translation.z);
+            phase_sum += Complex(std::cos(argument), std::sin(argument));
+        }
+        return std::abs(phase_sum) < 0.5 * static_cast<Real>(pure_translations_.size());
+    }
+
+    [[nodiscard]] std::vector<bool> averaging_operation_is_non_symmorphic() const {
+        std::vector<bool> is_non_symmorphic(averaging_operations_.size(), false);
+        for (std::size_t index = 0; index < averaging_operations_.size(); index++) {
+            const auto& fractional_translation =
+                symmetry_operations_[averaging_operations_[index]].fractional_translation;
+            is_non_symmorphic[index] = (std::abs(fractional_translation.x) >
+                                            math::tolerances::zero_vector_magnitude_threshold ||
+                                        std::abs(fractional_translation.y) >
+                                            math::tolerances::zero_vector_magnitude_threshold ||
+                                        std::abs(fractional_translation.z) >
+                                            math::tolerances::zero_vector_magnitude_threshold);
+        }
+        return is_non_symmorphic;
     }
 
     void zero_systematically_absent_components(
@@ -373,7 +451,7 @@ class PlanewaveChargeDensitySymmetrizer {
     void build_rotated_member_indices(const std::vector<GVector>& g_vectors,
                                       SymmetryShell& shell) const {
         const int shell_size = static_cast<int>(shell.g_vector_indices.size());
-        const int number_of_symmetry_operations = static_cast<int>(symmetry_operations_.size());
+        const int number_of_averaging_operations = static_cast<int>(averaging_operations_.size());
 
         std::vector<std::array<int, 3>> shell_miller_indices(shell_size);
         for (int member_index = 0; member_index < shell_size; member_index++) {
@@ -381,17 +459,28 @@ class PlanewaveChargeDensitySymmetrizer {
             shell_miller_indices[member_index] = {miller.x, miller.y, miller.z};
         }
 
-        shell.rotated_member_indices.assign(shell_size,
-                                            std::vector<int>(number_of_symmetry_operations, -1));
+        /**
+         * Only members the average starts from need a row: the first member's orbit is the
+         * whole shell, so symmetrize_shell marks every member done from it. Rows for the
+         * others stay empty unless the basis cuts an orbit (a rotated vector missing), which a
+         * sphere never does but a row-per-member map would cost shell_size times the memory.
+         */
+        shell.rotated_member_indices.assign(shell_size, {});
+        std::vector<bool> reached(shell_size, false);
         for (int member_index = 0; member_index < shell_size; member_index++) {
-            for (int operation_index = 0; operation_index < number_of_symmetry_operations;
+            if (reached[member_index]) {
+                continue;
+            }
+            auto& row = shell.rotated_member_indices[member_index];
+            row.assign(number_of_averaging_operations, -1);
+            for (int operation_index = 0; operation_index < number_of_averaging_operations;
                  operation_index++) {
-                const std::array<int, 3> rotated =
-                    rotate_miller_indices(operation_index, shell_miller_indices[member_index]);
+                const std::array<int, 3> rotated = rotate_miller_indices(
+                    averaging_operations_[operation_index], shell_miller_indices[member_index]);
                 for (int candidate_index = 0; candidate_index < shell_size; candidate_index++) {
                     if (rotated == shell_miller_indices[candidate_index]) {
-                        shell.rotated_member_indices[member_index][operation_index] =
-                            candidate_index;
+                        row[operation_index] = candidate_index;
+                        reached[candidate_index] = true;
                         break;
                     }
                 }
@@ -405,9 +494,18 @@ class PlanewaveChargeDensitySymmetrizer {
                           const std::vector<bool>& is_non_symmorphic,
                           std::vector<std::vector<Complex>>& charge_density_g_components) const {
         const auto& g_vectors = planewave_basis.g_vectors();
-        int number_of_symmetry_operations = static_cast<int>(symmetry_operations_.size());
+        int number_of_averaging_operations = static_cast<int>(averaging_operations_.size());
         int number_of_components = number_of_spin_components;
         int shell_size = static_cast<int>(shell.g_vector_indices.size());
+
+        if (shell.forbidden_by_pure_translations) {
+            for (int spin_index = 0; spin_index < number_of_components; spin_index++) {
+                for (int g_vector_index : shell.g_vector_indices) {
+                    charge_density_g_components[spin_index][g_vector_index] = Complex(0.0, 0.0);
+                }
+            }
+            return;
+        }
 
         std::vector<bool> done(shell_size, false);
 
@@ -420,7 +518,7 @@ class PlanewaveChargeDensitySymmetrizer {
             const std::vector<int>& rotated_shell_indices =
                 shell.rotated_member_indices[shell_member_index];
 
-            for (int operation_index = 0; operation_index < number_of_symmetry_operations;
+            for (int operation_index = 0; operation_index < number_of_averaging_operations;
                  operation_index++) {
                 if (rotated_shell_indices[operation_index] < 0) {
                     continue;
@@ -442,7 +540,8 @@ class PlanewaveChargeDensitySymmetrizer {
                      */
                     const auto& source_miller = g_vectors[source_global_index].miller;
                     const auto& fractional_translation =
-                        symmetry_operations_[operation_index].fractional_translation;
+                        symmetry_operations_[averaging_operations_[operation_index]]
+                            .fractional_translation;
                     Real argument =
                         constants::two_pi * (source_miller.x * fractional_translation.x +
                                              source_miller.y * fractional_translation.y +
@@ -462,10 +561,10 @@ class PlanewaveChargeDensitySymmetrizer {
             }
 
             for (int spin_index = 0; spin_index < number_of_components; spin_index++) {
-                averaged_density[spin_index] /= number_of_symmetry_operations;
+                averaged_density[spin_index] /= number_of_averaging_operations;
             }
 
-            for (int operation_index = 0; operation_index < number_of_symmetry_operations;
+            for (int operation_index = 0; operation_index < number_of_averaging_operations;
                  operation_index++) {
                 if (rotated_shell_indices[operation_index] < 0) {
                     continue;
@@ -481,7 +580,8 @@ class PlanewaveChargeDensitySymmetrizer {
                      */
                     const auto& target_miller = g_vectors[target_global_index].miller;
                     const auto& fractional_translation =
-                        symmetry_operations_[operation_index].fractional_translation;
+                        symmetry_operations_[averaging_operations_[operation_index]]
+                            .fractional_translation;
                     Real argument =
                         constants::two_pi * (target_miller.x * fractional_translation.x +
                                              target_miller.y * fractional_translation.y +

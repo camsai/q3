@@ -790,6 +790,7 @@ if(Q3_BUILD_TESTS)
         tests/unit/layer_0_core/math/test_tolerances.cpp
         tests/unit/layer_0_core/execution/test_threading.cpp
         tests/unit/layer_0_core/profiling/test_counters.cpp
+        tests/unit/layer_0_core/profiling/test_stage_timer.cpp
         tests/unit/layer_0_core/profiling/test_memory.cpp
         tests/unit/layer_0_core/test_points_grid.cpp
         tests/unit/layer_0_core/test_version.cpp
@@ -850,6 +851,7 @@ if(Q3_BUILD_TESTS)
         tests/unit/layer_3_representation/basis/planewave/pseudopotential/test_factory.cpp
         tests/unit/layer_3_representation/basis/planewave/pseudopotential/ultrasoft/test_init.cpp
         tests/unit/layer_3_representation/basis/planewave/internal/transform/test_charge_density_transformer.cpp
+        tests/unit/layer_3_representation/basis/planewave/internal/transform/test_local_density_g_layout.cpp
         tests/unit/layer_3_representation/basis/planewave/internal/transform/test_wavefunction_transformer.cpp
         # layer_4_computation
         tests/unit/layer_4_computation/diagonalizer/planewave/test_factory.cpp

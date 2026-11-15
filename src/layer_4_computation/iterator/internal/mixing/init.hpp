@@ -40,6 +40,13 @@ struct MixerEnvironment {
     bool is_gamma_only = false;
     int number_of_smooth_g_vectors = 0; // For dual-grid mixing (QE-style)
     std::function<void(std::vector<Real>&)> global_reduce;
+    /**
+     * Completes sums over G-vectors when the vectors a reciprocal-space mixer is handed hold
+     * only this rank's share of them -- the G-vectors on its own FFT sticks, which is all the
+     * transforms above produce and consume. Each element of the argument is a partial sum;
+     * on return it is the whole one. Empty, or a no-op, when every rank holds every G-vector.
+     */
+    std::function<void(std::vector<Real>&)> reduce_reciprocal_space_sums;
 };
 
 /// Abstract base class for all charge density mixers.

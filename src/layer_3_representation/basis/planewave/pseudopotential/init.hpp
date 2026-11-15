@@ -21,10 +21,13 @@
 #include <memory>
 #include <vector>
 
+#include <optional>
+
 #include "layer_0_core/math/interpolation/lagrange.hpp"
 #include "layer_0_core/math/spherical/harmonics.hpp"
 #include "layer_0_core/math/tolerances.hpp"
 #include "layer_0_core/math/transform/spherical_bessel.hpp"
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_0_core/types/matrix.hpp"
 
 #include "layer_3_representation/basis/planewave/init.hpp"
@@ -70,9 +73,11 @@ class NormConservingPlanewaveBasis {
          * Step 2: Tabulate beta functions on a uniform q-grid, with the table
          * implementation chosen by what the datasets carry (see the factory).
          */
+        std::optional<StageTimer> table_timer(std::in_place, "setup.pseudopotential.beta_table");
         beta_function_table_ = create_beta_function_table(pseudopotential_set_);
         beta_function_table_->initialize(
             planewave_basis, pseudopotential_set_, number_of_species_types);
+        table_timer.emplace("setup.pseudopotential.local_and_core_tables");
 
         // Step 3: Tabulate local potential V_loc(q) on uniform q-grid
         local_potential_table_.initialize(beta_function_table_->q_grid(),
@@ -87,6 +92,7 @@ class NormConservingPlanewaveBasis {
                                               mesh_sizes_,
                                               number_of_species_types);
 
+        table_timer.emplace("setup.pseudopotential.local_potential_g");
         // Step 5: Compute local potential in G-space from pre-tabulated values
         int number_of_g_vectors = planewave_basis.number_of_g_vectors();
         local_potential_g_per_species_.resize(number_of_species_types);
@@ -98,18 +104,29 @@ class NormConservingPlanewaveBasis {
                                                        g_vector_magnitudes[g_vector_index]);
             }
         }
-        // Compute structure factors and total Vloc(G)
-        total_local_potential_g_.resize(number_of_g_vectors, Complex(0.0, 0.0));
-        for (int g_vector_index = 0; g_vector_index < number_of_g_vectors; g_vector_index++) {
+        /**
+         * Structure factors and total Vloc(G). Each rank computes the G-vectors on its own
+         * density sticks and one reduction completes the vector: every entry is computed once,
+         * by one rank, exactly as every rank used to compute all of them.
+         */
+        total_local_potential_g_.assign(number_of_g_vectors, Complex(0.0, 0.0));
+        std::vector<Vector3D> atomic_positions(
+            static_cast<std::size_t>(crystal_structure.number_of_atoms()));
+        for (int atom_index = 0; atom_index < crystal_structure.number_of_atoms(); atom_index++) {
+            atomic_positions[atom_index] =
+                crystal_structure.convert_from_crystal_to_cartesian(atom_index);
+        }
+        const LocalDensityGLayout& layout = planewave_basis.local_density_g_layout();
+        for (int entry = 0; entry < layout.size(); entry++) {
+            const int g_vector_index = layout.global_g_indices()[entry];
+            const auto& g_vector = planewave_basis.g_vectors()[g_vector_index];
             for (int type_index = 0; type_index < number_of_species_types; type_index++) {
                 Complex structure_factor(0.0, 0.0);
                 for (int atom_index = 0; atom_index < crystal_structure.number_of_atoms();
                      atom_index++) {
                     if (crystal_structure.species_type_index(atom_index) == type_index) {
-                        Vector3D atomic_position =
-                            crystal_structure.convert_from_crystal_to_cartesian(atom_index);
-                        const auto& g_vector = planewave_basis.g_vectors()[g_vector_index];
-                        Real phase = constants::two_pi * g_vector.g_cart.dot(atomic_position);
+                        Real phase =
+                            constants::two_pi * g_vector.g_cart.dot(atomic_positions[atom_index]);
                         structure_factor += compute_phase_factor(phase);
                     }
                 }
@@ -117,7 +134,10 @@ class NormConservingPlanewaveBasis {
                     local_potential_g_per_species_[type_index][g_vector_index] * structure_factor;
             }
         }
+        planewave_basis.fft_rho().reduce_g_space(total_local_potential_g_.data(),
+                                                 number_of_g_vectors);
 
+        table_timer.emplace("setup.pseudopotential.atomic_charge_g");
         // Step 6: Compute atomic charge density in G-space
         atomic_charge_density_g_ =
             tabulate_atomic_charge_density_in_g_space(pseudopotential_set_,
@@ -130,6 +150,7 @@ class NormConservingPlanewaveBasis {
         projector_mapping_table_.build(
             crystal_structure, pseudopotential_set_, number_of_species_types);
 
+        table_timer.emplace("setup.pseudopotential.core_charge_g");
         // Step 8: Compute NLCC core charge density in G-space from pre-tabulated values
         core_charge_data_.initialize(crystal_structure,
                                      planewave_basis,

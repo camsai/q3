@@ -69,13 +69,15 @@ class LocalThomasFermiPreconditioner : public Preconditioner {
         int first_nonzero_g_index,
         std::function<void(const std::vector<Real>&, std::vector<Complex>&)> to_reciprocal_space,
         std::function<void(const std::vector<Complex>&, std::vector<Real>&)> to_real_space,
-        std::function<void(std::vector<Real>&)> reduce_within_pool = {})
+        std::function<void(std::vector<Real>&)> reduce_within_pool = {},
+        std::function<void(std::vector<Real>&)> reduce_reciprocal_space_sums = {})
         : g_squared_(std::move(g_squared))
         , q0_squared_(q0_squared)
         , first_nonzero_g_index_(first_nonzero_g_index)
         , to_reciprocal_space_(std::move(to_reciprocal_space))
         , to_real_space_(std::move(to_real_space))
-        , reduce_within_pool_(std::move(reduce_within_pool)) {
+        , reduce_within_pool_(std::move(reduce_within_pool))
+        , reduce_reciprocal_space_sums_(std::move(reduce_reciprocal_space_sums)) {
         /**
          * Until the first update() the local screening is unknown, so the
          * operator falls back to the uniform q0² -- i.e. to Kerker. That keeps
@@ -257,6 +259,11 @@ class LocalThomasFermiPreconditioner : public Preconditioner {
         for (std::size_t g_index = first_index(); g_index < left.size(); ++g_index) {
             result += std::real(std::conj(left[g_index]) * right[g_index]);
         }
+        if (reduce_reciprocal_space_sums_) {
+            std::vector<Real> partial{result};
+            reduce_reciprocal_space_sums_(partial);
+            result = partial[0];
+        }
         return result;
     }
 
@@ -302,6 +309,7 @@ class LocalThomasFermiPreconditioner : public Preconditioner {
     std::function<void(const std::vector<Real>&, std::vector<Complex>&)> to_reciprocal_space_;
     std::function<void(const std::vector<Complex>&, std::vector<Real>&)> to_real_space_;
     std::function<void(std::vector<Real>&)> reduce_within_pool_;
+    std::function<void(std::vector<Real>&)> reduce_reciprocal_space_sums_;
     std::vector<Real> screening_real_;
     Real mean_screening_{1.0};
     bool has_screening_{false};

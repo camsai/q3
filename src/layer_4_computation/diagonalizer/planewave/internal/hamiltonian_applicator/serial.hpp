@@ -70,18 +70,6 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
             cached_scaled_potential_[grid_index] =
                 cached_smooth_potential_[grid_index] * inverse_total_points;
         }
-        /**
-         * For task-group band distribution: Allgather the slab-local potential
-         * into a full-grid potential so each rank can do serial FFTs.
-         */
-        if (execution_policy_.group_size() > 1) {
-            int total_smooth_points = planewave_basis_.fft_wave().total_grid_points();
-            cached_full_grid_potential_.resize(total_smooth_points);
-            execution_policy_.allgather_within_group(cached_scaled_potential_.data(),
-                                                     local_smooth_grid_points,
-                                                     cached_full_grid_potential_.data(),
-                                                     total_smooth_points);
-        }
 
         smooth_potential_cache_valid_ = true;
         cached_block_d_matrix_.clear();
@@ -387,7 +375,7 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
                     }
                 }
 
-                fft_wave_gamma.execute_inverse_raw_on_slot(transform_slot);
+                fft_wave_gamma.execute_wavefunction_inverse_on_slot(transform_slot);
                 Complex* fft_output = fft_wave_gamma.slot_output_buffer(transform_slot);
 
                 for (int grid_index = 0; grid_index < local_smooth_grid_points; ++grid_index) {
@@ -395,7 +383,7 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
                 }
 
                 fft_wave_gamma.prepare_forward_from_output_on_slot(transform_slot);
-                fft_wave_gamma.execute_forward_on_slot(transform_slot);
+                fft_wave_gamma.execute_wavefunction_forward_on_slot(transform_slot);
                 fft_output = fft_wave_gamma.slot_output_buffer(transform_slot);
 
                 // Separate the two bands using ±G symmetry
@@ -477,13 +465,13 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
                         fft_input[fft_index] = psi_vector[g_index];
                     }
                 }
-                fft_wave.execute_inverse_raw_on_slot(transform_slot);
+                fft_wave.execute_wavefunction_inverse_on_slot(transform_slot);
                 Complex* fft_output = fft_wave.slot_output_buffer(transform_slot);
                 for (int grid_index = 0; grid_index < local_smooth_grid_points; ++grid_index) {
                     fft_output[grid_index] *= real_space_potential[grid_index];
                 }
                 fft_wave.prepare_forward_from_output_on_slot(transform_slot);
-                fft_wave.execute_forward_on_slot(transform_slot);
+                fft_wave.execute_wavefunction_forward_on_slot(transform_slot);
                 fft_output = fft_wave.slot_output_buffer(transform_slot);
                 for (int g_index = 0; g_index < number_of_plane_waves; ++g_index) {
                     int fft_index = g_to_fft_mapping_[g_index];
@@ -881,6 +869,10 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
     compute_smooth_grid_potential(const std::vector<Real>& dense_real_space_potential,
                                   const PlanewaveBasis& planewave_basis) const {
 
+        // Same grid, same points here: the restriction below is the identity (see the basis).
+        if (planewave_basis.wavefunction_grid_is_density_grid()) {
+            return dense_real_space_potential;
+        }
         int total_smooth_points = planewave_basis.fft_wave().total_grid_points();
 
         // Core: dense FFT -> G-space truncation -> smooth V(G)
@@ -1005,7 +997,6 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
     mutable std::vector<int> cached_block_d_sizes_;
     mutable std::vector<int> cached_block_d_projector_starts_;
     // Full-grid potential for task-group band distribution (Allgathered from slabs).
-    mutable std::vector<Real> cached_full_grid_potential_;
 };
 
 } // namespace q3
