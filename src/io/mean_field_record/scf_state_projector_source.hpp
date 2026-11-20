@@ -3,14 +3,18 @@
 /**
  * ScfStateMeanFieldProjectorSource — Kleinman-Bylander projectors of a live SCF state.
  *
- * Builds <k+G|β> with compute_kleinman_bylander_projectors(), the routine the
- * Hamiltonian applicator itself calls, so the projectors a `VKB` file carries
- * are the ones the eigenvalues in `WFN` were computed with. One k-point is
- * cached at a time: the writer walks the k-points in order and needs each once.
+ * Reads <k+G|β> from the SCF state's projector sets, the ones the Hamiltonian
+ * applicator itself read, so the projectors a `VKB` file carries are the ones
+ * the eigenvalues in `WFN` were computed with. The record hands projectors out
+ * as a matrix of its own, so one k-point's set is copied into one at a time:
+ * the writer walks the k-points in order and needs each once.
  */
 
+#include <algorithm>
+#include <cstddef>
+
 #include "io/mean_field_record/projector_source.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
 #include "layer_4_computation/state/kohn_sham/planewave/norm_conserving/init.hpp"
 
 namespace q3 {
@@ -26,18 +30,16 @@ class ScfStateMeanFieldProjectorSource : public MeanFieldProjectorSource {
     /// See MeanFieldProjectorSource::projectors(); recomputed only when the k-point changes.
     [[nodiscard]] const Matrix<Complex>& projectors(int kpoint_index) const override {
         if (kpoint_index != cached_kpoint_index_) {
-            const auto& pseudopotential_basis = scf_state_.quantum_system().pseudopotential_basis();
-            const PlanewaveBasis& planewave_basis = *scf_state_.planewave_basis;
-            compute_kleinman_bylander_projectors(
-                (*scf_state_.kpoint_grid)[kpoint_index].coordinates,
-                *scf_state_.crystal_structure,
-                planewave_basis,
-                pseudopotential_basis.pseudopotential_set(),
-                pseudopotential_basis.beta_function_table(),
-                planewave_basis.kpoint_g_vector_indices()[kpoint_index],
-                planewave_basis.kpoint_number_of_plane_waves()[kpoint_index],
-                pseudopotential_basis.total_number_of_projectors(),
-                cached_projectors_);
+            const KleinmanBylanderProjectorSet& projector_set =
+                scf_state_.projector_set(kpoint_index);
+            const std::size_t number_of_projectors =
+                static_cast<std::size_t>(projector_set.number_of_projectors());
+            const std::size_t number_of_plane_waves =
+                static_cast<std::size_t>(projector_set.number_of_plane_waves());
+            cached_projectors_.resize(number_of_projectors, number_of_plane_waves);
+            std::copy(projector_set.host(),
+                      projector_set.host() + number_of_projectors * number_of_plane_waves,
+                      cached_projectors_.data());
             cached_kpoint_index_ = kpoint_index;
         }
         return cached_projectors_;

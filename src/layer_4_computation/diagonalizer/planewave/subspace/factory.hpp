@@ -13,6 +13,7 @@
  */
 
 #include "layer_0_core/execution/init.hpp"
+#include "layer_4_computation/diagonalizer/planewave/subspace/divide_and_conquer.hpp"
 #include "layer_4_computation/diagonalizer/planewave/subspace/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/subspace/mpi.hpp"
 #include "layer_4_computation/diagonalizer/planewave/subspace/serial.hpp"
@@ -30,6 +31,19 @@ class SubspaceDiagonalizerFactory {
             return create_mpi_subspace_diagonalizer(execution_policy);
         }
         return std::make_unique<SerialSubspaceDiagonalizer>();
+    }
+
+    /**
+     * The solver for a run that keeps its eigensolver on a device: divide and
+     * conquer where each rank solves its own copy, the collective solver where
+     * ranks share the coefficient vectors, as create() chooses.
+     */
+    static std::unique_ptr<SubspaceDiagonalizer>
+    create_for_device_solver(const execution::ExecutionPolicy& execution_policy) {
+        if (execution_policy.group_size() > 1) {
+            return create_mpi_subspace_diagonalizer(execution_policy);
+        }
+        return std::make_unique<DivideAndConquerSubspaceDiagonalizer>();
     }
 
   private:

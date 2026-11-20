@@ -4,6 +4,7 @@
  * PlanewaveFFTPair — charge-density and wavefunction FFT grids sized together.
  */
 
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_3_representation/basis/planewave/internal/fft/fft_grid.hpp"
 #include "layer_3_representation/basis/planewave/internal/fft/fft_grid_factory.hpp"
@@ -48,7 +49,7 @@ class PlanewaveFFTPair {
          * pass false for bit-reproducible FFTW_ESTIMATE planning (see
          * InputData::use_deterministic_fft_planning).
          */
-        fft_rho_ = fft_grid_factory.create_fft_grid();
+        fft_rho_ = fft_grid_factory.create_density_fft_grid();
         /**
          * The density grid makes a few dozen transforms an iteration, against thousands on the
          * wavefunction grid, so its planning is capped. Unbounded, FFTW_MEASURE spent 0.85 s
@@ -57,10 +58,13 @@ class PlanewaveFFTPair {
          * capping it too cost more in the solver than it saved in setup.
          */
         fft_rho_->limit_planning_time(density_grid_planning_seconds_per_plan);
-        fft_rho_->init(grid_dimension_rho_1,
-                       grid_dimension_rho_2,
-                       grid_dimension_rho_3,
-                       use_measured_fft_planning);
+        {
+            StageTimer stage_timer("setup.basis.fft_grids.density");
+            fft_rho_->init(grid_dimension_rho_1,
+                           grid_dimension_rho_2,
+                           grid_dimension_rho_3,
+                           use_measured_fft_planning);
+        }
 
         /**
          * The smooth (wavefunction) FFT grid carries two products, V(r)ψ(r) and |ψ(r)|². A
@@ -93,10 +97,13 @@ class PlanewaveFFTPair {
                                                 fft_factors);
         // Wave grid uses FFTW_MEASURE by default; see the rho grid comment above.
         fft_wave_ = fft_grid_factory.create_fft_grid();
-        fft_wave_->init(grid_dimension_wave_1,
-                        grid_dimension_wave_2,
-                        grid_dimension_wave_3,
-                        use_measured_fft_planning);
+        {
+            StageTimer stage_timer("setup.basis.fft_grids.wavefunction");
+            fft_wave_->init(grid_dimension_wave_1,
+                            grid_dimension_wave_2,
+                            grid_dimension_wave_3,
+                            use_measured_fft_planning);
+        }
 
         /**
          * Serial wave grid for band-distributed parallelism (task groups).

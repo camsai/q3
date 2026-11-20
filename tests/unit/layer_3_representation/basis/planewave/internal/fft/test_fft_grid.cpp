@@ -82,3 +82,96 @@ TEST(FFTGrid, ParsevalTheorem) {
     // Parseval: sum|f|² = (1/N) sum|F|²  (FFTW unnormalized forward)
     EXPECT_NEAR(sum_r, sum_g / N, 1e-6 * sum_r);
 }
+
+// ── A grid that gives every thread to each transform ────────────────
+
+namespace {
+
+/// A field with a value of its own at every grid point.
+std::vector<Complex> patterned_field(int number_of_points) {
+    std::vector<Complex> field(static_cast<std::size_t>(number_of_points));
+    for (int point = 0; point < number_of_points; point++) {
+        field[static_cast<std::size_t>(point)] =
+            Complex(std::sin(0.37 * point + 0.2), std::cos(0.11 * point - 0.5));
+    }
+    return field;
+}
+
+} // namespace
+
+TEST(FFTGrid, GivingEveryThreadToEachTransformKeepsOneSlot) {
+    SerialFFTGrid grid;
+    grid.give_every_thread_to_each_transform();
+    grid.init(12, 10, 8);
+
+    EXPECT_EQ(grid.concurrent_transform_slots(), 1);
+}
+
+TEST(FFTGrid, AGridOfThreadedTransformsGivesTheTransformsOfTheDefaultGrid) {
+    SerialFFTGrid default_grid;
+    default_grid.init(12, 10, 8);
+    SerialFFTGrid threaded_grid;
+    threaded_grid.give_every_thread_to_each_transform();
+    threaded_grid.init(12, 10, 8);
+    const std::vector<Complex> field = patterned_field(default_grid.total_grid_points());
+
+    std::vector<Complex> default_transform = field;
+    std::vector<Complex> threaded_transform = field;
+    default_grid.forward(default_transform.data());
+    threaded_grid.forward(threaded_transform.data());
+
+    for (std::size_t point = 0; point < field.size(); point++) {
+        EXPECT_NEAR(threaded_transform[point].real(), default_transform[point].real(), 1e-11);
+        EXPECT_NEAR(threaded_transform[point].imag(), default_transform[point].imag(), 1e-11);
+    }
+
+    // And back again: the round trip returns the field.
+    threaded_grid.inverse(threaded_transform.data());
+    for (std::size_t point = 0; point < field.size(); point++) {
+        EXPECT_NEAR(threaded_transform[point].real(), field[point].real(), 1e-11);
+        EXPECT_NEAR(threaded_transform[point].imag(), field[point].imag(), 1e-11);
+    }
+}
+
+TEST(FFTGrid, AGridPlannedAfterAThreadedOneKeepsItsSlotsAndItsTransforms) {
+    SerialFFTGrid first_default_grid;
+    first_default_grid.init(12, 10, 8);
+    const int default_slots = first_default_grid.concurrent_transform_slots();
+    const std::vector<Complex> field = patterned_field(first_default_grid.total_grid_points());
+    std::vector<Complex> expected = field;
+    first_default_grid.forward(expected.data());
+
+    SerialFFTGrid threaded_grid;
+    threaded_grid.give_every_thread_to_each_transform();
+    threaded_grid.init(12, 10, 8);
+    SerialFFTGrid later_default_grid;
+    later_default_grid.init(12, 10, 8);
+
+    // The planner's thread count did not carry over from the threaded grid.
+    EXPECT_EQ(later_default_grid.concurrent_transform_slots(), default_slots);
+    std::vector<Complex> transform = field;
+    later_default_grid.forward(transform.data());
+    for (std::size_t point = 0; point < field.size(); point++) {
+        EXPECT_EQ(transform[point], expected[point]) << point;
+    }
+}
+
+TEST(FFTGrid, AGridUnderAPlanningCapKeepsItsSlotsAndItsTransforms) {
+    SerialFFTGrid default_grid;
+    default_grid.init(12, 10, 8, /*use_measured_planning=*/true);
+    SerialFFTGrid capped_grid;
+    capped_grid.honor_planning_time_limit();
+    capped_grid.limit_planning_time(0.001);
+    capped_grid.init(12, 10, 8, /*use_measured_planning=*/true);
+    const std::vector<Complex> field = patterned_field(default_grid.total_grid_points());
+
+    EXPECT_EQ(capped_grid.concurrent_transform_slots(), default_grid.concurrent_transform_slots());
+    std::vector<Complex> default_transform = field;
+    std::vector<Complex> capped_transform = field;
+    default_grid.forward(default_transform.data());
+    capped_grid.forward(capped_transform.data());
+    for (std::size_t point = 0; point < field.size(); point++) {
+        EXPECT_NEAR(capped_transform[point].real(), default_transform[point].real(), 1e-11);
+        EXPECT_NEAR(capped_transform[point].imag(), default_transform[point].imag(), 1e-11);
+    }
+}

@@ -44,9 +44,11 @@
 #include <cstddef>
 #include <cstring>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_3_representation/basis/planewave/internal/fft/fft_grid.hpp"
 #include "layer_3_representation/basis/planewave/internal/fft/stick_partition.hpp"
@@ -588,6 +590,7 @@ class FFTGridSticks : public FFTGrid {
         if (plans_current_) {
             return;
         }
+        StageTimer stage_timer("fft.plan_creation");
         const std::vector<Complex> saved_sticks = stick_buffer_;
         const std::vector<Complex> saved_planes = plane_buffer_;
         create_plans();
@@ -606,7 +609,10 @@ class FFTGridSticks : public FFTGrid {
          * and wavefunction-stick plans carry every band transform, so they keep the exhaustive
          * search unless the grid was told otherwise (limit_planning_time()). Measured on a full
          * 128-rank node, the uncapped full-stick plans were most of a second of setup, and
-         * capping the band plans as well cost more in the solver than it saved.
+         * capping the plane plans as well cost more in the solver than it saved: a measured
+         * 96x96 plane plan runs twice as fast as an estimated or time-capped one. The
+         * wavefunction-stick plans are the exception when a rank holds few sticks; see
+         * minimum_wavefunction_sticks_for_measured_planning.
          */
         auto cap_planning = [this](double seconds_per_plan) {
             if (use_measured_planning_) {
@@ -614,6 +620,7 @@ class FFTGridSticks : public FFTGrid {
             }
         };
         cap_planning(full_stick_planning_seconds_per_plan);
+        std::optional<StageTimer> family_timer(std::in_place, "fft.plan_creation.full_sticks");
         if (local_sticks_ > 0) {
             int length = grid_dimension_3_;
             auto* buffer = reinterpret_cast<fftw_complex*>(stick_buffer_.data());
@@ -645,9 +652,14 @@ class FFTGridSticks : public FFTGrid {
                                                       flags);
         }
         cap_planning(planning_seconds_per_plan_);
+        family_timer.emplace("fft.plan_creation.wavefunction_sticks");
         if (local_wavefunction_sticks_ > 0) {
             int length = grid_dimension_3_;
             auto* buffer = reinterpret_cast<fftw_complex*>(stick_buffer_.data());
+            unsigned stick_flags =
+                local_wavefunction_sticks_ >= minimum_wavefunction_sticks_for_measured_planning
+                    ? flags
+                    : FFTW_ESTIMATE;
             for (int direction : {FFTW_FORWARD, FFTW_BACKWARD}) {
                 fftw_plan plan = fftw_plan_many_dft(1,
                                                     &length,
@@ -661,11 +673,12 @@ class FFTGridSticks : public FFTGrid {
                                                     1,
                                                     length,
                                                     direction,
-                                                    flags);
+                                                    stick_flags);
                 (direction == FFTW_FORWARD ? plan_wavefunction_sticks_forward_
                                            : plan_wavefunction_sticks_inverse_) = plan;
             }
         }
+        family_timer.emplace("fft.plan_creation.planes");
         if (local_planes_ > 0) {
             int lengths[2] = {grid_dimension_1_, grid_dimension_2_};
             int plane_points = grid_dimension_1_ * grid_dimension_2_;
@@ -751,6 +764,15 @@ class FFTGridSticks : public FFTGrid {
     double planning_seconds_per_plan_ = 0.0;
     /// Planner time cap per full-stick plan; see create_plans().
     static constexpr double full_stick_planning_seconds_per_plan = 0.02;
+    /**
+     * Fewest wavefunction sticks per rank for which their plans are measured rather than
+     * estimated. Measuring a batch of length-96 sticks costs about 0.13 s per plan whatever the
+     * batch size (FFTW repeats each trial to a minimum time), while the measured plan saves about
+     * 0.27 us per stick per transform over the estimated one (Perlmutter Milan, cray-fftw
+     * 3.3.10). A run makes a few thousand band transforms per rank, so the search pays back
+     * from roughly 250 sticks per rank: a 96^3 grid shared by 8 ranks holds ~230, by 32 ranks ~58.
+     */
+    static constexpr int minimum_wavefunction_sticks_for_measured_planning = 256;
     // Made lazily by ensure_plans(), hence mutable.
     mutable bool plans_current_ = false;
     mutable fftw_plan plan_sticks_forward_ = nullptr;

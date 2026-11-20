@@ -9,6 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "generated/q3/results/runtime_log/device_transfers.hpp"
 #include "generated/q3/results/runtime_log/execution.hpp"
 #include "generated/q3/results/runtime_log/incomplete.hpp"
 
@@ -30,6 +31,8 @@ struct ResultsRuntimeLog {
     std::optional<nlohmann::json> timings_ms;
     // The parallel topology the run ended up with, and its measured footprint.
     ResultsExecution execution;
+    // What the run copied between host memory and device memory, counted where each copy is made. A copy inside the device, or inside the host, is not counted. On a multi-process run these are the totals of the process that wrote the results.
+    std::optional<ResultsDeviceTransfers> device_transfers;
     // Present only when a derivative was left out, each entry saying why. The Python relaxation workflows refuse to run on a result whose forces are incomplete.
     std::optional<ResultsIncomplete> incomplete;
 };
@@ -48,6 +51,9 @@ inline void to_json(nlohmann::json& json_output, const ResultsRuntimeLog& data) 
         json_output["timings_ms"] = *data.timings_ms;
     }
     json_output["execution"] = data.execution;
+    if (data.device_transfers) {
+        json_output["device_transfers"] = *data.device_transfers;
+    }
     if (data.incomplete) {
         json_output["incomplete"] = *data.incomplete;
     }
@@ -66,6 +72,9 @@ inline void from_json(const nlohmann::json& json_input, ResultsRuntimeLog& data)
         data.timings_ms = json_input.at("timings_ms").get<nlohmann::json>();
     }
     json_input.at("execution").get_to(data.execution);
+    if (json_input.contains("device_transfers")) {
+        data.device_transfers = json_input.at("device_transfers").get<ResultsDeviceTransfers>();
+    }
     if (json_input.contains("incomplete")) {
         data.incomplete = json_input.at("incomplete").get<ResultsIncomplete>();
     }

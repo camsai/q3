@@ -57,6 +57,7 @@
 #include "layer_3_representation/basis/planewave/init.hpp"
 #include "layer_3_representation/basis/planewave/internal/miller_index_lookup.hpp"
 #include "layer_3_representation/basis/planewave/pseudopotential/ultrasoft/init.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
 
 namespace q3 {
 
@@ -208,8 +209,8 @@ class PlanewaveBlochOverlapCalculator {
      *   M_mn(k,b) += sum_I sum_ij <psi_mk|beta_i^I(k)> * Q_ij^I(b) *
      *                e^{-i*b.tau_I} * <beta_j^I(k+b)|psi_n,k+b>
      *
-     * `projectors_at_kpoint`/`projectors_at_neighbor` are
-     * compute_kleinman_bylander_projectors()'s output at k and at the
+     * `projectors_at_kpoint`/`projectors_at_neighbor` are the
+     * Kleinman-Bylander projector sets at k and at the
      * neighbor k' -- already carry each their own atomic structure factor
      * e^{-i(k+G).tau_I}, so only the *translation* phase for Q_ij (which is
      * defined atom-origin-centred, like compute_q_g_single itself) needs to
@@ -237,11 +238,11 @@ class PlanewaveBlochOverlapCalculator {
     void add_augmentation_contribution(BlochOverlapResult& result,
                                        const Crystal& crystal_structure,
                                        const UltrasoftPlanewaveBasis& ultrasoft_basis,
-                                       const Matrix<Complex>& projectors_at_kpoint,
+                                       const KleinmanBylanderProjectorSet& projectors_at_kpoint,
                                        int number_of_plane_waves_at_kpoint,
                                        int number_of_bands_at_kpoint,
                                        WavefunctionAtKpoint wavefunction_at_kpoint,
-                                       const Matrix<Complex>& projectors_at_neighbor,
+                                       const KleinmanBylanderProjectorSet& projectors_at_neighbor,
                                        int number_of_plane_waves_at_neighbor,
                                        int number_of_bands_at_neighbor,
                                        WavefunctionAtNeighbor wavefunction_at_neighbor,
@@ -254,7 +255,7 @@ class PlanewaveBlochOverlapCalculator {
                 "multiplied by cell_volume(), which this method does unconditionally for its "
                 "(always nonzero, in real use) general-branch case.");
         }
-        int total_number_of_projectors = projectors_at_kpoint.rows();
+        int total_number_of_projectors = projectors_at_kpoint.number_of_projectors();
 
         // amplitude_at_kpoint[projector][band] = <beta_i^I(k)|psi_mk>
         Matrix<Complex> amplitude_at_kpoint(static_cast<std::size_t>(total_number_of_projectors),
@@ -264,7 +265,7 @@ class PlanewaveBlochOverlapCalculator {
             for (int projector_index = 0; projector_index < total_number_of_projectors;
                  projector_index++) {
                 Complex sum(0.0, 0.0);
-                const Complex* projector_row = projectors_at_kpoint[projector_index];
+                const Complex* projector_row = projectors_at_kpoint.projector(projector_index);
                 for (int g_index = 0; g_index < number_of_plane_waves_at_kpoint; g_index++) {
                     sum += std::conj(projector_row[g_index]) * band_data[g_index];
                 }
@@ -280,7 +281,7 @@ class PlanewaveBlochOverlapCalculator {
             for (int projector_index = 0; projector_index < total_number_of_projectors;
                  projector_index++) {
                 Complex sum(0.0, 0.0);
-                const Complex* projector_row = projectors_at_neighbor[projector_index];
+                const Complex* projector_row = projectors_at_neighbor.projector(projector_index);
                 for (int g_index = 0; g_index < number_of_plane_waves_at_neighbor; g_index++) {
                     sum += std::conj(projector_row[g_index]) * band_data[g_index];
                 }

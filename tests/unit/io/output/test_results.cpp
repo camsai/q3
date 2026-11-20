@@ -146,6 +146,25 @@ TEST(ResultsUnits, WriteResultsJsonCreatesMissingOutputDirectory) {
     std::filesystem::remove_all(output_directory);
 }
 
+TEST(ResultsUnits, WriteResultsJsonKeepsAnEarlierRunsResultsAsABackup) {
+    const auto output_directory =
+        std::filesystem::temp_directory_path() / "q3_results_keeps_earlier_run";
+    const auto output_path = output_directory / "si_results.json";
+    std::filesystem::remove_all(output_directory);
+
+    write_results_json(new_results("self_consistent_field"), output_path.string());
+    write_results_json(new_results("non_self_consistent_field"), output_path.string());
+
+    nlohmann::json latest;
+    std::ifstream(output_path) >> latest;
+    nlohmann::json earlier;
+    std::ifstream(output_directory / "si_results.json-1") >> earlier;
+    EXPECT_EQ(latest["runtime_log"]["flavor"], "non_self_consistent_field");
+    EXPECT_EQ(earlier["runtime_log"]["flavor"], "self_consistent_field");
+    EXPECT_FALSE(std::filesystem::exists(output_directory / "si_results.json.partial"));
+    std::filesystem::remove_all(output_directory);
+}
+
 /**
  * ── A run before it has computed anything ────────────────────────────
  */

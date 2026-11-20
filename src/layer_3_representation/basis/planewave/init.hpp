@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <optional>
 
 #include <cmath>
 
@@ -18,6 +19,7 @@
 #include <vector>
 
 #include "layer_0_core/execution/init.hpp"
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_1_structure/reciprocal_space/kpoints_grid.hpp"
@@ -68,6 +70,7 @@ class PlanewaveBasis {
         if (energy_cutoff_charge_density_ <= 0.0) {
             energy_cutoff_charge_density_ = 4.0 * energy_cutoff_wavefunction_;
         }
+        std::optional<StageTimer> stage_timer(std::in_place, "setup.basis.fft_grids");
         fft_pair_.initialize(fft_grid_factory,
                              crystal_structure,
                              energy_cutoff_charge_density_,
@@ -79,6 +82,7 @@ class PlanewaveBasis {
          * Only wavefunction coefficients (per k-point) are distributed via FFT
          * slab decomposition — see PlaneWaveSelector::select().
          */
+        stage_timer.emplace("setup.basis.g_vectors");
         g_vectors_.generate(crystal_structure,
                             energy_cutoff_charge_density_,
                             fft_pair_.fft_rho().grid_dimension_1(),
@@ -97,6 +101,7 @@ class PlanewaveBasis {
          * layout can balance them and skip the empty ones. A grid that does
          * not distribute by stick ignores this.
          */
+        stage_timer.emplace("setup.basis.density_sticks");
         assign_every_stick(
             fft_pair_.fft_rho(),
             stick_weights_for_grid(fft_pair_.fft_rho(), [](const GVector&) { return true; }));

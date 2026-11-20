@@ -61,7 +61,8 @@
 #include "layer_3_representation/basis/planewave/internal/miller_index_lookup.hpp"
 #include "layer_3_representation/basis/planewave/local_orbital/init.hpp"
 #include "layer_3_representation/basis/planewave/pseudopotential/ultrasoft/init.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set_store.hpp"
 #include "layer_3_representation/pseudopotential/set.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/init.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/ultrasoft/init.hpp"
@@ -118,7 +119,10 @@ class PlanewaveWannierCapture {
      * Ultrasoft/PAW: the same record with the augmentation term in M_mn(k,b)
      * and the S metric in A_mn(k). `quantum_system` must have been through
      * UltrasoftPlanewaveKohnShamQuantumSystem::init() so ultrasoft_basis()
-     * is populated.
+     * is populated. `projector_sets` holds the Kleinman-Bylander projector
+     * set of each k-point over the same plane waves as
+     * `g_vector_indices_by_kpoint`: the run's own store, so the sets the
+     * eigensolver built are read here and not built a second time.
      */
     [[nodiscard]] WannierInputs
     build_ultrasoft(const KPointsGrid& kpoint_grid,
@@ -127,6 +131,7 @@ class PlanewaveWannierCapture {
                     int grid_dimension_z,
                     int number_of_bands,
                     const std::vector<std::vector<int>>& g_vector_indices_by_kpoint,
+                    KleinmanBylanderProjectorSetStore& projector_sets,
                     const UltrasoftPlanewaveKohnShamQuantumSystem& quantum_system,
                     const PlanewaveLocalOrbitalSet& trial_orbitals,
                     const execution::PlanewaveExecutionPolicy& execution_policy,
@@ -137,31 +142,24 @@ class PlanewaveWannierCapture {
                 "PlanewaveWannierCapture::build_ultrasoft: "
                 "g_vector_indices_by_kpoint must have one entry per physical k-point.");
         }
+        if (projector_sets.number_of_kpoints() != number_of_kpoints) {
+            throw std::invalid_argument("PlanewaveWannierCapture::build_ultrasoft: "
+                                        "projector_sets must hold one set per physical k-point.");
+        }
 
         /**
          * Both consumers (the projections' overlap operator and the Bloch
          * overlap's augmentation term) need every k-point's Kleinman-Bylander
-         * projector matrix -- a (k, neighbour) pair needs the neighbour's
-         * too -- so compute the whole set once up front rather than once
-         * for a k-point's own turn and again whenever another k-point's
-         * iteration needs it as a neighbour.
+         * projector set -- a (k, neighbour) pair reads the neighbour's
+         * together with its own -- so the store is told to keep every set, and
+         * each is built here, once, if the eigensolver has not built it already.
          */
-        AugmentationContext augmentation{quantum_system.ultrasoft_basis(),
-                                         quantum_system,
-                                         execution_policy,
-                                         std::vector<Matrix<Complex>>(number_of_kpoints)};
+        projector_sets.keep_all_sets();
         for (int kpoint_index = 0; kpoint_index < number_of_kpoints; kpoint_index++) {
-            compute_kleinman_bylander_projectors(
-                kpoint_grid[kpoint_index].coordinates,
-                crystal_structure_,
-                planewave_basis_,
-                pseudopotential_set_,
-                augmentation.ultrasoft_basis.beta_function_table(),
-                g_vector_indices_by_kpoint[kpoint_index],
-                static_cast<int>(g_vector_indices_by_kpoint[kpoint_index].size()),
-                augmentation.ultrasoft_basis.total_number_of_projectors(),
-                augmentation.kb_projectors_by_kpoint[kpoint_index]);
+            (void)projector_sets.at(kpoint_index);
         }
+        AugmentationContext augmentation{
+            quantum_system.ultrasoft_basis(), quantum_system, execution_policy, projector_sets};
 
         return assemble(kpoint_grid,
                         {grid_dimension_x, grid_dimension_y, grid_dimension_z},
@@ -197,7 +195,7 @@ class PlanewaveWannierCapture {
         const UltrasoftPlanewaveBasis& ultrasoft_basis;
         const UltrasoftPlanewaveKohnShamQuantumSystem& quantum_system;
         const execution::PlanewaveExecutionPolicy& execution_policy;
-        std::vector<Matrix<Complex>> kb_projectors_by_kpoint;
+        KleinmanBylanderProjectorSetStore& projector_sets;
     };
 
     [[nodiscard]] WannierInputs
@@ -309,7 +307,7 @@ class PlanewaveWannierCapture {
                 overlap_operator =
                     create_overlap_operator(crystal_structure_,
                                             augmentation->quantum_system,
-                                            augmentation->kb_projectors_by_kpoint[kpoint_index],
+                                            augmentation->projector_sets.at(kpoint_index),
                                             augmentation->execution_policy);
             }
             std::vector<std::vector<Complex>> projections =
@@ -380,11 +378,11 @@ class PlanewaveWannierCapture {
                         result,
                         crystal_structure_,
                         augmentation->ultrasoft_basis,
-                        augmentation->kb_projectors_by_kpoint[kpoint_index],
+                        augmentation->projector_sets.at(kpoint_index),
                         static_cast<int>(g_vector_indices_by_kpoint[kpoint_index].size()),
                         number_of_bands,
                         band_at_kpoint,
-                        augmentation->kb_projectors_by_kpoint[neighbor_kpoint_index],
+                        augmentation->projector_sets.at(neighbor_kpoint_index),
                         static_cast<int>(g_vector_indices_by_kpoint[neighbor_kpoint_index].size()),
                         number_of_bands,
                         band_at_neighbor,

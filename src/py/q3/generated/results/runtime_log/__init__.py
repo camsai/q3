@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from pydantic import BaseModel, ConfigDict, confloat, conint
+from q3.generated.results.runtime_log.device_transfers import DeviceTransfers
 from q3.generated.results.runtime_log.execution import Execution
 from q3.generated.results.runtime_log.incomplete import Incomplete
 
@@ -37,4 +38,5 @@ class RuntimeLog(BaseModel):
     Where the run spent its time, in milliseconds, plus the call counts those times divide. Absent when nothing ran.
     """
     execution: Execution | None = None
+    device_transfers: DeviceTransfers | None = None
     incomplete: Incomplete | None = None

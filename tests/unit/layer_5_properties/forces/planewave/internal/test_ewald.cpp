@@ -5,6 +5,7 @@
 
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
+#include "layer_3_representation/basis/planewave/structure_factor_calculator_serial.hpp"
 #include "layer_5_properties/forces/planewave/internal/ewald.hpp"
 #include "utils/boron_phosphate.hpp"
 
@@ -16,7 +17,8 @@ std::vector<Vector3D> ewald_forces(const std::vector<Atom>& atoms) {
     Crystal crystal = test_support::boron_phosphate_crystal(atoms);
     PlanewaveBasis basis;
     test_support::generate_boron_phosphate_basis(basis, crystal);
-    return EwaldForceCalculator(crystal, basis).compute();
+    SerialStructureFactorCalculator structure_factor_calculator(crystal, basis);
+    return EwaldForceCalculator(crystal, basis, structure_factor_calculator).compute();
 }
 
 } // namespace

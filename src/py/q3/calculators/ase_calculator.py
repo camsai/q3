@@ -272,7 +272,11 @@ class Q3ASECalculator(Calculator):
         """Run the binary on the input, in its directory, and read the results it wrote."""
         self._results_path.unlink(missing_ok=True)
         proc = subprocess.run(
-            self._execution_policy.command(self._binary, str(self._scf_input_path), *arguments),
+            # --forces --stress: an ASE calculator is asked for both, and a pw.x scf deck
+            # that sets neither tprnfor nor tstress would otherwise produce neither.
+            self._execution_policy.command(
+                self._binary, str(self._scf_input_path), "--forces", "--stress", *arguments
+            ),
             cwd=self._scf_input_path.parent,
             capture_output=self._capture_output,
             text=True,

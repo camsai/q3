@@ -14,12 +14,15 @@
  * in the internal/ and ultrasoft/internal/ subdirectories.
  */
 
+#include <optional>
 #include <vector>
 
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_0_core/types/matrix.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_1_structure/reciprocal_space/kpoints_grid.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
+#include "layer_3_representation/basis/planewave/structure_factor_calculator.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/norm_conserving/init.hpp"
 #include "layer_4_computation/state/kohn_sham/planewave/norm_conserving/init.hpp"
 #include "layer_5_properties/forces/planewave/pseudopotential/contributions.hpp"
@@ -33,16 +36,19 @@ namespace q3 {
 
 class NormConservingPlanewaveForceCalculator {
   public:
-    NormConservingPlanewaveForceCalculator(const Crystal& crystal_structure,
-                                           const PlanewaveBasis& planewave_basis,
-                                           const KPointsGrid& kpoint_grid,
-                                           const NormConservingPlanewaveKohnShamSCFState& scf_state,
-                                           const Matrix<Real>& projector_overlap_coefficients)
+    NormConservingPlanewaveForceCalculator(
+        const Crystal& crystal_structure,
+        const PlanewaveBasis& planewave_basis,
+        const KPointsGrid& kpoint_grid,
+        const NormConservingPlanewaveKohnShamSCFState& scf_state,
+        const Matrix<Real>& projector_overlap_coefficients,
+        const StructureFactorCalculator& structure_factor_calculator)
         : crystal_structure_(crystal_structure)
         , planewave_basis_(planewave_basis)
         , kpoint_grid_(kpoint_grid)
         , scf_state_(scf_state)
-        , projector_overlap_coefficients_(projector_overlap_coefficients) {}
+        , projector_overlap_coefficients_(projector_overlap_coefficients)
+        , structure_factor_calculator_(structure_factor_calculator) {}
 
     PseudopotentialForceContributions compute() {
         int number_of_atoms = crystal_structure_.number_of_atoms();
@@ -51,13 +57,17 @@ class NormConservingPlanewaveForceCalculator {
         LocalPseudopotentialForceCalculator local_calculator(
             crystal_structure_,
             planewave_basis_,
-            scf_state_.quantum_system().pseudopotential_basis());
+            scf_state_.quantum_system().pseudopotential_basis(),
+            structure_factor_calculator_);
+        std::optional<StageTimer> stage_timer(std::in_place, "post.forces.local");
         std::vector<Vector3D> local_forces = local_calculator.compute(scf_state_.charge_density_g);
 
         // 2. Nonlocal (KB projector) force — handles both NC and US
+        stage_timer.emplace("post.forces.nonlocal");
         NonlocalPseudopotentialForceCalculator nonlocal_calculator(
             crystal_structure_, planewave_basis_, kpoint_grid_, scf_state_);
         std::vector<Vector3D> nonlocal_forces = nonlocal_calculator.compute();
+        stage_timer.emplace("post.forces.other");
 
         // 3. Core-correction force (NLCC) — zero if no NLCC
         std::vector<Vector3D> core_correction_forces(number_of_atoms, {0.0, 0.0, 0.0});
@@ -65,7 +75,8 @@ class NormConservingPlanewaveForceCalculator {
             CoreCorrectionForceCalculator core_correction_calculator(
                 crystal_structure_,
                 planewave_basis_,
-                scf_state_.quantum_system().pseudopotential_basis());
+                scf_state_.quantum_system().pseudopotential_basis(),
+                structure_factor_calculator_);
             core_correction_forces =
                 core_correction_calculator.compute(scf_state_.exchange_correlation_potential_g);
         }
@@ -122,6 +133,7 @@ class NormConservingPlanewaveForceCalculator {
     const KPointsGrid& kpoint_grid_;
     const NormConservingPlanewaveKohnShamSCFState& scf_state_;
     const Matrix<Real>& projector_overlap_coefficients_;
+    const StructureFactorCalculator& structure_factor_calculator_;
 };
 
 } // namespace q3

@@ -15,21 +15,27 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <vector>
 
-#include "layer_0_core/math/phase_factor.hpp"
 #include "layer_0_core/math/tolerances.hpp"
 #include "layer_0_core/types/constants.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
+#include "layer_3_representation/basis/planewave/structure_factor_calculator.hpp"
 
 namespace q3 {
 
 class EwaldForceCalculator {
   public:
-    EwaldForceCalculator(const Crystal& crystal_structure, const PlanewaveBasis& planewave_basis)
-        : crystal_structure_(crystal_structure), planewave_basis_(planewave_basis) {}
+    /// `structure_factor_calculator` forms the G-space sums over atoms; see compute().
+    EwaldForceCalculator(const Crystal& crystal_structure,
+                         const PlanewaveBasis& planewave_basis,
+                         const StructureFactorCalculator& structure_factor_calculator)
+        : crystal_structure_(crystal_structure)
+        , planewave_basis_(planewave_basis)
+        , structure_factor_calculator_(structure_factor_calculator) {}
 
     [[nodiscard]] std::vector<Vector3D> compute() const {
         using namespace constants;
@@ -62,79 +68,65 @@ class EwaldForceCalculator {
             alpha = ewald_convergence_parameter_step;
         }
 
-        std::vector<Vector3D> forces(crystal_structure_.number_of_atoms(), {0.0, 0.0, 0.0});
         int first_nonzero_g_index = planewave_basis_.first_nonzero_g_index();
 
-        // G-space sum, over this rank's density G-vectors; completed across the pool below.
+        /**
+         * G-space sum, over this rank's density G-vectors; completed across the pool below.
+         *
+         *   F_{G,α}(i) = (e²·2π/Ω) Z_i Σ_G factor(G) G_α Im[S(G) e^{+iGτ_i}],
+         *   S(G) = Σ_j Z_j e^{-iGτ_j},  factor(G) = 2 · exp(-G²/4α) / G²,
+         *
+         * doubled again on a half sphere. The 2 in factor is not about the sphere, and it is
+         * not the Rydberg e² either -- that is the prefactor. It is the factor from
+         * differentiating a modulus squared: ∂|ρ(G)|²/∂τ = 2 Re[ρ* ∂ρ/∂τ]. So it is correct
+         * for the full-sphere G list Q3 normally builds. Gamma-only stores only the positive
+         * half sphere (`g_vectors_grid.hpp`), and the summand here is *even* under G → −G (the
+         * imaginary part is odd and G_α is odd), so the missing half contributes exactly as
+         * much again. Without this the Ewald force is exactly half at Gamma while the Ewald
+         * *energy* -- which depends only on geometry -- is unchanged: measured -0.02549078
+         * against a −dE_ewald/dy of -0.05098040.
+         *
+         * Both sums over the atoms, S(G) and the one against each atom's phases, are the
+         * structure factor calculator's; what is formed here is per G-vector.
+         */
         const int number_of_atoms = crystal_structure_.number_of_atoms();
-        std::vector<Vector3D> atomic_positions(static_cast<std::size_t>(number_of_atoms));
         std::vector<Real> valence_charges(static_cast<std::size_t>(number_of_atoms));
         for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
-            atomic_positions[atom_index] =
-                crystal_structure_.convert_from_crystal_to_cartesian(atom_index);
-            valence_charges[atom_index] = crystal_structure_.valence_charge(
-                crystal_structure_.species_type_index(atom_index));
+            valence_charges[static_cast<std::size_t>(atom_index)] =
+                crystal_structure_.valence_charge(
+                    crystal_structure_.species_type_index(atom_index));
         }
-        std::vector<Complex> structure_factors(static_cast<std::size_t>(number_of_atoms));
         const LocalDensityGLayout& layout = planewave_basis_.local_density_g_layout();
+        std::vector<int> g_vector_indices;
+        g_vector_indices.reserve(static_cast<std::size_t>(layout.size()));
         for (int entry = 0; entry < layout.size(); entry++) {
             const int g_vector_index = layout.global_g_indices()[entry];
-            if (g_vector_index < first_nonzero_g_index) {
-                continue;
+            if (g_vector_index >= first_nonzero_g_index) {
+                g_vector_indices.push_back(g_vector_index);
             }
-            const auto& g_vector = planewave_basis_.g_vectors()[g_vector_index];
+        }
+        std::vector<std::vector<Complex>> phase_weights =
+            structure_factor_calculator_.structure_factors(g_vector_indices, {valence_charges});
+        const Real half_sphere_scale = planewave_basis_.is_gamma_only() ? 2.0 : 1.0;
+        const Real prefactor =
+            electron_charge_squared_rydberg * two_pi / crystal_structure_.cell_volume();
+        for (std::size_t entry = 0; entry < g_vector_indices.size(); entry++) {
+            const auto& g_vector = planewave_basis_.g_vectors()[g_vector_indices[entry]];
             Real g_vector_squared = g_vector.magnitude_squared *
                                     crystal_structure_.two_pi_over_lattice_parameter_squared();
-            /**
-             * factor = 2 · exp(-G²/4α) / G², doubled again on a half sphere.
-             *
-             * The 2 is not about the sphere, and it is not the Rydberg e²
-             * either — that is applied separately below. It is the factor from
-             * differentiating a modulus squared: ∂|ρ(G)|²/∂τ = 2 Re[ρ* ∂ρ/∂τ].
-             * So it is correct for the full-sphere G list Q3 normally builds.
-             * Gamma-only stores only the positive half sphere
-             * (`g_vectors_grid.hpp`), and
-             * the summand here is *even* under G → −G (the imaginary part is
-             * odd and G_α is odd), so the missing half contributes exactly as
-             * much again.
-             *
-             * Without this the Ewald force is exactly half at Gamma while the
-             * Ewald *energy* — which depends only on geometry — is unchanged:
-             * measured -0.02549078 against a −dE_ewald/dy of -0.05098040.
-             */
-            Real half_sphere_scale = planewave_basis_.is_gamma_only() ? 2.0 : 1.0;
             Real factor = std::exp(-g_vector_squared / alpha / 4.0) / g_vector_squared * 2.0 *
                           half_sphere_scale;
-
-            // Each atom's phase once: it enters S(G) and that atom's own term below.
-            Complex valence_charge_density_g(0.0, 0.0);
-            for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
-                Real phase = two_pi * g_vector.g_cart.dot(atomic_positions[atom_index]);
-                structure_factors[atom_index] = compute_phase_factor(phase);
-                valence_charge_density_g +=
-                    valence_charges[atom_index] * structure_factors[atom_index];
-            }
-
-            for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
-                const Complex& structure_factor_i = structure_factors[atom_index];
-                Real valence_charge_i = valence_charges[atom_index];
-
-                for (int direction = 0; direction < 3; direction++) {
-                    Real g_cartesian_component = g_vector.g_cart[direction] *
-                                                 crystal_structure_.two_pi_over_lattice_parameter();
-                    Real force_prefactor = valence_charge_i * factor * g_cartesian_component;
-                    Complex complex_product =
-                        valence_charge_density_g * std::conj(structure_factor_i);
-                    /**
-                     * F_{G,α} = +(e²⋅2π/Ω) factor Z_i G_α Im[S(G) e^{-iGτ_i}]
-                     * complex_product = S(G) × conj(e^{iGτ_i}) = S(G) × e^{-iGτ_i}.
-                     * Im[S e^{-iGτ}] = -Im[e^{+iGτ} S*] (conjugate of correct formula),
-                     * combined with the F = -∂E/∂τ sign, the result is +=.
-                     */
-                    forces[atom_index][direction] += electron_charge_squared_rydberg * two_pi /
-                                                     crystal_structure_.cell_volume() *
-                                                     force_prefactor * complex_product.imag();
-                }
+            phase_weights[0][entry] *= prefactor * factor;
+        }
+        std::vector<Vector3D> forces = structure_factor_calculator_.gradient_phase_sums(
+            g_vector_indices,
+            phase_weights,
+            std::vector<int>(static_cast<std::size_t>(number_of_atoms), 0));
+        for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+            for (int direction = 0; direction < 3; direction++) {
+                forces[static_cast<std::size_t>(atom_index)][direction] *=
+                    valence_charges[static_cast<std::size_t>(atom_index)] *
+                    crystal_structure_.two_pi_over_lattice_parameter();
             }
         }
         planewave_basis_.complete_density_g_sums(forces);
@@ -229,6 +221,7 @@ class EwaldForceCalculator {
   private:
     const Crystal& crystal_structure_;
     const PlanewaveBasis& planewave_basis_;
+    const StructureFactorCalculator& structure_factor_calculator_;
 };
 
 } // namespace q3

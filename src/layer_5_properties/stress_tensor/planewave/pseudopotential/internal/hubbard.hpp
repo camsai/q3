@@ -696,16 +696,11 @@ class HubbardStressTensorCalculator {
                         "Ortho-atomic ultrasoft Hubbard stress requires an execution policy");
                 }
 
-                Matrix<Complex> canonical_beta_projectors(
-                    static_cast<size_t>(total_projectors),
-                    static_cast<size_t>(number_of_plane_waves));
-                std::copy(beta_projectors.begin(),
-                          beta_projectors.end(),
-                          canonical_beta_projectors.data());
-                auto overlap_operator = create_overlap_operator(crystal_structure_,
-                                                                scf_state_.quantum_system(),
-                                                                canonical_beta_projectors,
-                                                                *scf_state_.execution_policy);
+                auto overlap_operator =
+                    create_overlap_operator(crystal_structure_,
+                                            scf_state_.quantum_system(),
+                                            scf_state_.projector_set(kpoint_index),
+                                            *scf_state_.execution_policy);
 
                 std::vector<Complex> overlap_applied_orbitals(atomic_orbitals.size());
                 overlap_operator->apply_batch(number_of_plane_waves,
@@ -1387,20 +1382,11 @@ class HubbardStressTensorCalculator {
             return;
 
         const auto& basis = scf_state_.quantum_system().pseudopotential_basis();
-        Matrix<Complex> canonical_projectors;
-        compute_kleinman_bylander_projectors(kpoint_grid_[kpoint_index].coordinates,
-                                             crystal_structure_,
-                                             planewave_basis_,
-                                             basis.pseudopotential_set(),
-                                             basis.beta_function_table(),
-                                             plane_wave_indices,
-                                             number_of_plane_waves,
-                                             total_projectors,
-                                             canonical_projectors);
-        for (int projector = 0; projector < total_projectors; projector++)
-            for (int g_index = 0; g_index < number_of_plane_waves; g_index++)
-                beta_projectors[static_cast<size_t>(projector) * number_of_plane_waves + g_index] =
-                    canonical_projectors[projector][g_index];
+        const KleinmanBylanderProjectorSet& canonical_projectors =
+            scf_state_.projector_set(kpoint_index);
+        std::copy(canonical_projectors.host(),
+                  canonical_projectors.host() + block,
+                  beta_projectors.begin());
 
         Real inverse_sqrt_cell_volume = 1.0 / std::sqrt(crystal_structure_.cell_volume());
         Real two_pi_over_lattice_parameter = crystal_structure_.two_pi_over_lattice_parameter();

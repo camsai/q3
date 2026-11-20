@@ -20,10 +20,11 @@
 #include <cstring>
 #include <memory>
 #include <numeric>
-#include <random>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "layer_0_core/execution/threading.hpp"
 #include "layer_0_core/logging/init.hpp"
 #include "layer_0_core/math/integration/simpson.hpp"
 #include "layer_0_core/math/interpolation/lagrange.hpp"
@@ -32,17 +33,19 @@
 #include "layer_0_core/math/spherical/bessel.hpp"
 #include "layer_0_core/math/spherical/harmonics.hpp"
 #include "layer_0_core/math/tolerances.hpp"
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_1_structure/reciprocal_space/kpoints_grid.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/atomic_orbital_builder.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/wavefunction_atomic.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
 #include "layer_3_representation/pseudopotential/set.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/init.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/norm_conserving/init.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/ultrasoft/init.hpp"
+#include "layer_3_representation/wavefunction/planewave/starting_subspace_solver.hpp"
 
 #include "layer_0_core/math/linear_algebra/lapack.hpp"
 
@@ -136,44 +139,35 @@ class NormConservingPlanewaveWavefunctionInitializer {
 
         int number_of_atomic_wavefunctions = static_cast<int>(pure_atomic_orbitals.size());
         int total_wavefunction_count = std::max(number_of_atomic_wavefunctions, number_of_bands);
-        atomic_wavefunctions.assign(total_wavefunction_count,
-                                    std::vector<Complex>(number_of_plane_waves, Complex(0.0, 0.0)));
+        /**
+         * The orbitals are moved in, and only the vectors beyond them are allocated here.
+         * Allocating and zeroing every vector first, to replace most of them a line later,
+         * was 200 MB per k-point on a 64-atom cell for nothing.
+         */
+        atomic_wavefunctions.clear();
+        atomic_wavefunctions.resize(static_cast<std::size_t>(total_wavefunction_count));
         for (int wavefunction_index = 0; wavefunction_index < number_of_atomic_wavefunctions;
              wavefunction_index++) {
             atomic_wavefunctions[wavefunction_index] =
                 std::move(pure_atomic_orbitals[wavefunction_index]);
         }
+        for (int wavefunction_index = number_of_atomic_wavefunctions;
+             wavefunction_index < total_wavefunction_count;
+             wavefunction_index++) {
+            atomic_wavefunctions[wavefunction_index].assign(
+                static_cast<std::size_t>(number_of_plane_waves), Complex(0.0, 0.0));
+        }
 
         /**
-         * Symmetry-breaking hook, currently INERT: the coefficient below is 0.0,
-         * so the loop that follows multiplies every coefficient by exactly 1 and
-         * no perturbation is applied. It is kept as the place a perturbation
-         * would go, not as one that happens. See the audit note (R-D5-1) --
-         * either the branch goes, or a magnitude criterion gets written down.
-         *
-         * The branch exists at all because a perturbation is only useful when
-         * the atomic orbitals already cover the band count: when they do not,
-         * the random padding below breaks the same degeneracy for free.
+         * No perturbation is applied when the atomic orbitals already cover
+         * the band count. A hook for one stood here with its coefficient at
+         * 0.0: it multiplied every coefficient by exactly 1, and to do that
+         * drew two random numbers and took a sine and a cosine per plane wave
+         * per vector -- most of this method's time on a large cell. When the
+         * orbitals fall short, the random padding below breaks the same
+         * degeneracy for free.
          */
-        static constexpr int default_random_seed = 42;
-        std::mt19937 random_number_generator(default_random_seed +
-                                             kpoint_index); // deterministic seed per k-point
-        std::uniform_real_distribution<Real> distribution(0.0, 1.0);
-
-        if (number_of_atomic_wavefunctions >= number_of_bands) {
-            for (int wavefunction_loop_index = 0;
-                 wavefunction_loop_index < total_wavefunction_count;
-                 wavefunction_loop_index++) {
-                for (int g_index = 0; g_index < number_of_plane_waves; g_index++) {
-                    Real random_amplitude = distribution(random_number_generator);
-                    Real random_phase = distribution(random_number_generator);
-                    Real perturbation_arg = constants::two_pi * random_phase;
-                    atomic_wavefunctions[wavefunction_loop_index][g_index] *=
-                        (1.0 + 0.0 * Complex(random_amplitude * std::cos(perturbation_arg),
-                                             random_amplitude * std::sin(perturbation_arg)));
-                }
-            }
-        } else {
+        if (number_of_atomic_wavefunctions < number_of_bands) {
             /**
              * Fill the missing vectors with random coefficients. Each is drawn from
              * a hash of the k-point, the vector and the plane wave's Miller indices,
@@ -215,31 +209,24 @@ class NormConservingPlanewaveWavefunctionInitializer {
      * subspace matrices are real symmetric, so a real solver is both cheaper and
      * the one that keeps the rotated basis gamma-symmetric.
      *
-     * This overload accepts pre-computed KB projectors to avoid redundant recomputation.
-     *
-     * `smooth_potential` is the local potential on this rank's part of the
-     * wavefunction grid, already multiplied by 1/N of that grid -- what the
-     * Hamiltonian application holds, not the density-grid potential the SCF
-     * stores.
+     * `subspace_solver` does the three operations that scale with the plane-wave count --
+     * H on the starting vectors, the two subspace projections and the rotation -- and the
+     * caller has prepared it for this k-point and potential. What is left here is the same
+     * whoever does them: packing the vectors, the small eigenproblem, and the eigenvalues.
+     * SerialStartingSubspaceSolver is the host implementation; a diagonalizer with a device
+     * offers its own.
      */
-    void rotate_wavefunctions(
-        int kpoint_index,
-        int kpoint_index_state,
-        int number_of_plane_waves,
-        int number_of_bands,
-        const std::vector<int>& g_vector_indices,
-        const std::vector<Real>& kinetic_energy_squared,
-        const std::vector<Real>& smooth_potential,
-        const Crystal& crystal_structure,
-        const KPointsGrid& kpoint_grid,
-        const PlanewaveBasis& planewave_basis,
-        const execution::PlanewaveExecutionPolicy& execution_policy,
-        const NormConservingPlanewaveKohnShamQuantumSystem& pseudopotential_quantum_system,
-        const std::vector<std::vector<Complex>>& atomic_wavefunctions,
-        PlanewaveKohnShamQuantumSystem& quantum_system,
-        const Matrix<Complex>& precomputed_kleinman_bylander_potential) {
+    void rotate_wavefunctions(int kpoint_index_state,
+                              int number_of_plane_waves,
+                              int number_of_bands,
+                              const PlanewaveBasis& planewave_basis,
+                              const execution::PlanewaveExecutionPolicy& execution_policy,
+                              const std::vector<std::vector<Complex>>& atomic_wavefunctions,
+                              PlanewaveKohnShamQuantumSystem& quantum_system,
+                              StartingSubspaceSolver& subspace_solver) {
+        StageTimer whole_rotation_timer("setup.rotation.initializer");
+        std::optional<StageTimer> pack_timer(std::in_place, "setup.rotation.pack");
         int number_of_starting_wavefunctions = static_cast<int>(atomic_wavefunctions.size());
-        int leading_dimension = std::max(number_of_plane_waves, 1);
 
         /**
          * Pack atomic wavefunctions into contiguous column-major matrix:
@@ -248,59 +235,27 @@ class NormConservingPlanewaveWavefunctionInitializer {
         std::vector<Complex> contiguous_wavefunctions(static_cast<size_t>(number_of_plane_waves) *
                                                           number_of_starting_wavefunctions,
                                                       Complex(0.0, 0.0));
+        // One vector per thread at a time: the copy is as large as the starting set itself.
+        int pack_threads =
+            execution::threading::thread_count_for(number_of_starting_wavefunctions, 1);
+#pragma omp parallel for schedule(static) num_threads(pack_threads) if (pack_threads > 1)
         for (int wavefunction_index = 0; wavefunction_index < number_of_starting_wavefunctions;
              wavefunction_index++) {
-            std::memcpy(&contiguous_wavefunctions[wavefunction_index * number_of_plane_waves],
+            std::memcpy(&contiguous_wavefunctions[static_cast<std::size_t>(wavefunction_index) *
+                                                  number_of_plane_waves],
                         atomic_wavefunctions[wavefunction_index].data(),
                         number_of_plane_waves * sizeof(Complex));
         }
 
-        // Apply H to all atomic wfcs using smooth grid + ZGEMM for KB projectors
-        std::vector<Complex> contiguous_hamiltonian_wavefunctions(
-            static_cast<size_t>(number_of_plane_waves) * number_of_starting_wavefunctions,
-            Complex(0.0, 0.0));
-        apply_hamiltonian_batch_contiguous(number_of_plane_waves,
-                                           number_of_starting_wavefunctions,
-                                           g_vector_indices,
-                                           kinetic_energy_squared,
-                                           smooth_potential,
-                                           crystal_structure,
-                                           kpoint_grid,
-                                           kpoint_index,
-                                           planewave_basis,
-                                           execution_policy,
-                                           pseudopotential_quantum_system,
-                                           precomputed_kleinman_bylander_potential,
-                                           contiguous_wavefunctions.data(),
-                                           contiguous_hamiltonian_wavefunctions.data());
+        pack_timer.reset();
+        // The solver keeps χ and Hχ where it computes them; see the interface.
+        std::optional<StageTimer> hamiltonian_timer(std::in_place, "setup.rotation.hamiltonian");
+        subspace_solver.apply_hamiltonian(contiguous_wavefunctions.data(),
+                                          number_of_starting_wavefunctions);
 
-        /**
-         * Apply S to every starting vector. For norm-conserving pseudopotentials
-         * S = I, so the overlap-applied set IS the input set and nothing is
-         * allocated: everything downstream reads it, so pointing at the input
-         * is enough. Ultrasoft needs the q_ij augmentation and so needs its own
-         * buffer. This block is the tallest point of a run's setup, and memory
-         * released here is not returned to the system, so the array not taken
-         * is worth more than its lifetime suggests.
-         */
-        std::vector<Complex> contiguous_overlap_storage;
-        Complex* contiguous_overlap_wavefunctions = contiguous_wavefunctions.data();
-        if (pseudopotential_quantum_system.has_ultrasoft()) {
-            // US overlap: S|ψ⟩ = |ψ⟩ + Σ_ab q_ab |β_a⟩⟨β_b|ψ⟩
-            contiguous_overlap_storage.assign(contiguous_wavefunctions.begin(),
-                                              contiguous_wavefunctions.end());
-            contiguous_overlap_wavefunctions = contiguous_overlap_storage.data();
-            apply_overlap_contiguous(number_of_plane_waves,
-                                     number_of_starting_wavefunctions,
-                                     crystal_structure,
-                                     execution_policy,
-                                     pseudopotential_quantum_system,
-                                     precomputed_kleinman_bylander_potential,
-                                     contiguous_wavefunctions.data(),
-                                     contiguous_overlap_wavefunctions);
-        }
-
-        // Build H_ij = χ†·Hχ and S_ij = χ†·Sχ via ZGEMM
+        // H_ij = χ†·Hχ and S_ij = χ†·Sχ
+        hamiltonian_timer.reset();
+        std::optional<StageTimer> subspace_timer(std::in_place, "setup.rotation.subspace_matrices");
         std::vector<Complex> hamiltonian_matrix(
             static_cast<size_t>(number_of_starting_wavefunctions) *
                 number_of_starting_wavefunctions,
@@ -308,132 +263,7 @@ class NormConservingPlanewaveWavefunctionInitializer {
         std::vector<Complex> overlap_matrix(static_cast<size_t>(number_of_starting_wavefunctions) *
                                                 number_of_starting_wavefunctions,
                                             Complex(0.0, 0.0));
-
-        std::complex<double> alpha_one(1.0, 0.0);
-        std::complex<double> beta_zero(0.0, 0.0);
-
-        auto* cast_wavefunctions =
-            reinterpret_cast<std::complex<double>*>(contiguous_wavefunctions.data());
-        auto* cast_hamiltonian_wavefunctions =
-            reinterpret_cast<std::complex<double>*>(contiguous_hamiltonian_wavefunctions.data());
-        auto* cast_overlap_wavefunctions =
-            reinterpret_cast<std::complex<double>*>(contiguous_overlap_wavefunctions);
-
-        if (planewave_basis.is_gamma_only()) {
-            /**
-             * Gamma-only: use DGEMM on interleaved real/imaginary parts.
-             * Reinterpret complex arrays as double arrays of length 2*npw.
-             * DGEMM("T","N", n, n, 2*npw, alpha=2) computes 2*Re(Σ conj(a)*b)
-             * which is the gamma inner product before G=0 correction.
-             */
-            int leading_dimension = std::max(number_of_plane_waves, 1);
-            int double_number_of_plane_waves = 2 * number_of_plane_waves;
-            int double_leading_dimension = 2 * leading_dimension;
-            double alpha_two = 2.0;
-            double d_beta_zero = 0.0;
-
-            auto* real_wavefunctions = reinterpret_cast<double*>(contiguous_wavefunctions.data());
-            auto* real_hamiltonian_wavefunctions =
-                reinterpret_cast<double*>(contiguous_hamiltonian_wavefunctions.data());
-            auto* real_overlap_wavefunctions =
-                reinterpret_cast<double*>(contiguous_overlap_wavefunctions);
-
-            // H_ij = 2*Re(χ†·Hχ) via DGEMM
-            std::vector<double> hamiltonian_matrix_real(
-                static_cast<size_t>(number_of_starting_wavefunctions) *
-                    number_of_starting_wavefunctions,
-                0.0);
-            dgemm_("T",
-                   "N",
-                   &number_of_starting_wavefunctions,
-                   &number_of_starting_wavefunctions,
-                   &double_number_of_plane_waves,
-                   &alpha_two,
-                   real_wavefunctions,
-                   &double_leading_dimension,
-                   real_hamiltonian_wavefunctions,
-                   &double_leading_dimension,
-                   &d_beta_zero,
-                   hamiltonian_matrix_real.data(),
-                   &number_of_starting_wavefunctions);
-
-            // S_ij = 2*Re(χ†·Sχ) via DGEMM
-            std::vector<double> overlap_matrix_real(
-                static_cast<size_t>(number_of_starting_wavefunctions) *
-                    number_of_starting_wavefunctions,
-                0.0);
-            dgemm_("T",
-                   "N",
-                   &number_of_starting_wavefunctions,
-                   &number_of_starting_wavefunctions,
-                   &double_number_of_plane_waves,
-                   &alpha_two,
-                   real_wavefunctions,
-                   &double_leading_dimension,
-                   real_overlap_wavefunctions,
-                   &double_leading_dimension,
-                   &d_beta_zero,
-                   overlap_matrix_real.data(),
-                   &number_of_starting_wavefunctions);
-
-            // G=0 correction: subtract Re(conj(left_g0)*right_g0)
-            if (planewave_basis.gamma_origin_is_local()) {
-                for (int column = 0; column < number_of_starting_wavefunctions; ++column) {
-                    Complex h_right_g0 =
-                        contiguous_hamiltonian_wavefunctions[column * number_of_plane_waves];
-                    Complex s_right_g0 =
-                        contiguous_overlap_wavefunctions[column * number_of_plane_waves];
-                    for (int row = 0; row < number_of_starting_wavefunctions; ++row) {
-                        Complex left_g0 = contiguous_wavefunctions[row * number_of_plane_waves];
-                        int index = column * number_of_starting_wavefunctions + row;
-                        hamiltonian_matrix_real[index] -= (std::conj(left_g0) * h_right_g0).real();
-                        overlap_matrix_real[index] -= (std::conj(left_g0) * s_right_g0).real();
-                    }
-                }
-            }
-
-            // Copy to Complex matrices for zhegv
-            for (int index = 0;
-                 index < number_of_starting_wavefunctions * number_of_starting_wavefunctions;
-                 ++index) {
-                hamiltonian_matrix[index] = Complex(hamiltonian_matrix_real[index], 0.0);
-                overlap_matrix[index] = Complex(overlap_matrix_real[index], 0.0);
-            }
-        } else {
-            int leading_dimension = std::max(number_of_plane_waves, 1);
-            /**
-             * Non-gamma: use ZGEMM
-             * H_ij = χ†·Hχ: ZGEMM('C', 'N', n_wfc, n_wfc, npw)
-             */
-            zgemm_("C",
-                   "N",
-                   &number_of_starting_wavefunctions,
-                   &number_of_starting_wavefunctions,
-                   &number_of_plane_waves,
-                   &alpha_one,
-                   cast_wavefunctions,
-                   &leading_dimension,
-                   cast_hamiltonian_wavefunctions,
-                   &leading_dimension,
-                   &beta_zero,
-                   reinterpret_cast<std::complex<double>*>(hamiltonian_matrix.data()),
-                   &number_of_starting_wavefunctions);
-
-            // S_ij = χ†·Sχ: ZGEMM('C', 'N', n_wfc, n_wfc, npw)
-            zgemm_("C",
-                   "N",
-                   &number_of_starting_wavefunctions,
-                   &number_of_starting_wavefunctions,
-                   &number_of_plane_waves,
-                   &alpha_one,
-                   cast_wavefunctions,
-                   &leading_dimension,
-                   cast_overlap_wavefunctions,
-                   &leading_dimension,
-                   &beta_zero,
-                   reinterpret_cast<std::complex<double>*>(overlap_matrix.data()),
-                   &number_of_starting_wavefunctions);
-        }
+        subspace_solver.project(hamiltonian_matrix.data(), overlap_matrix.data());
 
         /**
          * Reduce H_ij and S_ij across band ranks within this pool.
@@ -451,6 +281,8 @@ class NormConservingPlanewaveWavefunctionInitializer {
          * For gamma-only, use dsygv (real symmetric) to guarantee real
          * eigenvectors that preserve gamma symmetry after ZGEMM rotation.
          */
+        subspace_timer.reset();
+        std::optional<StageTimer> eigensolver_timer(std::in_place, "setup.rotation.eigensolver");
         std::vector<Real> subspace_eigenvalues(number_of_starting_wavefunctions, 0.0);
         int info;
         int eigenproblem_type = 1;
@@ -527,9 +359,11 @@ class NormConservingPlanewaveWavefunctionInitializer {
                    &info);
         }
 
+        eigensolver_timer.reset();
         if (info != 0) {
             log::error("LAPACK eigensolver failed in rotate_wavefunctions with info = {}", info);
         }
+        StageTimer rotation_timer("setup.rotation.rotate");
 
         // Store eigenvalues
         for (int band_index = 0; band_index < number_of_bands; band_index++) {
@@ -538,26 +372,14 @@ class NormConservingPlanewaveWavefunctionInitializer {
         }
 
         /**
-         * Rotate wavefunctions: evc = χ · eigenvectors via ZGEMM
+         * Rotate wavefunctions: evc = χ · eigenvectors
          * evc(npw × n_bands) = χ(npw × n_wfc) · c(n_wfc × n_bands)
          * The eigenvectors are stored column-major in hamiltonian_matrix after zhegv.
+         * The solver does the product where it holds χ and stores the bands in the quantum
+         * system itself.
          */
-        std::vector<Complex> rotated_wavefunctions(
-            static_cast<size_t>(number_of_plane_waves) * number_of_bands, Complex(0.0, 0.0));
-
-        zgemm_("N",
-               "N",
-               &number_of_plane_waves,
-               &number_of_bands,
-               &number_of_starting_wavefunctions,
-               &alpha_one,
-               cast_wavefunctions,
-               &leading_dimension,
-               reinterpret_cast<std::complex<double>*>(hamiltonian_matrix.data()),
-               &number_of_starting_wavefunctions,
-               &beta_zero,
-               reinterpret_cast<std::complex<double>*>(rotated_wavefunctions.data()),
-               &leading_dimension);
+        subspace_solver.rotate_into_bands(
+            hamiltonian_matrix.data(), number_of_bands, quantum_system, kpoint_index_state);
 
         /**
          * Gamma-only: enforce real G=0 for the rotated wavefunctions, which the
@@ -574,19 +396,10 @@ class NormConservingPlanewaveWavefunctionInitializer {
          */
         if (planewave_basis.is_gamma_only() && planewave_basis.gamma_origin_is_local()) {
             for (int band_index = 0; band_index < number_of_bands; ++band_index) {
-                Complex& g_zero_coefficient =
-                    rotated_wavefunctions[band_index * number_of_plane_waves];
+                Complex& g_zero_coefficient = quantum_system.mutable_wavefunction_band_data(
+                    kpoint_index_state, band_index)[0];
                 g_zero_coefficient = Complex(g_zero_coefficient.real(), 0.0);
             }
-        }
-
-        // Copy rotated wavefunctions into quantum system
-        for (int band_index = 0; band_index < number_of_bands; band_index++) {
-            Complex* band_data =
-                quantum_system.wavefunction_band_data(kpoint_index_state, band_index);
-            std::memcpy(band_data,
-                        &rotated_wavefunctions[band_index * number_of_plane_waves],
-                        number_of_plane_waves * sizeof(Complex));
         }
     }
 
@@ -631,557 +444,6 @@ class NormConservingPlanewaveWavefunctionInitializer {
     Real q_spacing_ =
         math::tolerances::default_q_grid_spacing; // grid spacing in atomic units (matching QE)
     int number_of_q_points_ = 0;                  // table size
-
-    /**
-     * Apply H|ψ⟩ for a batch of vectors using contiguous layout.
-     *
-     * Uses the smooth (wavefunction) FFT grid instead of the dense (charge density) grid
-     * for ~3.4× faster FFTs, and batched ZGEMM for KB projectors.
-     *
-     * Input/output layout: column-major, psi[g + vector * npw].
-     */
-    static void apply_hamiltonian_batch_contiguous(
-        int number_of_plane_waves,
-        int number_of_vectors,
-        const std::vector<int>& g_vector_indices,
-        const std::vector<Real>& kinetic_energy_squared,
-        const std::vector<Real>& smooth_potential, // Accepts precomputed smooth potential
-        const Crystal& crystal_structure,
-        const KPointsGrid& kpoint_grid,
-        int kpoint_index,
-        const PlanewaveBasis& planewave_basis,
-        const execution::PlanewaveExecutionPolicy& execution_policy,
-        const NormConservingPlanewaveKohnShamQuantumSystem& pseudopotential_quantum_system,
-        const Matrix<Complex>& kleinman_bylander_potential,
-        const Complex* psi_wavefunctions,
-        Complex* hamiltonian_psi_wavefunctions) {
-        // Use smooth (wavefunction) FFT grid for V·ψ product
-        int local_smooth_grid_points = planewave_basis.fft_wave().local_grid_points();
-        /**
-         * Sized for whichever of the two layouts is larger: the scatter fills
-         * reciprocal space, the transform leaves real space, and under the
-         * stick layout those counts differ.
-         */
-        int transform_buffer_points =
-            std::max(local_smooth_grid_points, planewave_basis.fft_wave().local_g_space_points());
-
-        // Precompute G→smooth FFT mapping (constant across all vectors)
-        std::vector<int> g_to_fft_mapping(number_of_plane_waves);
-        for (int g_vector_index = 0; g_vector_index < number_of_plane_waves; g_vector_index++) {
-            const auto& g_vector = planewave_basis.g_vectors()[g_vector_indices[g_vector_index]];
-            g_to_fft_mapping[g_vector_index] =
-                planewave_basis.fft_wave().g_vector_to_fft_grid_index(
-                    g_vector.miller.x, g_vector.miller.y, g_vector.miller.z);
-        }
-
-        // Pre-compute -G FFT mapping for gamma-only
-        std::vector<int> minus_g_to_fft_mapping;
-        bool is_gamma_only = planewave_basis.is_gamma_only();
-        /**
-         * G = 0 is its own mirror. On the rank that holds it, it is index 0 and
-         * is written once; on every other rank index 0 is an ordinary G with a
-         * mirror of its own, so the mirrored loops start there.
-         */
-        int first_mirrored_index = planewave_basis.gamma_origin_is_local() ? 1 : 0;
-        if (is_gamma_only) {
-            minus_g_to_fft_mapping.resize(number_of_plane_waves);
-            for (int g_vector_index = 0; g_vector_index < number_of_plane_waves; g_vector_index++) {
-                const auto& g_vector =
-                    planewave_basis.g_vectors()[g_vector_indices[g_vector_index]];
-                minus_g_to_fft_mapping[g_vector_index] =
-                    planewave_basis.fft_wave().g_vector_to_fft_grid_index(
-                        -g_vector.miller.x, -g_vector.miller.y, -g_vector.miller.z);
-            }
-        }
-
-        // Process vectors: kinetic + local potential via smooth FFT
-        std::vector<Complex> psi_real_space(transform_buffer_points, Complex(0.0, 0.0));
-
-        if (is_gamma_only) {
-            // Gamma-only: two-bands-at-a-time
-            for (int pair_index = 0; pair_index < number_of_vectors; pair_index += 2) {
-                int band_1 = pair_index;
-                int band_2 = pair_index + 1;
-                bool has_second_band = (band_2 < number_of_vectors);
-
-                const Complex* psi_1 = &psi_wavefunctions[band_1 * number_of_plane_waves];
-                Complex* hpsi_1 = &hamiltonian_psi_wavefunctions[band_1 * number_of_plane_waves];
-                const Complex* psi_2 =
-                    has_second_band ? &psi_wavefunctions[band_2 * number_of_plane_waves] : nullptr;
-                Complex* hpsi_2 =
-                    has_second_band ? &hamiltonian_psi_wavefunctions[band_2 * number_of_plane_waves]
-                                    : nullptr;
-
-                // 1. Kinetic energy (done per-band, not part of the FFT trick)
-                for (int g_index = 0; g_index < number_of_plane_waves; ++g_index) {
-                    hpsi_1[g_index] = kinetic_energy_squared[g_index] * psi_1[g_index];
-                }
-                if (has_second_band) {
-                    for (int g_index = 0; g_index < number_of_plane_waves; ++g_index) {
-                        hpsi_2[g_index] = kinetic_energy_squared[g_index] * psi_2[g_index];
-                    }
-                }
-
-                /**
-                 * 2. Pack two bands: combined(G) = ψ₁(G) + i·ψ₂(G)
-                 *    Scatter to FFT grid with full-sphere reconstruction:
-                 *    grid[fft(+G)] = ψ₁(G) + i·ψ₂(G)
-                 *    grid[fft(-G)] = conj(ψ₁(G)) + i·conj(ψ₂(G))
-                 */
-                std::memset(psi_real_space.data(), 0, transform_buffer_points * sizeof(Complex));
-
-                if (has_second_band) {
-                    if (planewave_basis.gamma_origin_is_local()) {
-                        // G=0 component: (Re psi_1, Re psi_2), once
-                        int fft_index_0 = g_to_fft_mapping[0];
-                        if (fft_index_0 >= 0) {
-                            psi_real_space[fft_index_0] = Complex(psi_1[0].real(), psi_2[0].real());
-                        }
-                    }
-                    // Every other G: scatter +G and -G
-                    for (int g_index = first_mirrored_index; g_index < number_of_plane_waves;
-                         ++g_index) {
-                        int fft_plus = g_to_fft_mapping[g_index];
-                        int fft_minus = minus_g_to_fft_mapping[g_index];
-                        if (fft_plus >= 0) {
-                            // +G: ψ₁(G) + i·ψ₂(G)
-                            Complex p1 = psi_1[g_index];
-                            Complex p2 = psi_2[g_index];
-                            psi_real_space[fft_plus] =
-                                Complex(p1.real() - p2.imag(), p1.imag() + p2.real());
-                            // -G: conj(ψ₁(G)) + i·conj(ψ₂(G))
-                            psi_real_space[fft_minus] =
-                                Complex(p1.real() + p2.imag(), -p1.imag() + p2.real());
-                        }
-                    }
-                } else {
-                    // Single band: standard gamma scatter
-                    for (int g_index = 0; g_index < number_of_plane_waves; ++g_index) {
-                        int fft_index = g_to_fft_mapping[g_index];
-                        if (fft_index >= 0) {
-                            psi_real_space[fft_index] = psi_1[g_index];
-                        }
-                    }
-                    for (int g_index = first_mirrored_index; g_index < number_of_plane_waves;
-                         ++g_index) {
-                        int fft_minus = minus_g_to_fft_mapping[g_index];
-                        psi_real_space[fft_minus] = std::conj(psi_1[g_index]);
-                    }
-                }
-
-                // Inverse FFT → real space
-                planewave_basis.fft_wave().wavefunction_inverse_raw(psi_real_space.data());
-
-                /**
-                 * Multiply by V(r): both bands simultaneously
-                 * After inverse FFT: Re(grid) = ψ₁(r), Im(grid) = ψ₂(r)
-                 * V·ψ₁ = V*Re, V·ψ₂ = V*Im → recombine as complex V*Re + i*V*Im
-                 */
-                for (int index_grid = 0; index_grid < local_smooth_grid_points; ++index_grid) {
-                    psi_real_space[index_grid] *= smooth_potential[index_grid];
-                }
-
-                // Forward FFT → G-space
-                planewave_basis.fft_wave().wavefunction_forward(psi_real_space.data());
-
-                /**
-                 * Separate the two bands using ±G symmetry:
-                 * (V·ψ₁)(G) = [result(+G) + conj(result(-G))] / 2
-                 * (V·ψ₂)(G) = [result(+G) - conj(result(-G))] / (2i)
-                 */
-                if (has_second_band) {
-                    if (planewave_basis.gamma_origin_is_local()) {
-                        // G=0 component
-                        int fft_index_0 = g_to_fft_mapping[0];
-                        if (fft_index_0 >= 0) {
-                            Complex result_0 = psi_real_space[fft_index_0];
-                            hpsi_1[0] += Complex(result_0.real(), 0.0);
-                            hpsi_2[0] += Complex(result_0.imag(), 0.0);
-                        }
-                    }
-                    // Every other G: use ±G symmetry
-                    for (int g_index = first_mirrored_index; g_index < number_of_plane_waves;
-                         ++g_index) {
-                        int fft_plus = g_to_fft_mapping[g_index];
-                        int fft_minus = minus_g_to_fft_mapping[g_index];
-                        if (fft_plus >= 0) {
-                            Complex result_plus = psi_real_space[fft_plus];
-                            Complex result_minus_conj = std::conj(psi_real_space[fft_minus]);
-                            // (V·ψ₁)(G) = (result+ + conj(result-)) / 2
-                            hpsi_1[g_index] += (result_plus + result_minus_conj) * 0.5;
-                            /**
-                             * (V·ψ₂)(G) = (result+ - conj(result-)) / (2i)
-                             *            = -i * (result+ - conj(result-)) / 2
-                             */
-                            Complex diff = (result_plus - result_minus_conj) * 0.5;
-                            hpsi_2[g_index] += Complex(diff.imag(), -diff.real());
-                        }
-                    }
-                } else {
-                    // Single band: standard gather
-                    for (int g_index = 0; g_index < number_of_plane_waves; ++g_index) {
-                        int fft_index = g_to_fft_mapping[g_index];
-                        if (fft_index >= 0) {
-                            hpsi_1[g_index] += psi_real_space[fft_index];
-                        }
-                    }
-                }
-            }
-        } else {
-            // Non-gamma: process one band at a time (original path)
-            for (int vector_index = 0; vector_index < number_of_vectors; ++vector_index) {
-                const Complex* psi_vector =
-                    &psi_wavefunctions[vector_index * number_of_plane_waves];
-                Complex* hamiltonian_psi_vector =
-                    &hamiltonian_psi_wavefunctions[vector_index * number_of_plane_waves];
-
-                // 1. Kinetic energy
-                for (int g_index = 0; g_index < number_of_plane_waves; ++g_index) {
-                    hamiltonian_psi_vector[g_index] =
-                        kinetic_energy_squared[g_index] * psi_vector[g_index];
-                }
-
-                // 2. Local potential via smooth grid FFT
-                std::memset(psi_real_space.data(), 0, transform_buffer_points * sizeof(Complex));
-                for (int g_index = 0; g_index < number_of_plane_waves; ++g_index) {
-                    int fft_index = g_to_fft_mapping[g_index];
-                    if (fft_index >= 0) {
-                        psi_real_space[fft_index] = psi_vector[g_index];
-                    }
-                }
-                planewave_basis.fft_wave().wavefunction_inverse_raw(psi_real_space.data());
-                for (int index_grid = 0; index_grid < local_smooth_grid_points; ++index_grid) {
-                    psi_real_space[index_grid] *= smooth_potential[index_grid];
-                }
-                planewave_basis.fft_wave().wavefunction_forward(psi_real_space.data());
-                for (int g_index = 0; g_index < number_of_plane_waves; ++g_index) {
-                    int fft_index = g_to_fft_mapping[g_index];
-                    if (fft_index >= 0) {
-                        hamiltonian_psi_vector[g_index] += psi_real_space[fft_index];
-                    }
-                }
-            }
-        }
-
-        // 3. Nonlocal PP (KB projectors) via batched ZGEMM for all atoms at once
-        if (kleinman_bylander_potential.empty()) {
-            return;
-        }
-
-        int total_number_of_projectors = static_cast<int>(kleinman_bylander_potential.rows());
-
-        // Step 1: ⟨β_all|ψ⟩
-        std::vector<Complex> all_overlap_coefficients(
-            static_cast<size_t>(total_number_of_projectors) * number_of_vectors, Complex(0.0, 0.0));
-
-        std::complex<double> alpha_one(1.0, 0.0);
-        std::complex<double> beta_zero(0.0, 0.0);
-        std::complex<double> beta_one(1.0, 0.0);
-
-        if (is_gamma_only) {
-            // Gamma-only: DGEMM on interleaved real/imag parts
-            int double_number_of_plane_waves = 2 * number_of_plane_waves;
-            int double_leading_dimension = std::max(double_number_of_plane_waves, 1);
-            double alpha_two = 2.0;
-            double d_beta_zero = 0.0;
-
-            auto* real_projectors = reinterpret_cast<const double*>(kleinman_bylander_potential[0]);
-            auto* real_wavefunctions = reinterpret_cast<const double*>(psi_wavefunctions);
-
-            std::vector<double> overlap_real(
-                static_cast<size_t>(total_number_of_projectors) * number_of_vectors, 0.0);
-            dgemm_("T",
-                   "N",
-                   &total_number_of_projectors,
-                   &number_of_vectors,
-                   &double_number_of_plane_waves,
-                   &alpha_two,
-                   const_cast<double*>(real_projectors),
-                   &double_leading_dimension,
-                   const_cast<double*>(real_wavefunctions),
-                   &double_leading_dimension,
-                   &d_beta_zero,
-                   overlap_real.data(),
-                   &total_number_of_projectors);
-
-            // Remove the origin from the double count where this rank holds it; copy to Complex
-            for (int vector_index = 0; vector_index < number_of_vectors; ++vector_index) {
-                const Complex* psi_g0 = &psi_wavefunctions[vector_index * number_of_plane_waves];
-                for (int projector_index = 0; projector_index < total_number_of_projectors;
-                     ++projector_index) {
-                    int index = projector_index + vector_index * total_number_of_projectors;
-                    if (planewave_basis.gamma_origin_is_local()) {
-                        Complex beta_g0 = kleinman_bylander_potential(projector_index, 0);
-                        overlap_real[index] -= (std::conj(beta_g0) * psi_g0[0]).real();
-                    }
-                    all_overlap_coefficients[index] = Complex(overlap_real[index], 0.0);
-                }
-            }
-        } else {
-            int leading_dimension = std::max(number_of_plane_waves, 1);
-            // Non-gamma: ZGEMM
-            zgemm_("C",
-                   "N",
-                   &total_number_of_projectors,
-                   &number_of_vectors,
-                   &number_of_plane_waves,
-                   &alpha_one,
-                   reinterpret_cast<const std::complex<double>*>(kleinman_bylander_potential[0]),
-                   &leading_dimension,
-                   reinterpret_cast<const std::complex<double>*>(psi_wavefunctions),
-                   &leading_dimension,
-                   &beta_zero,
-                   reinterpret_cast<std::complex<double>*>(all_overlap_coefficients.data()),
-                   &total_number_of_projectors);
-        }
-
-        /**
-         * Each rank summed over its own plane waves; the overlap is the sum
-         * over the pool. A no-op while the coefficients are replicated, which
-         * is why its absence went unnoticed: it only changes the starting
-         * guess, and the SCF converges to the same answer from a wrong one.
-         */
-        execution_policy.reduce_within_pool_vector(
-            reinterpret_cast<std::vector<Real>&>(all_overlap_coefficients));
-
-        // Step 2: Apply block-diagonal D-matrix per atom
-        std::vector<Complex> scaled_overlap_coefficients(
-            static_cast<size_t>(total_number_of_projectors) * number_of_vectors, Complex(0.0, 0.0));
-
-        int starting_projector_index = 0;
-        for (int atom_index = 0; atom_index < crystal_structure.number_of_atoms(); atom_index++) {
-            int species_index = crystal_structure.species_type_index(atom_index);
-            int number_of_projectors =
-                pseudopotential_quantum_system.pseudopotential_basis().number_of_projectors(
-                    species_index);
-            std::vector<int> angular_momentum_values;
-            for (int index_projector = 0; index_projector < number_of_projectors;
-                 index_projector++) {
-                int angular_momentum =
-                    pseudopotential_quantum_system.pseudopotential_basis().beta_angular_momentum(
-                        species_index, index_projector);
-                for (int magnetic_projection : harmonic_order_sequence(angular_momentum)) {
-                    (void)magnetic_projection;
-                    angular_momentum_values.push_back(angular_momentum);
-                }
-            }
-            int number_of_projectors_atom = static_cast<int>(angular_momentum_values.size());
-
-            if (number_of_projectors_atom > 0) {
-                for (int vector_index = 0; vector_index < number_of_vectors; vector_index++) {
-                    int offset_in =
-                        vector_index * total_number_of_projectors + starting_projector_index;
-                    int offset_out =
-                        vector_index * total_number_of_projectors + starting_projector_index;
-                    for (int projector_index_a = 0; projector_index_a < number_of_projectors_atom;
-                         projector_index_a++) {
-                        for (int projector_index_b = 0;
-                             projector_index_b < number_of_projectors_atom;
-                             projector_index_b++) {
-                            Real d_matrix_element = pseudopotential_quantum_system.d_matrix_element(
-                                atom_index, species_index, projector_index_a, projector_index_b);
-                            if (std::abs(d_matrix_element) >
-                                math::tolerances::d_matrix_element_threshold) {
-                                scaled_overlap_coefficients[offset_out + projector_index_a] +=
-                                    d_matrix_element *
-                                    all_overlap_coefficients[offset_in + projector_index_b];
-                            }
-                        }
-                    }
-                }
-                starting_projector_index += number_of_projectors_atom;
-            }
-        }
-
-        int leading_dimension_apply = std::max(number_of_plane_waves, 1);
-        // Step 3: H|ψ⟩ += β_all · w via single ZGEMM('N','N', npw, n_vectors, total_proj)
-        zgemm_("N",
-               "N",
-               &number_of_plane_waves,
-               &number_of_vectors,
-               &total_number_of_projectors,
-               &alpha_one,
-               reinterpret_cast<const std::complex<double>*>(kleinman_bylander_potential[0]),
-               &leading_dimension_apply,
-               reinterpret_cast<const std::complex<double>*>(scaled_overlap_coefficients.data()),
-               &total_number_of_projectors,
-               &beta_one,
-               reinterpret_cast<std::complex<double>*>(hamiltonian_psi_wavefunctions),
-               &leading_dimension_apply);
-    }
-
-    /**
-     * Apply S|ψ⟩ for a batch of vectors using contiguous layout.
-     *
-     * For NC pseudopotentials, S = I so this is a no-op (caller already memcpy'd).
-     * For US pseudopotentials, adds the augmentation overlap contribution.
-     *
-     * Input/output layout: column-major, psi[g + vector * npw].
-     * The output overlap_psi is modified in-place (should be pre-initialized to psi).
-     */
-    static void apply_overlap_contiguous(
-        int number_of_plane_waves,
-        int number_of_vectors,
-        const Crystal& crystal_structure,
-        const execution::PlanewaveExecutionPolicy& execution_policy,
-        const NormConservingPlanewaveKohnShamQuantumSystem& pseudopotential_quantum_system,
-        const Matrix<Complex>& kleinman_bylander_potential,
-        const Complex* psi_wavefunctions,
-        Complex* overlap_psi_wavefunctions) {
-        if (!pseudopotential_quantum_system.has_ultrasoft()) {
-            return;
-        }
-
-        int total_number_of_projectors = static_cast<int>(kleinman_bylander_potential.rows());
-
-        // Step 1: ⟨β_all|ψ⟩
-        std::vector<Complex> all_overlap_coefficients(
-            static_cast<size_t>(total_number_of_projectors) * number_of_vectors, Complex(0.0, 0.0));
-
-        std::complex<double> alpha_one(1.0, 0.0);
-        std::complex<double> beta_zero(0.0, 0.0);
-        std::complex<double> beta_one(1.0, 0.0);
-
-        bool is_gamma_only = pseudopotential_quantum_system.basis().is_gamma_only();
-
-        if (is_gamma_only) {
-            int double_number_of_plane_waves = 2 * number_of_plane_waves;
-            int double_leading_dimension = std::max(double_number_of_plane_waves, 1);
-            double alpha_two = 2.0;
-            double double_beta_zero = 0.0;
-
-            auto* real_projectors = reinterpret_cast<const double*>(kleinman_bylander_potential[0]);
-            auto* real_wavefunctions = reinterpret_cast<const double*>(psi_wavefunctions);
-
-            std::vector<double> overlap_real(
-                static_cast<size_t>(total_number_of_projectors) * number_of_vectors, 0.0);
-            dgemm_("T",
-                   "N",
-                   &total_number_of_projectors,
-                   &number_of_vectors,
-                   &double_number_of_plane_waves,
-                   &alpha_two,
-                   const_cast<double*>(real_projectors),
-                   &double_leading_dimension,
-                   const_cast<double*>(real_wavefunctions),
-                   &double_leading_dimension,
-                   &double_beta_zero,
-                   overlap_real.data(),
-                   &total_number_of_projectors);
-
-            // G=0 correction, on the rank whose list begins with the origin
-            bool has_zero_g_vector = pseudopotential_quantum_system.basis().gamma_origin_is_local();
-            if (has_zero_g_vector) {
-                for (int vector_index = 0; vector_index < number_of_vectors; ++vector_index) {
-                    const Complex* psi_g0 =
-                        &psi_wavefunctions[vector_index * number_of_plane_waves];
-                    for (int projector_index = 0; projector_index < total_number_of_projectors;
-                         ++projector_index) {
-                        Complex beta_g0 = kleinman_bylander_potential(projector_index, 0);
-                        int index = projector_index + vector_index * total_number_of_projectors;
-                        overlap_real[index] -= (std::conj(beta_g0) * psi_g0[0]).real();
-                        all_overlap_coefficients[index] = Complex(overlap_real[index], 0.0);
-                    }
-                }
-            } else {
-                for (size_t index = 0; index < overlap_real.size(); ++index) {
-                    all_overlap_coefficients[index] = Complex(overlap_real[index], 0.0);
-                }
-            }
-        } else {
-            int leading_dimension = std::max(number_of_plane_waves, 1);
-            zgemm_("C",
-                   "N",
-                   &total_number_of_projectors,
-                   &number_of_vectors,
-                   &number_of_plane_waves,
-                   &alpha_one,
-                   reinterpret_cast<const std::complex<double>*>(kleinman_bylander_potential[0]),
-                   &leading_dimension,
-                   reinterpret_cast<const std::complex<double>*>(psi_wavefunctions),
-                   &leading_dimension,
-                   &beta_zero,
-                   reinterpret_cast<std::complex<double>*>(all_overlap_coefficients.data()),
-                   &total_number_of_projectors);
-        }
-
-        // Reduce overlap coefficients across band ranks within this pool
-        execution_policy.reduce_within_pool_vector(
-            reinterpret_cast<std::vector<Real>&>(all_overlap_coefficients));
-
-        // Step 2: Apply q_ij augmentation overlap per atom
-        std::vector<Complex> scaled_overlap_coefficients(
-            static_cast<size_t>(total_number_of_projectors) * number_of_vectors, Complex(0.0, 0.0));
-
-        int starting_projector_index = 0;
-        for (int atom_index = 0; atom_index < crystal_structure.number_of_atoms(); atom_index++) {
-            int element_type = crystal_structure.species_type_index(atom_index);
-            int number_of_beta_functions =
-                pseudopotential_quantum_system.pseudopotential_basis().number_of_projectors(
-                    element_type);
-            std::vector<int> angular_momentums, magnetic_projections, beta_indices;
-            for (int beta_index = 0; beta_index < number_of_beta_functions; beta_index++) {
-                int angular_momentum =
-                    pseudopotential_quantum_system.pseudopotential_basis().beta_angular_momentum(
-                        element_type, beta_index);
-                for (int magnetic_projection : harmonic_order_sequence(angular_momentum)) {
-                    angular_momentums.push_back(angular_momentum);
-                    magnetic_projections.push_back(magnetic_projection);
-                    beta_indices.push_back(beta_index);
-                }
-            }
-            int number_of_projectors_on_atom = static_cast<int>(angular_momentums.size());
-            if (number_of_projectors_on_atom > 0) {
-                for (int vector_index = 0; vector_index < number_of_vectors; vector_index++) {
-                    int offset =
-                        vector_index * total_number_of_projectors + starting_projector_index;
-                    for (int projector_a_index = 0;
-                         projector_a_index < number_of_projectors_on_atom;
-                         projector_a_index++) {
-                        for (int projector_b_index = 0;
-                             projector_b_index < number_of_projectors_on_atom;
-                             projector_b_index++) {
-                            int beta_a = beta_indices[projector_a_index];
-                            int beta_b = beta_indices[projector_b_index];
-                            Real q_value = 0.0;
-                            if (angular_momentums[projector_a_index] ==
-                                    angular_momentums[projector_b_index] &&
-                                magnetic_projections[projector_a_index] ==
-                                    magnetic_projections[projector_b_index]) {
-                                q_value =
-                                    static_cast<const UltrasoftPlanewaveKohnShamQuantumSystem&>(
-                                        pseudopotential_quantum_system)
-                                        .ultrasoft_basis()
-                                        .augmentation_overlap_integral(
-                                            element_type, beta_a, beta_b);
-                            }
-                            if (std::abs(q_value) > math::tolerances::d_matrix_element_threshold) {
-                                scaled_overlap_coefficients[offset + projector_a_index] +=
-                                    q_value * all_overlap_coefficients[offset + projector_b_index];
-                            }
-                        }
-                    }
-                }
-                starting_projector_index += number_of_projectors_on_atom;
-            }
-        }
-
-        int leading_dimension_step3 = std::max(number_of_plane_waves, 1);
-        // Step 3: S|ψ⟩ += β_all · w via ZGEMM
-        zgemm_("N",
-               "N",
-               &number_of_plane_waves,
-               &number_of_vectors,
-               &total_number_of_projectors,
-               &alpha_one,
-               reinterpret_cast<const std::complex<double>*>(kleinman_bylander_potential[0]),
-               &leading_dimension_step3,
-               reinterpret_cast<const std::complex<double>*>(scaled_overlap_coefficients.data()),
-               &total_number_of_projectors,
-               &beta_one,
-               reinterpret_cast<std::complex<double>*>(overlap_psi_wavefunctions),
-               &leading_dimension_step3);
-    }
 };
 
 } // namespace q3

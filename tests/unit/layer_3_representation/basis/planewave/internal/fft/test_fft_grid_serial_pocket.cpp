@@ -8,7 +8,7 @@
 
 #include "layer_0_core/types/init.hpp"
 #include "layer_3_representation/basis/planewave/internal/fft/fft_grid_serial.hpp"
-#include "layer_3_representation/basis/planewave/internal/fft/serial_pocket_fft_grid.hpp"
+#include "layer_3_representation/basis/planewave/internal/fft/fft_grid_serial_pocket.hpp"
 
 using namespace q3;
 

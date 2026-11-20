@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 
 namespace q3 {
@@ -161,6 +162,20 @@ void launch_multiply_potential_single(int number_of_vectors,
     }
 }
 
+void launch_accumulate_density(int number_of_vectors,
+                               int local_grid_points,
+                               const double* weights,
+                               const std::complex<double>* fft_workspace,
+                               double* density) {
+    for (int vector_index = 0; vector_index < number_of_vectors; ++vector_index) {
+        const std::complex<double>* workspace_vec =
+            &fft_workspace[static_cast<std::size_t>(vector_index) * local_grid_points];
+        for (int grid_index = 0; grid_index < local_grid_points; ++grid_index) {
+            density[grid_index] += weights[vector_index] * std::norm(workspace_vec[grid_index]);
+        }
+    }
+}
+
 void launch_gather_fft_grid_to_g(int number_of_vectors,
                                  int number_of_plane_waves,
                                  int local_smooth_grid_points,
@@ -256,6 +271,26 @@ void launch_apply_preconditioner(int number_of_bands,
                 denominator = floor_value;
             }
             residual[g_index] /= denominator;
+        }
+    }
+}
+
+void launch_form_structure_phases(int number_of_g_vectors,
+                                  int number_of_atoms,
+                                  const double* g_cartesian,
+                                  const double* positions,
+                                  double sign,
+                                  std::complex<double>* phases) {
+    constexpr double two_pi = 6.283185307179586476925286766559;
+    for (int atom_index = 0; atom_index < number_of_atoms; ++atom_index) {
+        const double* position = positions + 3 * static_cast<std::size_t>(atom_index);
+        std::complex<double>* atom_phases =
+            phases + static_cast<std::size_t>(atom_index) * number_of_g_vectors;
+        for (int g_index = 0; g_index < number_of_g_vectors; ++g_index) {
+            const double* g_vector = g_cartesian + 3 * static_cast<std::size_t>(g_index);
+            double angle = two_pi * (g_vector[0] * position[0] + g_vector[1] * position[1] +
+                                     g_vector[2] * position[2]);
+            atom_phases[g_index] = std::complex<double>(std::cos(angle), sign * std::sin(angle));
         }
     }
 }

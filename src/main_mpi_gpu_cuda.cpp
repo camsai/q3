@@ -37,12 +37,18 @@
 #include "io/input/parser/factory.hpp"
 #include "io/logger_mpi.hpp"
 #include "io/output/companion_outputs.hpp"
+#include "io/output/device_transfers.hpp"
 #include "layer_0_core/execution/gpu/device/factory.hpp"
 #include "layer_0_core/execution/gpu/device/init.hpp"
 #include "layer_0_core/math/linear_algebra/gpu/blas/init.hpp"
 #include "layer_0_core/math/linear_algebra/gpu/lapack/init.hpp"
 #include "layer_3_representation/basis/planewave/internal/fft/gpu/init.hpp"
-#include "layer_4_computation/diagonalizer/planewave/davidson.hpp"
+#include "layer_4_computation/charge_density/planewave/internal/accumulator_gpu.hpp"
+#include "layer_4_computation/diagonalizer/planewave/davidson_gpu.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/band_projection_calculator_gpu.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/projector_set_builder_gpu.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/projector_strain_overlap_calculator_gpu.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/structure_factor_calculator_gpu.hpp"
 #include "layer_4_computation/flavors/factory.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/execution/mpi.hpp"
 #include "utils/time.hpp"
@@ -108,6 +114,8 @@ int main(int argc, char* argv[]) {
                                             ? options.number_of_kpoint_pools
                                             : input.number_of_kpoint_pools;
         policy->configure_topology(requested_number_of_pools);
+        // The device transforms the bands: the host grids are made for what is left for them.
+        policy->set_bands_are_transformed_on_a_device();
         if (options.distribute_bands) {
             policy->enable_band_distribution();
         }
@@ -125,15 +133,66 @@ int main(int argc, char* argv[]) {
          * MPI from its destructor at the end of main.
          */
         bool is_root = policy->is_root();
+        /**
+         * Projectors against bands, for the projector occupations during the SCF and for
+         * forces and stress after it: on this rank's device, on the bands the eigensolver
+         * leaves there.
+         */
+        auto device_band_projections =
+            std::make_shared<GPUBandProjectionCalculator>(device_backend, *gpu_blas);
         IteratorFactory iterator_factory = [&](const InputData& run_input) {
             auto iterator = create_kohn_sham_iterator(run_input, *policy);
             const execution::ExecutionPolicy& policy_reference = *policy;
-            auto gpu_davidson = std::make_unique<PlanewaveDavidsonDiagonalizer>(
+            auto gpu_davidson = std::make_unique<GPUPlanewaveDavidsonDiagonalizer>(
                 policy_reference, *gpu_blas, gpu_fft_grid.get(), *gpu_eigensolver, device_backend);
             if (use_mixed_precision) {
                 gpu_davidson->set_use_mixed_precision(true);
             }
+            gpu_davidson->set_solves_subspace_on_device(true);
             iterator->set_diagonalizer(std::move(gpu_davidson));
+            iterator->set_band_projection_calculator(device_band_projections);
+            const execution::gpu::blas::GPUBLAS& device_blas = *gpu_blas;
+            iterator->set_projector_strain_overlap_calculator_factory(
+                [device_backend,
+                 &device_blas](const Crystal& crystal_structure,
+                               const PlanewaveBasis& planewave_basis,
+                               const NormConservingPlanewaveBasis& pseudopotential_basis) {
+                    return std::make_unique<GPUProjectorStrainOverlapCalculator>(
+                        crystal_structure,
+                        planewave_basis,
+                        pseudopotential_basis,
+                        device_backend,
+                        device_blas);
+                });
+            iterator->set_structure_factor_calculator_factory(
+                [device_backend, &device_blas](const Crystal& crystal_structure,
+                                               const PlanewaveBasis& planewave_basis) {
+                    return std::make_unique<GPUStructureFactorCalculator>(
+                        crystal_structure, planewave_basis, device_backend, device_blas);
+                });
+            iterator->set_projector_set_builder_factory(
+                [device_backend,
+                 &device_blas](const Crystal& crystal_structure,
+                               const PlanewaveBasis& planewave_basis,
+                               const NormConservingPlanewaveBasis& pseudopotential_basis) {
+                    return std::make_unique<GPUProjectorSetBuilder>(crystal_structure,
+                                                                    planewave_basis,
+                                                                    pseudopotential_basis,
+                                                                    device_backend,
+                                                                    device_blas);
+                });
+
+            if (gpu_fft_grid != nullptr) {
+                const gpu::GPUFFTGrid& device_transform = *gpu_fft_grid;
+                iterator->set_charge_density_accumulator_factory(
+                    [&device_transform,
+                     device_backend](const PlanewaveBasis& basis,
+                                     const KPointsGrid& kpoint_grid,
+                                     const PlanewaveKohnShamQuantumSystem& quantum_system) {
+                        return std::make_unique<GPUPlanewaveChargeDensityAccumulator>(
+                            basis, kpoint_grid, quantum_system, device_transform, device_backend);
+                    });
+            }
             return iterator;
         };
         auto flavor = create_flavor(input.calculation, std::move(iterator_factory));
@@ -142,6 +201,7 @@ int main(int argc, char* argv[]) {
 
         generated::Results results = flavor->run(input);
         if (is_root) {
+            record_device_transfers(results, *device_backend);
             write_results_json(results,
                                input.output_directory + "/" + input.prefix + "_results.json");
             write_companion_outputs(input, results);

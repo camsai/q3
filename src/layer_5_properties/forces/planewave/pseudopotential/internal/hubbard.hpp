@@ -31,8 +31,8 @@
 #include "layer_3_representation/basis/planewave/init.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/atomic_orbital_builder.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/lowdin_orthogonalization.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/wavefunction_atomic.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/ultrasoft/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/overlap/pseudopotential/factory.hpp"
 #include "layer_4_computation/effective_potential/internal/hubbard/hubbard.hpp"
@@ -617,16 +617,8 @@ class HubbardForceCalculator {
                         "Ortho-atomic ultrasoft Hubbard forces require an execution policy");
                 }
 
-                Matrix<Complex> kleinman_bylander_projectors;
-                compute_kleinman_bylander_projectors(kpoint_grid_[kpoint_index].coordinates,
-                                                     crystal_structure_,
-                                                     planewave_basis_,
-                                                     pseudopotential_set,
-                                                     pseudopotential_basis.beta_function_table(),
-                                                     plane_wave_indices,
-                                                     number_of_plane_waves,
-                                                     total_projectors,
-                                                     kleinman_bylander_projectors);
+                const KleinmanBylanderProjectorSet& kleinman_bylander_projectors =
+                    scf_state_.projector_set(kpoint_index);
                 auto overlap_operator = create_overlap_operator(crystal_structure_,
                                                                 scf_state_.quantum_system(),
                                                                 kleinman_bylander_projectors,
@@ -689,16 +681,17 @@ class HubbardForceCalculator {
                     int displaced_projector_channels = projector_channels_by_atom[displaced_atom];
                     for (int channel = 0; channel < displaced_projector_channels; channel++) {
                         int projector_index = displaced_projector_offset + channel;
+                        const Complex* projector =
+                            kleinman_bylander_projectors.projector(projector_index);
                         for (int g_index = 0; g_index < number_of_plane_waves; g_index++) {
                             derivative_projectors[static_cast<size_t>(projector_index) *
                                                       number_of_plane_waves +
                                                   g_index] =
-                                kleinman_bylander_projectors[projector_index][g_index] *
-                                minus_i_k_plus_g[direction][g_index];
+                                projector[g_index] * minus_i_k_plus_g[direction][g_index];
                         }
                     }
 
-                    auto projector_overlaps = contract(kleinman_bylander_projectors.data(),
+                    auto projector_overlaps = contract(kleinman_bylander_projectors.host(),
                                                        total_projectors,
                                                        input_vectors,
                                                        number_of_vectors);
@@ -730,6 +723,8 @@ class HubbardForceCalculator {
                                     overlap_value * projector_overlaps[overlap_index];
                                 Complex projector_coefficient =
                                     overlap_value * derivative_projector_overlaps[overlap_index];
+                                const Complex* projector =
+                                    kleinman_bylander_projectors.projector(projector_row);
                                 for (int g_index = 0; g_index < number_of_plane_waves; g_index++) {
                                     size_t result_index =
                                         static_cast<size_t>(vector_index) * number_of_plane_waves +
@@ -739,8 +734,7 @@ class HubbardForceCalculator {
                                                                   number_of_plane_waves +
                                                               g_index] *
                                             derivative_projector_coefficient +
-                                        kleinman_bylander_projectors[projector_row][g_index] *
-                                            projector_coefficient;
+                                        projector[g_index] * projector_coefficient;
                                 }
                             }
                         }
@@ -1204,16 +1198,8 @@ class HubbardForceCalculator {
                                           number_of_q_points,
                                           all_atomic_orbitals);
 
-            Matrix<Complex> beta_projectors;
-            compute_kleinman_bylander_projectors(kpoint_grid_[kpoint_index].coordinates,
-                                                 crystal_structure_,
-                                                 planewave_basis_,
-                                                 pseudopotential_set,
-                                                 basis.beta_function_table(),
-                                                 plane_wave_indices,
-                                                 number_of_plane_waves,
-                                                 total_projectors,
-                                                 beta_projectors);
+            const KleinmanBylanderProjectorSet& beta_projectors =
+                scf_state_.projector_set(kpoint_index);
 
             std::vector<std::vector<Complex>> minus_i_k_plus_g(
                 3, std::vector<Complex>(number_of_plane_waves));
@@ -1320,11 +1306,11 @@ class HubbardForceCalculator {
             auto phi_beta = contract(orbitals.data(),
                                      total_hubbard_orbitals,
                                      number_of_plane_waves,
-                                     beta_projectors.data(),
+                                     beta_projectors.host(),
                                      total_projectors,
                                      number_of_plane_waves,
                                      nullptr);
-            auto beta_psi = contract(beta_projectors.data(),
+            auto beta_psi = contract(beta_projectors.host(),
                                      total_projectors,
                                      number_of_plane_waves,
                                      wavefunctions.data(),
@@ -1344,11 +1330,11 @@ class HubbardForceCalculator {
                 phi_derivative_beta[direction] = contract(orbitals.data(),
                                                           total_hubbard_orbitals,
                                                           number_of_plane_waves,
-                                                          beta_projectors.data(),
+                                                          beta_projectors.host(),
                                                           total_projectors,
                                                           number_of_plane_waves,
                                                           minus_i_k_plus_g[direction].data());
-                beta_derivative_psi[direction] = contract(beta_projectors.data(),
+                beta_derivative_psi[direction] = contract(beta_projectors.host(),
                                                           total_projectors,
                                                           number_of_plane_waves,
                                                           wavefunctions.data(),

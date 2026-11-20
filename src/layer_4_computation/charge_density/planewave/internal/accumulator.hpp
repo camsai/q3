@@ -44,6 +44,8 @@ class PlanewaveChargeDensityAccumulator {
                                       const PlanewaveKohnShamQuantumSystem& quantum_system)
         : basis_(basis), kpoint_grid_(kpoint_grid), quantum_system_(quantum_system) {}
 
+    virtual ~PlanewaveChargeDensityAccumulator() = default;
+
     /**
      * Compute the real-space charge density and write it into `charge_density_out`.
      *
@@ -61,10 +63,10 @@ class PlanewaveChargeDensityAccumulator {
      * @param charge_density_out        Output: [spin_index][grid_index].
      *                                  Resized and zeroed by this call.
      */
-    void accumulate(int number_of_bands,
-                    int number_of_spin_components,
-                    Real inverse_cell_volume,
-                    std::vector<std::vector<Real>>& charge_density_out) const {
+    virtual void accumulate(int number_of_bands,
+                            int number_of_spin_components,
+                            Real inverse_cell_volume,
+                            std::vector<std::vector<Real>>& charge_density_out) const {
         /**
          * The rho-grid path scatters each plane wave straight into the density
          * grid, which is right only if this rank holds, on the density grid,
@@ -98,11 +100,104 @@ class PlanewaveChargeDensityAccumulator {
         }
     }
 
-  private:
+  protected:
     const PlanewaveBasis& basis_;
     const KPointsGrid& kpoint_grid_;
     const PlanewaveKohnShamQuantumSystem& quantum_system_;
 
+    /**
+     * Carry a density held on the wavefunction grid over to the density grid,
+     * through reciprocal space: forward transform on the wavefunction grid,
+     * copy of every component that grid holds, inverse transform on the
+     * density grid.
+     *
+     * @param smooth_density      Input: [spin_index][wavefunction grid index].
+     * @param charge_density_out  Output: [spin_index][density grid index]; resized.
+     */
+    void upscale_smooth_density(const std::vector<std::vector<Real>>& smooth_density,
+                                std::vector<std::vector<Real>>& charge_density_out) const {
+        int number_of_spin_components = static_cast<int>(smooth_density.size());
+        int smooth_total_points = basis_.fft_wave().total_grid_points();
+        int smooth_local_points = basis_.fft_wave().local_grid_points();
+        int rho_local_points = basis_.fft_rho().local_grid_points();
+        int wave_dim_1 = basis_.fft_wave().grid_dimension_1();
+        int wave_dim_2 = basis_.fft_wave().grid_dimension_2();
+        int wave_dim_3 = basis_.fft_wave().grid_dimension_3();
+
+        charge_density_out.resize(static_cast<std::size_t>(number_of_spin_components));
+        for (int spin_index = 0; spin_index < number_of_spin_components; ++spin_index) {
+            // Forward FFT on smooth grid: rho(r) -> rho(G)
+            std::vector<Complex> density_g_smooth(
+                static_cast<std::size_t>(
+                    std::max(smooth_local_points, basis_.fft_wave().local_g_space_points())),
+                Complex(0.0, 0.0));
+            for (int grid_index = 0; grid_index < smooth_local_points; ++grid_index) {
+                density_g_smooth[static_cast<std::size_t>(grid_index)] =
+                    Complex(smooth_density[static_cast<std::size_t>(spin_index)]
+                                          [static_cast<std::size_t>(grid_index)],
+                            0.0);
+            }
+            basis_.fft_wave().forward(density_g_smooth.data());
+
+            // Normalize forward FFT and make G-space redundant
+            Real inverse_smooth = 1.0 / smooth_total_points;
+            for (auto& value : density_g_smooth) {
+                value *= inverse_smooth;
+            }
+            /**
+             * A redundant rho(G) is needed to scatter it onto the rho grid. The
+             * grid places its own reciprocal-space points into the full array --
+             * a slab or a set of sticks, it knows which -- and the pool-wide
+             * reduction fills in the rest.
+             */
+            std::vector<Complex> density_g_smooth_redundant(smooth_total_points, Complex(0.0, 0.0));
+            basis_.fft_wave().scatter_local_g_space(density_g_smooth.data(),
+                                                    density_g_smooth_redundant.data());
+            basis_.fft_wave().reduce_g_space(density_g_smooth_redundant.data(),
+                                             smooth_total_points);
+
+            /**
+             * Scatter smooth G-components to rho grid (redundant rho(G) -> local rho(G) on rho
+             * grid)
+             */
+            std::vector<Complex> density_g_rho(
+                static_cast<std::size_t>(
+                    std::max(rho_local_points, basis_.fft_rho().local_g_space_points())),
+                Complex(0.0, 0.0));
+            for (int m1 = -(wave_dim_1 / 2); m1 <= wave_dim_1 / 2; ++m1) {
+                for (int m2 = -(wave_dim_2 / 2); m2 <= wave_dim_2 / 2; ++m2) {
+                    for (int m3 = -(wave_dim_3 / 2); m3 <= wave_dim_3 / 2; ++m3) {
+                        int smooth_index_global =
+                            (m1 < 0 ? m1 + wave_dim_1 : m1) * wave_dim_2 * wave_dim_3 +
+                            (m2 < 0 ? m2 + wave_dim_2 : m2) * wave_dim_3 +
+                            (m3 < 0 ? m3 + wave_dim_3 : m3);
+                        int rho_index_local =
+                            basis_.fft_rho().g_vector_to_fft_grid_index(m1, m2, m3);
+
+                        if (rho_index_local >= 0) {
+                            density_g_rho[static_cast<std::size_t>(rho_index_local)] =
+                                density_g_smooth_redundant[static_cast<std::size_t>(
+                                    smooth_index_global)];
+                        }
+                    }
+                }
+            }
+
+            // Backward FFT on rho grid: rho(G) -> rho(r)
+            basis_.fft_rho().inverse_raw(density_g_rho.data());
+
+            // Extract real part
+            charge_density_out[static_cast<std::size_t>(spin_index)].resize(
+                static_cast<std::size_t>(rho_local_points));
+            for (int grid_index = 0; grid_index < rho_local_points; ++grid_index) {
+                charge_density_out[static_cast<std::size_t>(spin_index)]
+                                  [static_cast<std::size_t>(grid_index)] =
+                                      density_g_rho[static_cast<std::size_t>(grid_index)].real();
+            }
+        }
+    }
+
+  private:
     /**
      * Index of the first plane wave whose mirror needs filling. G = 0 is its
      * own mirror and, on the rank that holds it, sits at index 0; on every
@@ -469,10 +564,7 @@ class PlanewaveChargeDensityAccumulator {
                                    int number_of_spin_components,
                                    Real inverse_cell_volume,
                                    std::vector<std::vector<Real>>& charge_density_out) const {
-        int smooth_total_points = basis_.fft_wave().total_grid_points();
         int smooth_local_points = basis_.fft_wave().local_grid_points();
-        int rho_total_points = basis_.fft_rho().total_grid_points();
-        int rho_local_points = basis_.fft_rho().local_grid_points();
         int number_of_kpoints = kpoint_grid_.number_of_kpoints();
         int number_of_kpoint_states = number_of_kpoints * number_of_spin_components;
 
@@ -640,78 +732,7 @@ class PlanewaveChargeDensityAccumulator {
             }
         }
 
-        // Upscale smooth density to rho grid via G-space
-        charge_density_out.resize(static_cast<std::size_t>(number_of_spin_components));
-        for (int spin_index = 0; spin_index < number_of_spin_components; ++spin_index) {
-            // Forward FFT on smooth grid: rho(r) -> rho(G)
-            std::vector<Complex> density_g_smooth(
-                static_cast<std::size_t>(
-                    std::max(smooth_local_points, basis_.fft_wave().local_g_space_points())),
-                Complex(0.0, 0.0));
-            for (int grid_index = 0; grid_index < smooth_local_points; ++grid_index) {
-                density_g_smooth[static_cast<std::size_t>(grid_index)] =
-                    Complex(smooth_density[static_cast<std::size_t>(spin_index)]
-                                          [static_cast<std::size_t>(grid_index)],
-                            0.0);
-            }
-            basis_.fft_wave().forward(density_g_smooth.data());
-
-            // Normalize forward FFT and make G-space redundant
-            Real inverse_smooth = 1.0 / smooth_total_points;
-            for (auto& value : density_g_smooth) {
-                value *= inverse_smooth;
-            }
-            /**
-             * A redundant rho(G) is needed to scatter it onto the rho grid. The
-             * grid places its own reciprocal-space points into the full array --
-             * a slab or a set of sticks, it knows which -- and the pool-wide
-             * reduction fills in the rest.
-             */
-            std::vector<Complex> density_g_smooth_redundant(smooth_total_points, Complex(0.0, 0.0));
-            basis_.fft_wave().scatter_local_g_space(density_g_smooth.data(),
-                                                    density_g_smooth_redundant.data());
-            basis_.fft_wave().reduce_g_space(density_g_smooth_redundant.data(),
-                                             smooth_total_points);
-
-            /**
-             * Scatter smooth G-components to rho grid (redundant rho(G) -> local rho(G) on rho
-             * grid)
-             */
-            std::vector<Complex> density_g_rho(
-                static_cast<std::size_t>(
-                    std::max(rho_local_points, basis_.fft_rho().local_g_space_points())),
-                Complex(0.0, 0.0));
-            for (int m1 = -(wave_dim_1 / 2); m1 <= wave_dim_1 / 2; ++m1) {
-                for (int m2 = -(wave_dim_2 / 2); m2 <= wave_dim_2 / 2; ++m2) {
-                    for (int m3 = -(wave_dim_3 / 2); m3 <= wave_dim_3 / 2; ++m3) {
-                        int smooth_index_global =
-                            (m1 < 0 ? m1 + wave_dim_1 : m1) * wave_dim_2 * wave_dim_3 +
-                            (m2 < 0 ? m2 + wave_dim_2 : m2) * wave_dim_3 +
-                            (m3 < 0 ? m3 + wave_dim_3 : m3);
-                        int rho_index_local =
-                            basis_.fft_rho().g_vector_to_fft_grid_index(m1, m2, m3);
-
-                        if (rho_index_local >= 0) {
-                            density_g_rho[static_cast<std::size_t>(rho_index_local)] =
-                                density_g_smooth_redundant[static_cast<std::size_t>(
-                                    smooth_index_global)];
-                        }
-                    }
-                }
-            }
-
-            // Backward FFT on rho grid: rho(G) -> rho(r)
-            basis_.fft_rho().inverse_raw(density_g_rho.data());
-
-            // Extract real part
-            charge_density_out[static_cast<std::size_t>(spin_index)].resize(
-                static_cast<std::size_t>(rho_local_points));
-            for (int grid_index = 0; grid_index < rho_local_points; ++grid_index) {
-                charge_density_out[static_cast<std::size_t>(spin_index)]
-                                  [static_cast<std::size_t>(grid_index)] =
-                                      density_g_rho[static_cast<std::size_t>(grid_index)].real();
-            }
-        }
+        upscale_smooth_density(smooth_density, charge_density_out);
     }
 };
 

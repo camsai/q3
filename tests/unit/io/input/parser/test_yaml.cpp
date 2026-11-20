@@ -806,6 +806,25 @@ TEST(YAMLParser, ExactWavefunctionGridParsesTrue) {
     EXPECT_TRUE(data.use_exact_wavefunction_grid);
 }
 
+// ── Forces and stress switches ────────────────────────────────────────
+
+TEST(YAMLParser, ForcesAndStressAreComputedUnlessSwitchedOff) {
+    YAMLInputParser parser;
+    InputData defaults = parser.parse(silicon_nc_input);
+    EXPECT_TRUE(defaults.compute_forces);
+    EXPECT_TRUE(defaults.compute_stress);
+
+    std::string yaml_content = replace_first(
+        full_manifest_yaml,
+        "control:\n  calculation: scf",
+        "control:\n  calculation: scf\n  compute_forces: false\n  compute_stress: false");
+    std::string path = write_temporary_yaml(yaml_content);
+    InputData data = parser.parse(path);
+    std::remove(path.c_str());
+    EXPECT_FALSE(data.compute_forces);
+    EXPECT_FALSE(data.compute_stress);
+}
+
 // ── Symmetry disable flag ─────────────────────────────────────────────
 
 TEST(YAMLParser, DisableSymmetryDefaultsToFalseAndParsesTrue) {

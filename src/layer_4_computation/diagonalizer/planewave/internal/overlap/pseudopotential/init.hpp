@@ -13,6 +13,8 @@
 
 #include <algorithm>
 #include <complex>
+#include <cstddef>
+#include <memory>
 #include <vector>
 
 #include "io/logger.hpp"
@@ -20,8 +22,10 @@
 #include "layer_0_core/types/init.hpp"
 #include "layer_0_core/types/matrix.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/norm_conserving/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/overlap/init.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/overlap/overlap_block_gpu_copied.hpp"
 
 namespace q3 {
 
@@ -30,11 +34,11 @@ class PseudopotentialOverlapOperator : public OverlapOperator {
     PseudopotentialOverlapOperator(
         const Crystal& crystal_structure,
         const NormConservingPlanewaveKohnShamQuantumSystem& quantum_system,
-        const Matrix<Complex>& kleinman_bylander_potential,
+        const KleinmanBylanderProjectorSet& kleinman_bylander_projector_set,
         const execution::ExecutionPolicy& execution_policy)
         : crystal_structure_(crystal_structure)
         , quantum_system_(quantum_system)
-        , kleinman_bylander_potential_(kleinman_bylander_potential)
+        , kleinman_bylander_projector_set_(kleinman_bylander_projector_set)
         , execution_policy_(execution_policy) {}
 
     void apply(int number_of_plane_waves,
@@ -47,6 +51,20 @@ class PseudopotentialOverlapOperator : public OverlapOperator {
 
     [[nodiscard]] bool is_identity() const override {
         return true;
+    }
+
+    /// S = 1: the overlap block is a device copy of the vectors.
+    [[nodiscard]] std::unique_ptr<GPUOverlapBlock>
+    create_gpu_overlap_block(execution::gpu::device::GPUDeviceBackend& device_backend,
+                             int number_of_plane_waves,
+                             int number_of_vectors,
+                             const Complex* vectors,
+                             Complex* overlap_vectors) const override {
+        return std::make_unique<CopiedGPUOverlapBlock>(
+            device_backend,
+            static_cast<std::size_t>(number_of_plane_waves) * number_of_vectors,
+            vectors,
+            overlap_vectors);
     }
 
     /**
@@ -66,7 +84,7 @@ class PseudopotentialOverlapOperator : public OverlapOperator {
   protected:
     const Crystal& crystal_structure_;
     const NormConservingPlanewaveKohnShamQuantumSystem& quantum_system_;
-    const Matrix<Complex>& kleinman_bylander_potential_;
+    const KleinmanBylanderProjectorSet& kleinman_bylander_projector_set_;
     const execution::ExecutionPolicy& execution_policy_;
 };
 

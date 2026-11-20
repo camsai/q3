@@ -600,7 +600,7 @@ TEST(QEParserStrictness, UnconstrainedTotalMagnetizationSentinelIsAccepted) {
 }
 
 TEST(QEParserStrictness, PhysicsNeutralKeysAreAccepted) {
-    EXPECT_NO_THROW(parse_text(silicon_input_with("  verbosity = 'high'\n  tprnfor = .true.\n"
+    EXPECT_NO_THROW(parse_text(silicon_input_with("  verbosity = 'high'\n  iprint = 1\n"
                                                   "  disk_io = 'none'\n",
                                                   "")));
 }
@@ -685,6 +685,58 @@ TEST(QEParserHonouredKeys, RelaxationThresholdsAreRead) {
     EXPECT_EQ(data.relax_maximum_steps, 42);
     EXPECT_NEAR(data.relax_force_threshold, 1.0e-4, 1e-16);
     EXPECT_NEAR(data.relax_energy_threshold, 1.0e-5, 1e-16);
+}
+
+TEST(QEParserHonouredKeys, ForcesAndStressFollowTheDeckAsInQuantumEspresso) {
+    // A plain scf deck that names neither gets neither.
+    InputData plain = parse_text(silicon_input_with("", ""));
+    EXPECT_FALSE(plain.compute_forces);
+    EXPECT_FALSE(plain.compute_stress);
+
+    // Asked for, each is computed, independently of the other.
+    InputData with_forces = parse_text(silicon_input_with("  tprnfor = .true.\n", ""));
+    EXPECT_TRUE(with_forces.compute_forces);
+    EXPECT_FALSE(with_forces.compute_stress);
+    InputData with_stress = parse_text(silicon_input_with("  tstress = .true.\n", ""));
+    EXPECT_FALSE(with_stress.compute_forces);
+    EXPECT_TRUE(with_stress.compute_stress);
+}
+
+TEST(QEParserHonouredKeys, RelaxationDecksGetTheDerivativesTheyNeed) {
+    auto deck_for = [](const std::string& calculation, const std::string& extra_control_keys) {
+        std::string deck = silicon_input_with(extra_control_keys, "");
+        const std::string scf = "calculation = 'scf'";
+        deck.replace(deck.find(scf), scf.size(), "calculation = '" + calculation + "'");
+        return deck;
+    };
+
+    InputData relax = parse_text(deck_for("relax", ""));
+    EXPECT_TRUE(relax.compute_forces);
+    EXPECT_FALSE(relax.compute_stress);
+
+    InputData variable_cell = parse_text(deck_for("vc-relax", ""));
+    EXPECT_TRUE(variable_cell.compute_forces);
+    EXPECT_TRUE(variable_cell.compute_stress);
+
+    // The deck's own word wins over the default, whichever comes first in the namelist.
+    InputData relax_with_stress = parse_text(deck_for("relax", "  tstress = .true.\n"));
+    EXPECT_TRUE(relax_with_stress.compute_forces);
+    EXPECT_TRUE(relax_with_stress.compute_stress);
+}
+
+TEST(QEParserHonouredKeys, DavidNdimSizesTheDavidsonBasis) {
+    // Unstated, the basis is twice the band count in both codes.
+    InputData unstated = parse_text(silicon_input_with("", ""));
+    EXPECT_EQ(unstated.davidson_basis_expansion_factor, 2);
+    EXPECT_FALSE(unstated.davidson_basis_expansion_factor_set_by_deck);
+
+    InputData wider = parse_text(silicon_input_with("", "", "  diago_david_ndim = 4\n"));
+    EXPECT_EQ(wider.davidson_basis_expansion_factor, 4);
+    EXPECT_TRUE(wider.davidson_basis_expansion_factor_set_by_deck);
+
+    // A basis no larger than the bands cannot grow.
+    EXPECT_THROW(parse_text(silicon_input_with("", "", "  diago_david_ndim = 1\n")),
+                 std::runtime_error);
 }
 
 TEST(QEParserHonouredKeys, NosymDisablesSymmetry) {

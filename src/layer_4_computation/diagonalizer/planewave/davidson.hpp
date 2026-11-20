@@ -29,24 +29,24 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "io/logger.hpp"
-#include "layer_0_core/execution/gpu/device/internal/buffer.hpp"
 #include "layer_0_core/execution/init.hpp"
 #include "layer_0_core/execution/serial.hpp"
 #include "layer_0_core/math/linear_algebra/blas.hpp"
 #include "layer_0_core/math/tolerances.hpp"
 #include "layer_0_core/profiling/counters.hpp"
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_0_core/types/matrix.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
 #include "layer_4_computation/diagonalizer/planewave/init.hpp"
-#include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/gpu.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/serial.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/overlap/pseudopotential/factory.hpp"
-#include "layer_4_computation/diagonalizer/planewave/internal/subspace_manager/gpu.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/projector_set_provider.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/subspace_manager/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/subspace_manager/serial.hpp"
 
@@ -106,6 +106,12 @@ class PlanewaveDavidsonWorkspace {
     virtual const Complex* band_scratch() const = 0;
 
     virtual void sync_to_host() = 0;
+
+    /**
+     * Publish the host eigenvalues to wherever the workspace's other arrays live. Nothing by
+     * default: a host workspace has them there already.
+     */
+    virtual void sync_to_device() {}
 
   protected:
     std::vector<Real> local_eigenvalues_host_;
@@ -214,135 +220,6 @@ class SerialDavidsonWorkspace : public PlanewaveDavidsonWorkspace {
     bool overlap_is_aliased_ = false;
 };
 
-class GPUDavidsonWorkspace : public PlanewaveDavidsonWorkspace {
-  public:
-    explicit GPUDavidsonWorkspace(
-        std::shared_ptr<execution::gpu::device::GPUDeviceBackend> device_backend)
-        : device_backend_{std::move(device_backend)}
-        , basis_vectors_(0, device_backend_)
-        , hamiltonian_basis_vectors_(0, device_backend_)
-        , overlap_basis_vectors_(0, device_backend_)
-        , subspace_hamiltonian_(0, device_backend_)
-        , subspace_overlap_(0, device_backend_)
-        , band_scratch_(0, device_backend_)
-        , eigenvalues_device_(0, device_backend_) {}
-
-    void resize(int maximum_basis_size,
-                int number_of_plane_waves,
-                int number_of_bands,
-                bool overlap_is_identity) override {
-        /**
-         * The device path still allocates its S buffers. Aliasing them would
-         * need the same write audit on every GPU kernel, and that wants its own
-         * change with a device to test it on.
-         */
-        (void)overlap_is_identity;
-        int current_size = basis_vectors_.size() / number_of_plane_waves;
-        if (current_size >= maximum_basis_size) {
-            return;
-        }
-
-        basis_vectors_ = execution::gpu::device::GPUDeviceBuffer<Complex>(
-            maximum_basis_size * number_of_plane_waves, device_backend_);
-        hamiltonian_basis_vectors_ = execution::gpu::device::GPUDeviceBuffer<Complex>(
-            maximum_basis_size * number_of_plane_waves, device_backend_);
-        overlap_basis_vectors_ = execution::gpu::device::GPUDeviceBuffer<Complex>(
-            maximum_basis_size * number_of_plane_waves, device_backend_);
-        subspace_hamiltonian_ = execution::gpu::device::GPUDeviceBuffer<Complex>(
-            maximum_basis_size * maximum_basis_size, device_backend_);
-        subspace_overlap_ = execution::gpu::device::GPUDeviceBuffer<Complex>(
-            maximum_basis_size * maximum_basis_size, device_backend_);
-        band_scratch_ = execution::gpu::device::GPUDeviceBuffer<Complex>(
-            number_of_bands * number_of_plane_waves, device_backend_);
-        eigenvalues_device_ =
-            execution::gpu::device::GPUDeviceBuffer<Real>(maximum_basis_size, device_backend_);
-
-        local_eigenvalues_host_.assign(maximum_basis_size, 0.0);
-
-        // Zero out initial memory
-        std::memset(basis_vectors_.data(), 0, basis_vectors_.size() * sizeof(Complex));
-        std::memset(hamiltonian_basis_vectors_.data(),
-                    0,
-                    hamiltonian_basis_vectors_.size() * sizeof(Complex));
-        std::memset(
-            overlap_basis_vectors_.data(), 0, overlap_basis_vectors_.size() * sizeof(Complex));
-        std::memset(
-            subspace_hamiltonian_.data(), 0, subspace_hamiltonian_.size() * sizeof(Complex));
-        std::memset(subspace_overlap_.data(), 0, subspace_overlap_.size() * sizeof(Complex));
-        std::memset(band_scratch_.data(), 0, band_scratch_.size() * sizeof(Complex));
-        std::memset(eigenvalues_device_.data(), 0, eigenvalues_device_.size() * sizeof(Real));
-    }
-
-    Complex* basis_vectors() override {
-        return basis_vectors_.data();
-    }
-    const Complex* basis_vectors() const override {
-        return basis_vectors_.data();
-    }
-
-    Complex* hamiltonian_basis_vectors() override {
-        return hamiltonian_basis_vectors_.data();
-    }
-    const Complex* hamiltonian_basis_vectors() const override {
-        return hamiltonian_basis_vectors_.data();
-    }
-
-    Complex* overlap_basis_vectors() override {
-        return overlap_basis_vectors_.data();
-    }
-    const Complex* overlap_basis_vectors() const override {
-        return overlap_basis_vectors_.data();
-    }
-
-    Complex* subspace_hamiltonian() override {
-        return subspace_hamiltonian_.data();
-    }
-    const Complex* subspace_hamiltonian() const override {
-        return subspace_hamiltonian_.data();
-    }
-
-    Complex* subspace_overlap() override {
-        return subspace_overlap_.data();
-    }
-    const Complex* subspace_overlap() const override {
-        return subspace_overlap_.data();
-    }
-
-    Complex* band_scratch() override {
-        return band_scratch_.data();
-    }
-    const Complex* band_scratch() const override {
-        return band_scratch_.data();
-    }
-
-    Real* eigenvalues_device() {
-        return eigenvalues_device_.data();
-    }
-    const Real* eigenvalues_device() const {
-        return eigenvalues_device_.data();
-    }
-
-    void sync_to_device() {
-        std::memcpy(eigenvalues_device_.data(),
-                    local_eigenvalues_host_.data(),
-                    local_eigenvalues_host_.size() * sizeof(Real));
-    }
-
-    void sync_to_host() override {
-        device_backend_->synchronize();
-    }
-
-  private:
-    std::shared_ptr<execution::gpu::device::GPUDeviceBackend> device_backend_;
-    execution::gpu::device::GPUDeviceBuffer<Complex> basis_vectors_;
-    execution::gpu::device::GPUDeviceBuffer<Complex> hamiltonian_basis_vectors_;
-    execution::gpu::device::GPUDeviceBuffer<Complex> overlap_basis_vectors_;
-    execution::gpu::device::GPUDeviceBuffer<Complex> subspace_hamiltonian_;
-    execution::gpu::device::GPUDeviceBuffer<Complex> subspace_overlap_;
-    execution::gpu::device::GPUDeviceBuffer<Complex> band_scratch_;
-    execution::gpu::device::GPUDeviceBuffer<Real> eigenvalues_device_;
-};
-
 /**
  * Davidson iterative diagonalizer.
  * Finds only the lowest number_of_bands eigenvalues in O(number_of_plane_waves * number_of_bands)
@@ -377,41 +254,6 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
     }
 
     /**
-     * Construct a GPU-accelerated Davidson diagonalizer.
-     *
-     * Stores GPU context (BLAS, FFT, device backend) for lazy construction of
-     * GPUPlanewaveHamiltonianApplicator and GPUPlanewaveSubspaceManager on
-     * first solve() call, when the Crystal/PlanewaveBasis are available.
-     *
-     * @param execution_policy  Execution policy for band-group operations.
-     * @param gpu_blas           GPU BLAS wrapper. Must outlive this object.
-     * @param gpu_fft_grid       GPU FFT grid. Must outlive this object.
-     * @param gpu_eigensolver    GPU eigensolver. Must outlive this object.
-     * @param device_backend     GPU device backend (shared ownership).
-     */
-    PlanewaveDavidsonDiagonalizer(
-        const execution::ExecutionPolicy& execution_policy,
-        execution::gpu::blas::GPUBLAS& gpu_blas,
-        gpu::GPUFFTGrid* gpu_fft_grid,
-        execution::gpu::lapack::GPUEigensolver& gpu_eigensolver,
-        std::shared_ptr<execution::gpu::device::GPUDeviceBackend> device_backend)
-        : execution_policy_{execution_policy}
-        , gpu_blas_{&gpu_blas}
-        , gpu_fft_grid_{gpu_fft_grid}
-        , gpu_eigensolver_{&gpu_eigensolver}
-        , gpu_device_backend_{std::move(device_backend)} {}
-
-    /**
-     * Enable mixed-precision mode for GPU Davidson.
-     *
-     * When enabled, the local potential FFT section of H|ψ⟩ runs in FP32
-     * while kinetic energy and nonlocal projectors remain FP64.
-     */
-    void set_use_mixed_precision(bool use_mixed_precision) {
-        use_mixed_precision_ = use_mixed_precision;
-    }
-
-    /**
      * Set pre-computed KB projectors for a specific k-point.
      * No-op if the applicator has not been created yet (before first solve()).
      */
@@ -437,11 +279,11 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
         workspace_.reset();
     }
 
-    void set_cached_projectors(int kpoint_index, const q3::Matrix<Complex>* projectors) override {
+    void set_projector_set_store(KleinmanBylanderProjectorSetStore* projector_set_store) override {
+        projector_set_provider_.set_store(projector_set_store);
         if (has_hamiltonian_applicator()) {
-            get_hamiltonian_applicator().set_cached_projectors(kpoint_index, projectors);
+            get_hamiltonian_applicator().set_projector_set_store(projector_set_store);
         }
-        pending_cached_projectors_[kpoint_index] = projectors;
     }
 
     /**
@@ -454,6 +296,7 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
             get_hamiltonian_applicator().set_cached_hubbard_projectors(kpoint_index, projectors);
         }
         pending_cached_hubbard_projectors_[kpoint_index] = projectors;
+        hubbard_term_was_set_ = hubbard_term_was_set_ || projectors != nullptr;
     }
 
     /**
@@ -465,6 +308,7 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
             get_hamiltonian_applicator().set_hubbard_d_matrix(dense_d_matrix_column_major);
         }
         pending_hubbard_d_matrix_ = dense_d_matrix_column_major;
+        hubbard_term_was_set_ = hubbard_term_was_set_ || dense_d_matrix_column_major != nullptr;
     }
 
     /**
@@ -489,6 +333,9 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
                const PlanewaveBasis& planewave_basis,
                const NormConservingPlanewaveKohnShamQuantumSystem& pseudopotential_quantum_system,
                PlanewaveKohnShamQuantumSystem& quantum_system) override {
+        std::optional<StageTimer> prepare_timer(std::in_place, "davidson.prepare");
+        // The starting rotation is over once a solve begins; its batch buffers go back.
+        release_starting_rotation();
         // Ensure the applicator exists (lazy construction if not injected).
         ensure_hamiltonian_applicator_initialized(
             crystal_structure, planewave_basis, kpoint_grid, pseudopotential_quantum_system);
@@ -511,12 +358,16 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
 
         // Update the smooth potential if it has been invalidated.
         if (!applicator.is_smooth_potential_cache_valid()) {
+            StageTimer potential_timer("davidson.prepare.potential");
             applicator.update_potential(real_space_potential);
         }
 
         // Configure the applicator for this k-point.
-        applicator.prepare_kpoint(
-            kpoint_index, number_of_plane_waves, g_vector_indices, kinetic_energy_squared);
+        {
+            StageTimer kpoint_timer("davidson.prepare.kpoint");
+            applicator.prepare_kpoint(
+                kpoint_index, number_of_plane_waves, g_vector_indices, kinetic_energy_squared);
+        }
 
         // Cache gamma-only flag for the duration of this solve() call.
         bool is_gamma_only = applicator.is_gamma_only_current();
@@ -527,30 +378,22 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
         subspace.set_gamma_origin_is_local(applicator.gamma_origin_is_local_current());
 
         // The overlap operator selects the standard (NC, S=I) or generalized (US) eigenproblem.
-        Matrix<Complex> computed_projectors;
-        const Matrix<Complex>* kleinman_bylander_potential_ptr = nullptr;
-        if (applicator.get_cached_projectors(kpoint_index) != nullptr) {
-            kleinman_bylander_potential_ptr = applicator.get_cached_projectors(kpoint_index);
-        } else {
-            Vector3D kpoint_coordinates = kpoint_grid[kpoint_index].coordinates;
-            compute_kleinman_bylander_projectors(
-                kpoint_coordinates,
+        const KleinmanBylanderProjectorSet& kleinman_bylander_projector_set =
+            projector_set_provider_.projector_set(
+                kpoint_index,
                 crystal_structure,
+                kpoint_grid,
                 planewave_basis,
-                pseudopotential_quantum_system.pseudopotential_basis().pseudopotential_set(),
-                pseudopotential_quantum_system.pseudopotential_basis().beta_function_table(),
+                pseudopotential_quantum_system.pseudopotential_basis(),
                 g_vector_indices,
-                number_of_plane_waves,
-                pseudopotential_quantum_system.pseudopotential_basis().total_number_of_projectors(),
-                computed_projectors);
-            kleinman_bylander_potential_ptr = &computed_projectors;
-        }
-        const auto& kleinman_bylander_potential = *kleinman_bylander_potential_ptr;
+                number_of_plane_waves);
 
+        std::optional<StageTimer> overlap_timer(std::in_place, "davidson.prepare.overlap_operator");
         auto overlap_operator = create_overlap_operator(crystal_structure,
                                                         pseudopotential_quantum_system,
-                                                        kleinman_bylander_potential,
+                                                        kleinman_bylander_projector_set,
                                                         execution_policy_);
+        overlap_timer.reset();
         bool is_identity_overlap = overlap_operator->is_identity();
 
         int global_number_of_plane_waves =
@@ -562,18 +405,16 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
 
         // Ensure workspace is initialized and sized.
         if (workspace_ == nullptr) {
-            if (gpu_device_backend_ != nullptr) {
-                workspace_ = std::make_unique<GPUDavidsonWorkspace>(gpu_device_backend_);
-            } else {
-                workspace_ = std::make_unique<SerialDavidsonWorkspace>();
-            }
+            workspace_ = create_workspace();
         }
         workspace_->resize(
             maximum_basis_size, number_of_plane_waves, number_of_bands, is_identity_overlap);
         log_davidson_memory("after workspace resize", maximum_basis_size, number_of_plane_waves);
 
+        (void)stage_time_point();
+        prepare_timer.reset();
         // Phase 1: Seed basis from previous wavefunctions
-        auto timer_seed_start = std::chrono::high_resolution_clock::now();
+        auto timer_seed_start = stage_time_point();
         int basis_size = seed_basis_from_wavefunctions(number_of_plane_waves,
                                                        number_of_bands,
                                                        quantum_system,
@@ -585,7 +426,7 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
                                                        workspace_->basis_vectors(),
                                                        workspace_->hamiltonian_basis_vectors(),
                                                        workspace_->overlap_basis_vectors());
-        auto timer_seed_end = std::chrono::high_resolution_clock::now();
+        auto timer_seed_end = stage_time_point();
         ProfilingCounters::instance().davidson_timing.seed_time_ms +=
             std::chrono::duration<double, std::milli>(timer_seed_end - timer_seed_start).count();
 
@@ -612,6 +453,8 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
                                        workspace_->hamiltonian_basis_vectors(),
                                        workspace_->overlap_basis_vectors());
 
+        std::optional<StageTimer> initial_subspace_timer(std::in_place,
+                                                         "davidson.initial_subspace");
         // Build initial subspace matrices for the seeded basis.
         subspace.update_subspace_matrices(0,
                                           basis_size,
@@ -625,6 +468,8 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
                                           workspace_->subspace_hamiltonian(),
                                           workspace_->subspace_overlap());
 
+        (void)stage_time_point();
+        initial_subspace_timer.reset();
         // Hybrid lrot approach: use stored eigenvalues when available
         std::vector<Real> previous_eigenvalues(number_of_bands, 0.0);
         bool has_stored_eigenvalues = false;
@@ -652,7 +497,7 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
         number_of_unconverged_bands_ = number_of_bands;
         for (int iteration = 0; iteration < max_iterations_; iteration++) {
             ProfilingCounters::instance().davidson_iteration_count++;
-            auto timer_diag_start = std::chrono::high_resolution_clock::now();
+            auto timer_diag_start = stage_time_point();
             std::vector<Complex> eigenvector_matrix(maximum_basis_size * maximum_basis_size);
             int diagonalization_info =
                 subspace.diagonalize_subspace(basis_size,
@@ -667,7 +512,7 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
                                                 maximum_basis_size,
                                                 workspace_->local_eigenvalues(),
                                                 eigenvector_matrix.data());
-            auto timer_diag_end = std::chrono::high_resolution_clock::now();
+            auto timer_diag_end = stage_time_point();
             ProfilingCounters::instance().davidson_timing.diagonalize_time_ms +=
                 std::chrono::duration<double, std::milli>(timer_diag_end - timer_diag_start)
                     .count();
@@ -676,7 +521,7 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
             if (diagonalization_info != 0 && basis_size > number_of_bands) {
                 log::warn("    Davidson: zhegv failed (info={}), forcing subspace collapse",
                           diagonalization_info);
-                auto timer_collapse_start = std::chrono::high_resolution_clock::now();
+                auto timer_collapse_start = stage_time_point();
                 basis_size = subspace.collapse_subspace(basis_size,
                                                         number_of_plane_waves,
                                                         number_of_bands,
@@ -714,7 +559,7 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
                                                   workspace_->overlap_basis_vectors(),
                                                   workspace_->subspace_hamiltonian(),
                                                   workspace_->subspace_overlap());
-                auto timer_collapse_end = std::chrono::high_resolution_clock::now();
+                auto timer_collapse_end = stage_time_point();
                 ProfilingCounters::instance().davidson_timing.collapse_time_ms +=
                     std::chrono::duration<double, std::milli>(timer_collapse_end -
                                                               timer_collapse_start)
@@ -752,14 +597,14 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
              * eigenvalues, and the correction vectors below are built straight
              * from the subspace coefficients into the free basis columns.
              */
-            auto timer_ritz_start = std::chrono::high_resolution_clock::now();
+            auto timer_ritz_start = stage_time_point();
             std::vector<bool> band_converged(number_of_bands, true);
-            auto timer_ritz_end = std::chrono::high_resolution_clock::now();
+            auto timer_ritz_end = stage_time_point();
             ProfilingCounters::instance().davidson_timing.ritz_vector_time_ms +=
                 std::chrono::duration<double, std::milli>(timer_ritz_end - timer_ritz_start)
                     .count();
 
-            auto timer_residual_start = std::chrono::high_resolution_clock::now();
+            auto timer_residual_start = stage_time_point();
             bool skip_convergence_check = (iteration == 0);
 
             int number_of_occupied_bands = quantum_system.number_of_occupied_bands_per_spin();
@@ -802,11 +647,13 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
                        max_eigenvalue_change);
 
             if (converged) {
-                auto timer_residual_end = std::chrono::high_resolution_clock::now();
+                auto timer_residual_end = stage_time_point();
                 ProfilingCounters::instance().davidson_timing.residual_time_ms +=
                     std::chrono::duration<double, std::milli>(timer_residual_end -
                                                               timer_residual_start)
                         .count();
+                (void)stage_time_point();
+                StageTimer extract_timer("davidson.extract");
                 subspace.extract_eigenvectors(basis_size,
                                               number_of_plane_waves,
                                               number_of_bands,
@@ -824,16 +671,14 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
              * Expand subspace with preconditioned residuals if not converged
              * 1. Compute residuals and apply preconditioner.
              */
-            if (auto* gpu_workspace = dynamic_cast<GPUDavidsonWorkspace*>(workspace_.get())) {
-                gpu_workspace->sync_to_device();
-            }
+            workspace_->sync_to_device();
 
-            auto timer_residual_end = std::chrono::high_resolution_clock::now();
+            auto timer_residual_end = stage_time_point();
             ProfilingCounters::instance().davidson_timing.residual_time_ms +=
                 std::chrono::duration<double, std::milli>(timer_residual_end - timer_residual_start)
                     .count();
 
-            auto timer_ortho_start = std::chrono::high_resolution_clock::now();
+            auto timer_ortho_start = stage_time_point();
             int start_new_vectors = new_vectors;
             workspace_->sync_to_host();
             /**
@@ -875,18 +720,18 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
                                            workspace_->overlap_basis_vectors());
             new_vectors += accepted_candidates;
             int added_vectors = new_vectors - start_new_vectors;
-            auto timer_ortho_end = std::chrono::high_resolution_clock::now();
+            auto timer_ortho_end = stage_time_point();
             ProfilingCounters::instance().davidson_timing.orthogonalize_time_ms +=
                 std::chrono::duration<double, std::milli>(timer_ortho_end - timer_ortho_start)
                     .count();
 
             if (added_vectors > 0) {
-                auto timer_hpsi_start = std::chrono::high_resolution_clock::now();
+                auto timer_hpsi_start = stage_time_point();
                 applicator.apply_batch(
                     workspace_->basis_vectors() + basis_size * number_of_plane_waves,
                     workspace_->hamiltonian_basis_vectors() + basis_size * number_of_plane_waves,
                     added_vectors);
-                auto timer_hpsi_end = std::chrono::high_resolution_clock::now();
+                auto timer_hpsi_end = stage_time_point();
                 ProfilingCounters::instance().davidson_timing.hamiltonian_application_time_ms +=
                     std::chrono::duration<double, std::milli>(timer_hpsi_end - timer_hpsi_start)
                         .count();
@@ -896,7 +741,7 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
             basis_size += new_vectors;
 
             if (new_vectors > 0) {
-                auto timer_update_start = std::chrono::high_resolution_clock::now();
+                auto timer_update_start = stage_time_point();
                 subspace.update_subspace_matrices(old_basis_size,
                                                   new_vectors,
                                                   basis_size,
@@ -908,7 +753,7 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
                                                   workspace_->overlap_basis_vectors(),
                                                   workspace_->subspace_hamiltonian(),
                                                   workspace_->subspace_overlap());
-                auto timer_update_end = std::chrono::high_resolution_clock::now();
+                auto timer_update_end = stage_time_point();
                 ProfilingCounters::instance().davidson_timing.subspace_update_time_ms +=
                     std::chrono::duration<double, std::milli>(timer_update_end - timer_update_start)
                         .count();
@@ -916,7 +761,7 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
 
             // Subspace collapse when basis is full
             if (basis_size >= maximum_basis_size) {
-                auto timer_collapse_start = std::chrono::high_resolution_clock::now();
+                auto timer_collapse_start = stage_time_point();
                 basis_size = subspace.collapse_subspace(basis_size,
                                                         number_of_plane_waves,
                                                         number_of_bands,
@@ -954,7 +799,7 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
                                                   workspace_->overlap_basis_vectors(),
                                                   workspace_->subspace_hamiltonian(),
                                                   workspace_->subspace_overlap());
-                auto timer_collapse_end = std::chrono::high_resolution_clock::now();
+                auto timer_collapse_end = stage_time_point();
                 ProfilingCounters::instance().davidson_timing.collapse_time_ms +=
                     std::chrono::duration<double, std::milli>(timer_collapse_end -
                                                               timer_collapse_start)
@@ -981,6 +826,8 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
                                             maximum_basis_size,
                                             workspace_->local_eigenvalues(),
                                             eigenvector_matrix.data());
+        (void)stage_time_point();
+        StageTimer extract_timer("davidson.extract");
         subspace.extract_eigenvectors(basis_size,
                                       number_of_plane_waves,
                                       number_of_bands,
@@ -1001,7 +848,7 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
         tolerance_ = tolerance;
     }
 
-  private:
+  protected:
     /**
      * Working basis size as a multiple of the band count, from
      * method.scf.davidson.basis_expansion_factor.
@@ -1039,6 +886,75 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
                    ResidentMemorySample::format_gibibytes(sample.peak_bytes));
     }
 
+    // ─── What a subclass with other hardware replaces ─────────────────
+
+    /// The arrays a solve works in. Host memory here.
+    [[nodiscard]] virtual std::unique_ptr<PlanewaveDavidsonWorkspace> create_workspace() const {
+        return std::make_unique<SerialDavidsonWorkspace>();
+    }
+
+    /// Copy host data into a workspace array.
+    virtual void copy_into_workspace(Complex* destination, const Complex* source, int count) const {
+        std::memcpy(destination, source, static_cast<std::size_t>(count) * sizeof(Complex));
+    }
+
+    /// Return once everything this solver has queued is done. Nothing is queued on the host.
+    virtual void wait_for_queued_work() const {}
+
+    /// Give back what was held for the starting rotation only. Nothing here.
+    virtual void release_starting_rotation() {}
+
+    /**
+     * Copy every band of a k-point state into the workspace as the first candidates, and
+     * return how many were copied.
+     */
+    virtual int copy_bands_into_workspace(const PlanewaveKohnShamQuantumSystem& quantum_system,
+                                          int kpoint_index_state,
+                                          int number_of_bands,
+                                          int number_of_plane_waves,
+                                          Complex* candidates) const {
+        for (int band_index = 0; band_index < number_of_bands; band_index++) {
+            copy_into_workspace(
+                &candidates[static_cast<std::size_t>(band_index) * number_of_plane_waves],
+                quantum_system.wavefunction_band_data(kpoint_index_state, band_index),
+                number_of_plane_waves);
+        }
+        return number_of_bands;
+    }
+
+    /**
+     * Create the Hamiltonian applicator this solver owns, and with it anything that has to
+     * match it. The host applicator here; the subspace manager made at construction suits it.
+     */
+    virtual void create_owned_hamiltonian_applicator(
+        const Crystal& crystal_structure,
+        const PlanewaveBasis& planewave_basis,
+        const KPointsGrid& kpoint_grid,
+        const NormConservingPlanewaveKohnShamQuantumSystem& pseudopotential_quantum_system) {
+        owned_hamiltonian_applicator_ =
+            std::make_unique<SerialPlanewaveHamiltonianApplicator>(crystal_structure,
+                                                                   planewave_basis,
+                                                                   kpoint_grid,
+                                                                   pseudopotential_quantum_system,
+                                                                   execution_policy_);
+    }
+
+    /**
+     * The time at a stage boundary, taken once the device has finished what
+     * the stage before it queued.
+     *
+     * Device products return when they are queued, not when they are done, so
+     * a clock read straight after one charges its cost to whichever later
+     * stage first has to wait -- on a device run the subspace eigenproblem
+     * appeared to cost what the products ahead of it did. Waiting here costs
+     * nothing the solve would not have waited for anyway, and is a no-op
+     * without a device.
+     */
+    [[nodiscard]] std::chrono::high_resolution_clock::time_point stage_time_point() const {
+        wait_for_queued_work();
+        return std::chrono::high_resolution_clock::now();
+    }
+
     // ─── Applicator management ────────────────────────────────────
 
     bool has_hamiltonian_applicator() const {
@@ -1051,39 +967,9 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
         const KPointsGrid& kpoint_grid,
         const NormConservingPlanewaveKohnShamQuantumSystem& pseudopotential_quantum_system) {
         if (injected_hamiltonian_applicator_ == nullptr && !owned_hamiltonian_applicator_) {
-            if (gpu_blas_ != nullptr) {
-                // GPU path: create GPU applicator and subspace manager.
-                owned_hamiltonian_applicator_ = std::make_unique<GPUPlanewaveHamiltonianApplicator>(
-                    crystal_structure,
-                    planewave_basis,
-                    kpoint_grid,
-                    pseudopotential_quantum_system,
-                    *gpu_blas_,
-                    gpu_fft_grid_,
-                    gpu_device_backend_);
-                // Enable mixed-precision if requested.
-                if (use_mixed_precision_) {
-                    auto* gpu_applicator = static_cast<GPUPlanewaveHamiltonianApplicator*>(
-                        owned_hamiltonian_applicator_.get());
-                    gpu_applicator->set_use_mixed_precision(true);
-                }
-                owned_subspace_manager_ = std::make_unique<GPUPlanewaveSubspaceManager>(
-                    *gpu_blas_, execution_policy_, gpu_device_backend_);
-                log::info("     GPU Davidson: using GPU applicator and subspace manager");
-            } else {
-                // Serial path: create serial applicator.
-                owned_hamiltonian_applicator_ =
-                    std::make_unique<SerialPlanewaveHamiltonianApplicator>(
-                        crystal_structure,
-                        planewave_basis,
-                        kpoint_grid,
-                        pseudopotential_quantum_system,
-                        execution_policy_);
-            }
-            for (auto& [kpoint_index, projectors] : pending_cached_projectors_) {
-                owned_hamiltonian_applicator_->set_cached_projectors(kpoint_index, projectors);
-            }
-            pending_cached_projectors_.clear();
+            create_owned_hamiltonian_applicator(
+                crystal_structure, planewave_basis, kpoint_grid, pseudopotential_quantum_system);
+            owned_hamiltonian_applicator_->set_projector_set_store(projector_set_provider_.store());
             for (auto& [kpoint_index, projectors] : pending_cached_hubbard_projectors_) {
                 owned_hamiltonian_applicator_->set_cached_hubbard_projectors(kpoint_index,
                                                                              projectors);
@@ -1127,17 +1013,12 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
         int number_of_pw_for_state =
             quantum_system.number_of_plane_waves_for_kpoint_state(kpoint_index_state);
         if (number_of_pw_for_state == number_of_plane_waves) {
-            int number_of_candidates = 0;
-            for (int band_index = 0; band_index < number_of_bands; band_index++) {
-                const Complex* band_data =
-                    quantum_system.wavefunction_band_data(kpoint_index_state, band_index);
-                for (int g_vector_index = 0; g_vector_index < number_of_plane_waves;
-                     g_vector_index++) {
-                    basis_vectors[(basis_size + number_of_candidates) * number_of_plane_waves +
-                                  g_vector_index] = band_data[g_vector_index];
-                }
-                number_of_candidates++;
-            }
+            int number_of_candidates = copy_bands_into_workspace(
+                quantum_system,
+                kpoint_index_state,
+                number_of_bands,
+                number_of_plane_waves,
+                &basis_vectors[static_cast<std::size_t>(basis_size) * number_of_plane_waves]);
 
             int accepted = subspace.orthogonalize_batch(basis_size,
                                                         number_of_candidates,
@@ -1285,23 +1166,18 @@ class PlanewaveDavidsonDiagonalizer : public PlanewaveDiagonalizer {
 
     PlanewaveHamiltonianApplicator* injected_hamiltonian_applicator_ = nullptr;
     std::unique_ptr<PlanewaveHamiltonianApplicator> owned_hamiltonian_applicator_;
-    std::map<int, const q3::Matrix<Complex>*> pending_cached_projectors_;
+    /// The iterator's projector sets when it handed them over, else a set built per solve.
+    ProjectorSetProvider projector_set_provider_;
     std::map<int, const q3::Matrix<Complex>*> pending_cached_hubbard_projectors_;
     const std::vector<Complex>* pending_hubbard_d_matrix_ = nullptr;
+    /// Whether a Hubbard projector set or D matrix has ever been handed to this solver.
+    bool hubbard_term_was_set_ = false;
 
     // ─── Subspace manager ──────────────────────────────────────────────
 
     PlanewaveSubspaceManager* injected_subspace_manager_ = nullptr;
     std::unique_ptr<PlanewaveSubspaceManager> owned_subspace_manager_;
     std::unique_ptr<PlanewaveDavidsonWorkspace> workspace_;
-
-    // ─── GPU context (null for serial path) ────────────────────────────
-
-    execution::gpu::blas::GPUBLAS* gpu_blas_ = nullptr;
-    gpu::GPUFFTGrid* gpu_fft_grid_ = nullptr;
-    execution::gpu::lapack::GPUEigensolver* gpu_eigensolver_ = nullptr;
-    std::shared_ptr<execution::gpu::device::GPUDeviceBackend> gpu_device_backend_;
-    bool use_mixed_precision_ = false;
 };
 
 } // namespace q3

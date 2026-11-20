@@ -310,3 +310,22 @@ def test_a_missing_input_is_an_error_not_a_pass(tmp_path, capsys):
     base = _write(tmp_path / "base" / "si_results.json", BASELINE_RESULTS)
     assert comparator.main([str(base), str(tmp_path / "head" / "si_results.json")]) == 2
     assert "could not run" in capsys.readouterr().err
+
+
+def test_a_results_backup_is_compared_as_json_so_its_timings_are_skipped(tmp_path):
+    """A ``<prefix>_results.json-N`` backup is a results file: volatile leaves still do not count."""
+    slower = json.loads(json.dumps(BASELINE_RESULTS))
+    slower["runtime_log"]["timings_ms"]["total"] = 9999.9
+    _write(tmp_path / "base" / "case-a" / "output" / "a_results.json-1", BASELINE_RESULTS)
+    _write(tmp_path / "head" / "case-a" / "output" / "a_results.json-1", slower)
+    assert comparator.compare(tmp_path / "base", tmp_path / "head", 0.0) == []
+
+
+def test_a_results_backup_still_catches_a_real_move(tmp_path):
+    moved = json.loads(json.dumps(BASELINE_RESULTS))
+    moved["total_energy_ry"] += 1e-9
+    _write(tmp_path / "base" / "case-a" / "output" / "a_results.json-1", BASELINE_RESULTS)
+    _write(tmp_path / "head" / "case-a" / "output" / "a_results.json-1", moved)
+    differences = comparator.compare(tmp_path / "base", tmp_path / "head", 0.0)
+    assert len(differences) == 1
+    assert differences[0].startswith("case-a/output/a_results.json-1/total_energy_ry:")

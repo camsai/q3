@@ -37,7 +37,6 @@
 #include "io/output/results.hpp"
 #include "io/quantum_system/kohn_sham/planewave/checkpoint/q3.hpp"
 #include "layer_0_core/types/constants.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/overlap/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/overlap/pseudopotential/factory.hpp"
 #include "layer_4_computation/flavors/base.hpp"
@@ -344,14 +343,8 @@ class NonSelfConsistentFieldFlavor : public Flavor {
             for (int kpoint_state_index = 0; kpoint_state_index < local_number_of_kpoint_states;
                  kpoint_state_index++) {
                 int physical_kpoint_index = kpoint_state_index % local_number_of_physical_kpoints;
-                /**
-                 * Kept alive alongside the operator that reads it: the ultrasoft
-                 * overlap holds the matrix by reference.
-                 */
-                Matrix<Complex> kleinman_bylander_projectors;
                 std::unique_ptr<OverlapOperator> overlap_operator =
-                    build_projection_overlap_operator(
-                        *planewave_iterator, physical_kpoint_index, kleinman_bylander_projectors);
+                    build_projection_overlap_operator(*planewave_iterator, physical_kpoint_index);
                 const std::vector<std::vector<Real>> projections =
                     projection_calculator.compute_projections_at_kpoint(
                         physical_kpoint_index,
@@ -411,18 +404,17 @@ class NonSelfConsistentFieldFlavor : public Flavor {
      *
      * Ultrasoft and PAW datasets carry augmentation charges, so S = 1 + Σ q_ij
      * |β_i⟩⟨β_j| and the projection that conserves charge is ⟨φ|S|ψ⟩. Building
-     * that operator needs this k-point's Kleinman-Bylander projector matrix,
-     * which is returned through `kleinman_bylander_projectors` because the
-     * operator holds it by reference and this is the only caller that knows how
-     * long it must live. Dispatching on the pseudopotential set here, rather
+     * that operator needs this k-point's Kleinman-Bylander projector set, which
+     * is the iterator's: the one the eigensolver read, kept by the iterator's
+     * store for as long as the operator holding it by reference is used here.
+     * Dispatching on the pseudopotential set here, rather
      * than inside the projection calculator, keeps that calculator free of the
      * question -- the same split build_wannier_interface_record() makes for the
      * Wannier interface matrices.
      */
     [[nodiscard]] static std::unique_ptr<OverlapOperator>
-    build_projection_overlap_operator(const PlanewavePseudopotentialKohnShamSCFIterator& iterator,
-                                      int physical_kpoint_index,
-                                      Matrix<Complex>& kleinman_bylander_projectors) {
+    build_projection_overlap_operator(PlanewavePseudopotentialKohnShamSCFIterator& iterator,
+                                      int physical_kpoint_index) {
         if (!iterator.pseudopotential_set().has_augmentation_charges()) {
             return nullptr;
         }
@@ -442,20 +434,9 @@ class NonSelfConsistentFieldFlavor : public Flavor {
                 "quantum system is not the ultrasoft one; the iterator factory and this flavor "
                 "disagree about the run's pseudopotential type.");
         }
-        const auto& pseudopotential_basis = quantum_system.pseudopotential_basis();
-        compute_kleinman_bylander_projectors(
-            iterator.kpoint_grid()[physical_kpoint_index].coordinates,
-            iterator.crystal_structure(),
-            iterator.planewave_basis(),
-            pseudopotential_basis.pseudopotential_set(),
-            pseudopotential_basis.beta_function_table(),
-            iterator.g_vector_indices(physical_kpoint_index),
-            iterator.number_of_plane_waves(physical_kpoint_index),
-            pseudopotential_basis.total_number_of_projectors(),
-            kleinman_bylander_projectors);
         return create_overlap_operator(iterator.crystal_structure(),
                                        quantum_system,
-                                       kleinman_bylander_projectors,
+                                       iterator.projector_set(physical_kpoint_index),
                                        iterator.execution_policy());
     }
 

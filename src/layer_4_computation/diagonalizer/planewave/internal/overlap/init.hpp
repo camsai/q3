@@ -13,9 +13,14 @@
  */
 
 #include <complex>
+#include <cstddef>
+#include <memory>
 #include <vector>
 
+#include "layer_0_core/execution/gpu/device/init.hpp"
 #include "layer_0_core/types/init.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/overlap/overlap_block_gpu.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/overlap/overlap_block_gpu_recomputed.hpp"
 
 #include "layer_0_core/math/linear_algebra/lapack.hpp"
 
@@ -54,6 +59,30 @@ class OverlapOperator {
      */
     [[nodiscard]] virtual bool is_identity() const {
         return false;
+    }
+
+    /**
+     * Pair a block of vectors on a device with the block that holds S applied to it.
+     *
+     * The returned object keeps the second consistent with the first in the way this
+     * operator's S calls for; see GPUOverlapBlock. Both blocks are column-major,
+     * number_of_plane_waves by number_of_vectors, and must outlive it, as must this
+     * operator and the backend. The default is the general S: apply_batch() to form the
+     * block, and every update applied to it again.
+     */
+    [[nodiscard]] virtual std::unique_ptr<GPUOverlapBlock>
+    create_gpu_overlap_block(execution::gpu::device::GPUDeviceBackend& /*device_backend*/,
+                             int number_of_plane_waves,
+                             int number_of_vectors,
+                             const Complex* vectors,
+                             Complex* overlap_vectors) const {
+        return std::make_unique<RecomputedGPUOverlapBlock>(
+            [this, number_of_plane_waves, number_of_vectors](const Complex* source,
+                                                             Complex* destination) {
+                apply_batch(number_of_plane_waves, number_of_vectors, source, destination);
+            },
+            vectors,
+            overlap_vectors);
     }
 
     /**

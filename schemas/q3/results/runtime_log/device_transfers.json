@@ -1,0 +1,36 @@
+{
+    "$id": "q3/results/runtime_log/device_transfers",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "device transfers",
+    "type": "object",
+    "description": "What the run copied between host memory and device memory, counted where each copy is made. A copy inside the device, or inside the host, is not counted. On a multi-process run these are the totals of the process that wrote the results.",
+    "required": [
+        "host_to_device_bytes",
+        "device_to_host_bytes",
+        "host_to_device_copies",
+        "device_to_host_copies"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "host_to_device_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Bytes copied from host memory into device buffers."
+        },
+        "device_to_host_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Bytes copied from device buffers into host memory."
+        },
+        "host_to_device_copies": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The number of copies that host_to_device_bytes adds up: the same bytes in many small copies is a different finding from one bulk copy."
+        },
+        "device_to_host_copies": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The number of copies that device_to_host_bytes adds up."
+        }
+    }
+}

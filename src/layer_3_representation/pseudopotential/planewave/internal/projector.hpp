@@ -9,13 +9,14 @@
 
 #include <cmath>
 #include <complex>
+#include <cstddef>
 #include <vector>
 
+#include "layer_0_core/execution/threading.hpp"
 #include "layer_0_core/math/phase_factor.hpp"
 #include "layer_0_core/math/spherical/harmonics.hpp"
 #include "layer_0_core/math/tolerances.hpp"
 #include "layer_0_core/types/init.hpp"
-#include "layer_0_core/types/matrix.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
 #include "layer_3_representation/basis/planewave/pseudopotential/internal/beta_function_table/init.hpp"
@@ -25,13 +26,18 @@ namespace q3 {
 
 /**
  * Compute <β_ib|k+G> for all atoms and projectors at a given k-point.
- * kleinman_bylander_potential[ikb][ig] = (1/√Ω) * β(|k+G|) * Y_lm(k̂+Ĝ) * S(atom) * (-i)^l
+ * kleinman_bylander_projector_set[ikb][ig] = (1/√Ω) * β(|k+G|) * Y_lm(k̂+Ĝ) * S(atom) * (-i)^l
  *
  * Uses pre-tabulated β(q) from the BetaFunctionTable for O(1) lookup
  * instead of recomputing the full radial Bessel integral per G-vector.
  *
  * Optimized to precompute per-G quantities (|k+G|, Y_lm, structure factors)
  * once and reuse across all atoms and projectors.
+ *
+ * Writes into storage the caller owns and has zeroed: total projectors ×
+ * number_of_plane_waves elements, one projector after another. This is the
+ * computation behind SerialProjectorSetBuilder, which is how a projector set is
+ * built; nothing else should call it.
  */
 inline void compute_kleinman_bylander_projectors(const Vector3D& k_crystal,
                                                  const Crystal& crystal_structure,
@@ -40,11 +46,7 @@ inline void compute_kleinman_bylander_projectors(const Vector3D& k_crystal,
                                                  const BetaFunctionTable& beta_function_table,
                                                  const std::vector<int>& g_vector_indices,
                                                  int number_of_plane_waves,
-                                                 int total_number_of_projectors,
-                                                 Matrix<Complex>& kleinman_bylander_potential) {
-
-    kleinman_bylander_potential.resize(
-        total_number_of_projectors, number_of_plane_waves, Complex(0.0, 0.0));
+                                                 Complex* kleinman_bylander_projector_set) {
 
     const Matrix3x3& reciprocal_lattice_vectors = crystal_structure.reciprocal_lattice_vectors();
     Vector3D kpoint_cartesian;
@@ -84,6 +86,15 @@ inline void compute_kleinman_bylander_projectors(const Vector3D& k_crystal,
     int number_of_atoms = crystal_structure.number_of_atoms();
     std::vector<std::vector<Complex>> structure_factors(number_of_atoms);
 
+    /**
+     * Atoms are independent here and in the build loop below, and every value
+     * is computed from its own inputs alone, so sharing the atoms out over
+     * threads changes no bit of the result. One rank of a device build holds
+     * every plane wave and every atom, which made this serial loop seconds of
+     * its setup.
+     */
+    int atom_threads = execution::threading::thread_count_for(number_of_atoms, 1);
+#pragma omp parallel for schedule(static) num_threads(atom_threads) if (atom_threads > 1)
     for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
         Vector3D atomic_position = crystal_structure.convert_from_crystal_to_cartesian(atom_index);
         Real k_dot_r = kpoint_cartesian.dot(atomic_position);
@@ -117,12 +128,46 @@ inline void compute_kleinman_bylander_projectors(const Vector3D& k_crystal,
                                            k_plus_g_magnitude_squared,
                                            spherical_harmonics_values);
 
+    /**
+     * The radial part of a projector depends on the species, the beta function
+     * and |k+G| alone -- not on the atom and not on m. It is interpolated once
+     * per species and beta function and reused by every atom of the species
+     * and every m of the shell, rather than once per projector.
+     */
+    int number_of_species = static_cast<int>(pseudopotential_set.size());
+    std::vector<std::vector<std::vector<Real>>> beta_values_at_q(number_of_species);
+    for (int species_index = 0; species_index < number_of_species; species_index++) {
+        int number_of_beta_functions =
+            static_cast<int>(pseudopotential_set[species_index].projectors.size());
+        beta_values_at_q[species_index].assign(number_of_beta_functions,
+                                               std::vector<Real>(number_of_plane_waves));
+        for (int beta_index = 0; beta_index < number_of_beta_functions; beta_index++) {
+            std::vector<Real>& radial_values = beta_values_at_q[species_index][beta_index];
+            for (int g_index = 0; g_index < number_of_plane_waves; g_index++) {
+                radial_values[g_index] = beta_function_table.interpolate(
+                    species_index, beta_index, k_plus_g_magnitude[g_index]);
+            }
+        }
+    }
+
+    // Row of each atom's first projector, so that atoms can be built independently.
+    std::vector<int> first_projector_of_atom(number_of_atoms, 0);
+    int combined_projector_count = 0;
+    for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+        first_projector_of_atom[atom_index] = combined_projector_count;
+        int species_type_index = crystal_structure.species_type_index(atom_index);
+        for (const auto& projector : pseudopotential_set[species_type_index].projectors) {
+            combined_projector_count += 2 * projector.angular_momentum + 1;
+        }
+    }
+
     // --- Build projectors using precomputed data ---
 
-    int combined_projector_index = 0;
+#pragma omp parallel for schedule(static) num_threads(atom_threads) if (atom_threads > 1)
     for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
         int species_type_index = crystal_structure.species_type_index(atom_index);
         const auto& atom_structure_factors = structure_factors[atom_index];
+        int combined_projector_index = first_projector_of_atom[atom_index];
 
         for (int beta_index = 0;
              beta_index <
@@ -132,18 +177,20 @@ inline void compute_kleinman_bylander_projectors(const Vector3D& k_crystal,
                 pseudopotential_set[species_type_index].projectors[beta_index].angular_momentum;
             Complex angular_phase_factor = compute_angular_phase_factor(angular_momentum);
             Complex combined_prefactor = inverse_sqrt_cell_volume * angular_phase_factor;
+            const std::vector<Real>& radial_values =
+                beta_values_at_q[species_type_index][beta_index];
 
             for (int magnetic_projection : harmonic_order_sequence(angular_momentum)) {
                 int lm_index =
                     harmonic_combined_degree_order_index(angular_momentum, magnetic_projection);
 
+                Complex* projector = kleinman_bylander_projector_set +
+                                     static_cast<std::size_t>(combined_projector_index) *
+                                         static_cast<std::size_t>(number_of_plane_waves);
                 for (int g_index = 0; g_index < number_of_plane_waves; g_index++) {
-                    Real beta_value_at_q = beta_function_table.interpolate(
-                        species_type_index, beta_index, k_plus_g_magnitude[g_index]);
-
-                    kleinman_bylander_potential[combined_projector_index][g_index] =
-                        beta_value_at_q * spherical_harmonics_values[g_index][lm_index] *
-                        atom_structure_factors[g_index] * combined_prefactor;
+                    projector[g_index] = radial_values[g_index] *
+                                         spherical_harmonics_values[g_index][lm_index] *
+                                         atom_structure_factors[g_index] * combined_prefactor;
                 }
                 combined_projector_index++;
             }

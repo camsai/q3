@@ -1,7 +1,15 @@
 #include <gtest/gtest.h>
 
+#include <memory>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
+#include "layer_1_structure/crystal/crystal.hpp"
+#include "layer_1_structure/reciprocal_space/kpoints_grid.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set_store.hpp"
+#include "layer_3_representation/pseudopotential/planewave/projector_set_builder.hpp"
 #include "layer_4_computation/diagonalizer/planewave/direct.hpp"
 
 using namespace q3;
@@ -13,35 +21,64 @@ TEST(PlanewaveDirectDiagonalizer, NameReturnsDirect) {
     EXPECT_EQ(diagonalizer.name(), "direct");
 }
 
-// ── Cached projectors management ────────────────────────────────────
+// ── The projector set store ─────────────────────────────────────────
 
-TEST(PlanewaveDirectDiagonalizer, SetCachedProjectorsGrowsMap) {
+namespace {
+
+/// A builder that is never asked to build: these tests only hand the store over.
+class UnusedProjectorSetBuilder : public ProjectorSetBuilder {
+  public:
+    void build(const Vector3D& /*kpoint_crystal_coordinates*/,
+               const std::vector<int>& /*g_vector_indices*/,
+               int /*number_of_plane_waves*/,
+               KleinmanBylanderProjectorSet& /*projector_set*/) const override {
+        throw std::logic_error("UnusedProjectorSetBuilder: build() was called");
+    }
+};
+
+/// A store for one k-point, never read.
+struct UnreadProjectorSetStore {
+    Crystal crystal_structure;
+    KPointsGrid kpoint_grid;
+    std::vector<std::vector<int>> g_vector_indices_by_kpoint;
+    std::unique_ptr<KleinmanBylanderProjectorSetStore> store;
+
+    UnreadProjectorSetStore() {
+        kpoint_grid.generate(1, 1, 1, 0, 0, 0);
+        g_vector_indices_by_kpoint.resize(1);
+        store = std::make_unique<KleinmanBylanderProjectorSetStore>(
+            crystal_structure,
+            kpoint_grid,
+            g_vector_indices_by_kpoint,
+            std::make_unique<UnusedProjectorSetBuilder>());
+    }
+};
+
+} // namespace
+
+TEST(PlanewaveDirectDiagonalizer, TakesAProjectorSetStoreWithoutReadingIt) {
     PlanewaveDirectDiagonalizer diagonalizer;
+    UnreadProjectorSetStore first;
+    UnreadProjectorSetStore second;
 
-    Matrix<Complex> projectors_0(2, 3, Complex(1.0, 0.0));
-    Matrix<Complex> projectors_5(4, 4, Complex(0.0, 1.0));
+    // Handing a store over, and replacing it, builds nothing: sets are built when solve() asks.
+    diagonalizer.set_projector_set_store(first.store.get());
+    diagonalizer.set_projector_set_store(second.store.get());
 
-    diagonalizer.set_cached_projectors(0, &projectors_0);
-    diagonalizer.set_cached_projectors(5, &projectors_5);
-
-    /**
-     * Setting at index 5 should have grown the map to at least size 6
-     * (This tests the internal resize logic)
-     * We can verify by setting again and checking it doesn't crash
-     */
-    diagonalizer.set_cached_projectors(5, nullptr);
+    EXPECT_FALSE(first.store->is_built(0));
+    EXPECT_FALSE(second.store->is_built(0));
 }
 
-TEST(PlanewaveDirectDiagonalizer, SetCachedProjectorsAtSameIndexOverwrites) {
+TEST(PlanewaveDirectDiagonalizer, AProjectorSetStoreCanBeTakenBack) {
     PlanewaveDirectDiagonalizer diagonalizer;
+    UnreadProjectorSetStore unread;
 
-    Matrix<Complex> projectors_a(2, 2, Complex(1.0, 0.0));
-    Matrix<Complex> projectors_b(3, 3, Complex(2.0, 0.0));
+    diagonalizer.set_projector_set_store(unread.store.get());
+    diagonalizer.set_projector_set_store(nullptr);
+    // Taking back a store that was never given is fine too.
+    diagonalizer.set_projector_set_store(nullptr);
 
-    diagonalizer.set_cached_projectors(0, &projectors_a);
-    diagonalizer.set_cached_projectors(0, &projectors_b);
-
-    // This should not crash, and the second set should overwrite the first
+    EXPECT_FALSE(unread.store->is_built(0));
 }
 
 // ── Default virtual method no-ops ───────────────────────────────────
@@ -63,22 +100,4 @@ TEST(PlanewaveDirectDiagonalizer, InvalidateSmoothPotentialCacheIsNoOp) {
     PlanewaveDirectDiagonalizer diagonalizer;
     // Should not crash
     diagonalizer.invalidate_smooth_potential_cache();
-}
-
-// ── Large kpoint index for cached projectors ────────────────────────
-
-TEST(PlanewaveDirectDiagonalizer, CachedProjectorsHandleLargeIndex) {
-    PlanewaveDirectDiagonalizer diagonalizer;
-    Matrix<Complex> projectors(1, 1, Complex(1.0, 0.0));
-
-    // Setting at a large index should work without issues
-    diagonalizer.set_cached_projectors(100, &projectors);
-    // Setting nullptr at a previously-set index
-    diagonalizer.set_cached_projectors(100, nullptr);
-}
-
-TEST(PlanewaveDirectDiagonalizer, CachedProjectorsNullptrIsValid) {
-    PlanewaveDirectDiagonalizer diagonalizer;
-    // Setting nullptr without prior set should be fine
-    diagonalizer.set_cached_projectors(0, nullptr);
 }

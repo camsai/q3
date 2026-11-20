@@ -12,14 +12,16 @@
 
 #include <cmath>
 #include <complex>
+#include <cstddef>
+#include <numeric>
 #include <vector>
 
-#include "layer_0_core/math/phase_factor.hpp"
 #include "layer_0_core/math/tolerances.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
 #include "layer_3_representation/basis/planewave/pseudopotential/init.hpp"
+#include "layer_3_representation/basis/planewave/structure_factor_calculator.hpp"
 #include "layer_4_computation/state/kohn_sham/planewave/norm_conserving/init.hpp"
 #include "layer_5_properties/stress_tensor/planewave/contributions.hpp"
 
@@ -27,15 +29,18 @@ namespace q3 {
 
 class CoreCorrectionStressTensorCalculator {
   public:
-    CoreCorrectionStressTensorCalculator(const Crystal& crystal_structure,
-                                         const PlanewaveBasis& planewave_basis,
-                                         const NormConservingPlanewaveBasis& pseudopotential_basis,
-                                         const NormConservingPlanewaveKohnShamSCFState& scf_state,
-                                         StressTensorContributions& result)
+    CoreCorrectionStressTensorCalculator(
+        const Crystal& crystal_structure,
+        const PlanewaveBasis& planewave_basis,
+        const NormConservingPlanewaveBasis& pseudopotential_basis,
+        const NormConservingPlanewaveKohnShamSCFState& scf_state,
+        const StructureFactorCalculator& structure_factor_calculator,
+        StressTensorContributions& result)
         : crystal_structure_(crystal_structure)
         , planewave_basis_(planewave_basis)
         , pseudopotential_basis_(pseudopotential_basis)
         , scf_state_(scf_state)
+        , structure_factor_calculator_(structure_factor_calculator)
         , result_(result) {}
 
     void compute() {
@@ -87,6 +92,35 @@ class CoreCorrectionStressTensorCalculator {
             }
         }
 
+        /**
+         * S_s(G) = Σ_{I∈s} e^{-iG·τ_I} for every species and G-vector, formed once by the
+         * structure factor calculator; the species without a core charge are not read.
+         *
+         * That sign is the one the core density itself is built with
+         * (`core_charge_data.hpp`), because this term pairs against that density:
+         * Re[V*_xc(G) ρ_core(|G|) S(G)]. With the conjugate sign the pairing is not
+         * translation invariant -- under τ → τ + t the potential picks up e^{-iG·t} and a
+         * same-signed structure factor picks up another, leaving a residual e^{+2iG·t}.
+         * Shifting diamond silicon's basis from (0, ¼) to (⅞, ⅛), which is the same
+         * crystal, moved the pressure from 5.63 to 571.67 kbar while the total energy
+         * agreed to 1e-5 Ry. Only datasets with a partial core charge were affected, which
+         * is most PAW datasets and no norm-conserving one without NLCC.
+         */
+        const int number_of_species =
+            static_cast<int>(pseudopotential_basis_.pseudopotential_set().size());
+        std::vector<int> g_vector_indices(
+            static_cast<std::size_t>(planewave_basis_.number_of_g_vectors()));
+        std::iota(g_vector_indices.begin(), g_vector_indices.end(), 0);
+        std::vector<std::vector<Real>> species_indicators(
+            static_cast<std::size_t>(number_of_species),
+            std::vector<Real>(static_cast<std::size_t>(crystal_structure_.number_of_atoms()), 0.0));
+        for (int atom_index = 0; atom_index < crystal_structure_.number_of_atoms(); atom_index++) {
+            species_indicators[static_cast<std::size_t>(crystal_structure_.species_type_index(
+                atom_index))][static_cast<std::size_t>(atom_index)] = 1.0;
+        }
+        const std::vector<std::vector<Complex>> structure_factors =
+            structure_factor_calculator_.structure_factors(g_vector_indices, species_indicators);
+
         for (int g_vector_index = planewave_basis_.first_nonzero_g_index();
              g_vector_index < planewave_basis_.number_of_g_vectors();
              g_vector_index++) {
@@ -105,31 +139,9 @@ class CoreCorrectionStressTensorCalculator {
                          .has_nonlinear_core_correction)
                     continue;
 
-                /**
-                 * S(G) = Σ_I e^{-iG·τ_I}, the same sign the core density itself
-                 * is built with (`core_charge_data.hpp`), because this term
-                 * pairs against that density: Re[V*_xc(G) ρ_core(|G|) S(G)].
-                 *
-                 * With the conjugate sign the pairing is not translation
-                 * invariant — under τ → τ + t the potential picks up e^{-iG·t}
-                 * and a same-signed structure factor picks up another, leaving
-                 * a residual e^{+2iG·t}. Shifting diamond silicon's basis from
-                 * (0, ¼) to (⅞, ⅛), which is the same crystal, moved the
-                 * pressure from 5.63 to 571.67 kbar while the total energy
-                 * agreed to 1e-5 Ry. Only datasets with a partial core charge
-                 * were affected, which is most PAW datasets and no
-                 * norm-conserving one without NLCC.
-                 */
-                Complex structure_factor(0.0, 0.0);
-                for (int atom_index = 0; atom_index < crystal_structure_.number_of_atoms();
-                     atom_index++) {
-                    if (crystal_structure_.species_type_index(atom_index) != species_index)
-                        continue;
-                    Vector3D atomic_position =
-                        crystal_structure_.convert_from_crystal_to_cartesian(atom_index);
-                    Real phase = constants::two_pi * g_vector.g_cart.dot(atomic_position);
-                    structure_factor += compute_phase_factor(phase);
-                }
+                const Complex structure_factor =
+                    structure_factors[static_cast<std::size_t>(species_index)]
+                                     [static_cast<std::size_t>(g_vector_index)];
 
                 Real core_charge_density_g = pseudopotential_basis_.interpolate_core_charge_density(
                                                  species_index, g_vector_magnitude) /
@@ -181,6 +193,7 @@ class CoreCorrectionStressTensorCalculator {
     const PlanewaveBasis& planewave_basis_;
     const NormConservingPlanewaveBasis& pseudopotential_basis_;
     const NormConservingPlanewaveKohnShamSCFState& scf_state_;
+    const StructureFactorCalculator& structure_factor_calculator_;
     StressTensorContributions& result_;
 };
 

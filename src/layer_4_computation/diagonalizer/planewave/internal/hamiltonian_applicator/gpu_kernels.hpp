@@ -2,7 +2,7 @@
 
 /**
  * GPU kernels for Phase 5b: Scatter, gather, kinetic energy, potential multiply,
- * residual computation, and preconditioning.
+ * density accumulation, residual computation, and preconditioning.
  *
  * Declares the vendor-neutral kernel launch functions, which are specialized
  * in side-by-side backend-specific source files (CUDA, HIP, SYCL, Serial).
@@ -88,6 +88,18 @@ void launch_gather_fft_grid_to_g_mixed(int number_of_vectors,
                                        const std::complex<float>* fft_workspace,
                                        std::complex<double>* hpsi);
 
+/**
+ * Add the weighted densities of a batch of bands to a real-space density:
+ * density[r] += sum over v of weights[v] * |fft_workspace[v][r]|^2. One device
+ * thread owns one grid point and walks the bands in order, so the summation
+ * order is the serial accumulator's.
+ */
+void launch_accumulate_density(int number_of_vectors,
+                               int local_grid_points,
+                               const double* weights,
+                               const std::complex<double>* fft_workspace,
+                               double* density);
+
 void launch_compute_residuals(int number_of_bands,
                               int number_of_plane_waves,
                               const double* eigenvalues,
@@ -102,6 +114,19 @@ void launch_apply_preconditioner(int number_of_bands,
                                  const bool* band_converged,
                                  double floor_value,
                                  std::complex<double>* residual_wavefunctions);
+
+/**
+ * Form the phases of a set of atoms at a list of G-vectors:
+ * phases[g + a * number_of_g_vectors] = e^{sign · i · 2π G_g·τ_a}, with sign +1 or -1.
+ * `g_cartesian` holds three components per G-vector (units of 2π/alat) and `positions`
+ * three per atom (Cartesian, units of alat). One device thread owns one phase.
+ */
+void launch_form_structure_phases(int number_of_g_vectors,
+                                  int number_of_atoms,
+                                  const double* g_cartesian,
+                                  const double* positions,
+                                  double sign,
+                                  std::complex<double>* phases);
 
 } // namespace gpu
 } // namespace planewave

@@ -17,7 +17,9 @@
 #include "layer_0_core/types/matrix.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
 #include "layer_3_representation/pseudopotential/init.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set_store.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/norm_conserving/init.hpp"
+#include "layer_3_representation/wavefunction/planewave/starting_subspace_solver.hpp"
 #include "layer_4_computation/diagonalizer/init.hpp"
 
 namespace q3 {
@@ -47,12 +49,40 @@ class PlanewaveDiagonalizer : public Diagonalizer {
           PlanewaveKohnShamQuantumSystem& quantum_system) = 0;
 
     /**
-     * Set pre-computed KB projectors for a specific k-point.
-     * If set, the solver may use these instead of recomputing them.
-     * No-op by default; overridden by solvers that support caching.
+     * Choose who does the starting rotation's large operations at one k-point: H applied to
+     * the starting vectors, their subspace matrices and their rotation.
+     *
+     * `projector_set` is the k-point's Kleinman-Bylander projector set, the one the host
+     * solver was built with. `serial_solver` is the caller's host implementation, prepared
+     * for the same k-point. A solver with something faster for this k-point and potential
+     * prepares it and returns that, valid until the next call on this solver; the default
+     * returns the host one.
      */
-    virtual void set_cached_projectors(int /*kpoint_index*/,
-                                       const q3::Matrix<Complex>* /*projectors*/) {}
+    virtual StartingSubspaceSolver& prepare_starting_subspace_solver(
+        int /*kpoint_index_state*/,
+        int /*kpoint_index*/,
+        int /*number_of_plane_waves*/,
+        const std::vector<int>& /*g_vector_indices*/,
+        const std::vector<Real>& /*kinetic_energy_squared*/,
+        const std::vector<Real>& /*real_space_potential*/,
+        const Crystal& /*crystal_structure*/,
+        const KPointsGrid& /*kpoint_grid*/,
+        const PlanewaveBasis& /*planewave_basis*/,
+        const NormConservingPlanewaveKohnShamQuantumSystem& /*pseudopotential_quantum_system*/,
+        const KleinmanBylanderProjectorSet& /*projector_set*/,
+        StartingSubspaceSolver& serial_solver) {
+        return serial_solver;
+    }
+
+    /**
+     * Hand the solver the store of Kleinman-Bylander projector sets, one per k-point, that the
+     * caller owns and keeps alive. The solver reads each k-point's set from it instead of
+     * building projectors of its own; a device solver reads each set's copy on its device.
+     * Null takes the store back; the solver then builds what it needs itself.
+     * No-op by default, for a solver that applies no nonlocal term.
+     */
+    virtual void
+    set_projector_set_store(KleinmanBylanderProjectorSetStore* /*projector_set_store*/) {}
 
     /**
      * Size the iterative working basis, as a multiple of the band count.

@@ -124,7 +124,7 @@ PlanewaveKohnShamQuantumSystem build_quantum_system_from_orthogonalized_orbitals
     quantum_system.allocate_electronic_states(
         std::vector<int>(fixture.kpoint_grid.number_of_kpoints(), fixture.number_of_plane_waves));
     for (int band_index = 0; band_index < out_number_of_bands; band_index++) {
-        std::memcpy(quantum_system.wavefunction_band_data(0, band_index),
+        std::memcpy(quantum_system.mutable_wavefunction_band_data(0, band_index),
                     reference_orbitals[band_index].data(),
                     fixture.number_of_plane_waves * sizeof(Complex));
     }

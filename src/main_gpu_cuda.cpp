@@ -35,5 +35,7 @@ int main(int argc, char* argv[]) {
     descriptor.create_blas = q3::execution::gpu::blas::create_cuda_gpu_blas;
     descriptor.create_eigensolver = q3::execution::gpu::lapack::create_cuda_gpu_eigensolver;
     descriptor.create_fft_grid = q3::gpu::create_cuda_gpu_fft_grid;
+    descriptor.builds_projector_sets_on_device = true;
+    descriptor.solves_subspace_on_device = true;
     return q3::cli::run_gpu_entry_point(argc, argv, descriptor);
 }

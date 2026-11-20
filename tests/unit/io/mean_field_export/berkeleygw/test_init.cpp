@@ -136,7 +136,7 @@ TEST(BerkeleyGWExporter, ExportToDirectoryWritesAllThreeFilesWhenVxcDataIsAvaila
         int number_of_plane_waves = plane_waves_per_kpoint[kpoint_index];
         for (int band_index = 0; band_index < quantum_system->number_of_bands(); band_index++) {
             Complex* coefficients =
-                quantum_system->wavefunction_band_data(kpoint_index, band_index);
+                quantum_system->mutable_wavefunction_band_data(kpoint_index, band_index);
             coefficients[0] = Complex(1.0, 0.0);
             for (int plane_wave_index = 1; plane_wave_index < number_of_plane_waves;
                  plane_wave_index++) {

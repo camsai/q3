@@ -17,16 +17,34 @@
 
 namespace q3 {
 
+/**
+ * The document is written to `<path>.partial` beside it and then renamed onto
+ * `path`, so a run that stops partway through writing never leaves a
+ * truncated file at `path`: it holds either the whole new document or
+ * whatever was there before.
+ */
 inline void write_json_file(const std::string& path, const nlohmann::json& document) {
     const std::filesystem::path file_path(path);
     if (file_path.has_parent_path()) {
         std::filesystem::create_directories(file_path.parent_path());
     }
-    std::ofstream stream(file_path);
-    if (!stream.is_open()) {
-        throw std::runtime_error("write_json_file: cannot open '" + path + "' for writing");
+    if (std::filesystem::is_directory(file_path)) {
+        throw std::runtime_error("write_json_file: cannot open '" + path +
+                                 "' for writing: it is a directory");
     }
-    stream << document.dump(4) << "\n";
+    const std::filesystem::path partial_path = file_path.string() + ".partial";
+    {
+        std::ofstream stream(partial_path);
+        if (!stream.is_open()) {
+            throw std::runtime_error("write_json_file: cannot open '" + path + "' for writing");
+        }
+        stream << document.dump(4) << "\n";
+        if (!stream.flush()) {
+            std::filesystem::remove(partial_path);
+            throw std::runtime_error("write_json_file: writing '" + path + "' failed");
+        }
+    }
+    std::filesystem::rename(partial_path, file_path);
     log::info("     Results written to: {}", path);
 }
 

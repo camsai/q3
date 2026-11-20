@@ -74,8 +74,41 @@ class PlanewaveSerialExecutionPolicy : public SerialExecutionPolicy,
     }
 
     std::unique_ptr<FFTGrid> create_fft_grid() const override {
-        return std::make_unique<SerialFFTGrid>();
+        auto grid = std::make_unique<SerialFFTGrid>();
+        if (bands_are_transformed_on_a_device_) {
+            grid->honor_planning_time_limit();
+            grid->limit_planning_time(device_run_planning_seconds_per_plan);
+        }
+        return grid;
     }
+
+    /**
+     * Say that this run transforms its bands on a device, so that the host grids are made
+     * for what is left for them. The density grid's transforms are then the only host
+     * transforms that matter, and they are made one at a time: each gets every thread, where
+     * on a grid of single-threaded slots it used one core. And neither grid is worth an
+     * exhaustive planning search, which cost such a run 0.9 s of setup: both are planned
+     * under a time cap. Not the default, because a threaded plan rounds differently from a
+     * single-threaded one and a host run's results are held bit for bit.
+     */
+    void set_bands_are_transformed_on_a_device() {
+        bands_are_transformed_on_a_device_ = true;
+    }
+
+    /// The density grid: threaded as a whole on a device run, and otherwise as any other grid.
+    std::unique_ptr<FFTGrid> create_density_fft_grid() const override {
+        auto density_grid = std::make_unique<SerialFFTGrid>();
+        if (bands_are_transformed_on_a_device_) {
+            density_grid->give_every_thread_to_each_transform();
+        }
+        return density_grid;
+    }
+
+    /// Planner time cap, per plan, for the host grids of a run that transforms on a device.
+    static constexpr double device_run_planning_seconds_per_plan = 0.02;
+
+  private:
+    bool bands_are_transformed_on_a_device_ = false;
 };
 
 } // namespace execution

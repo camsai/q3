@@ -10,6 +10,7 @@
  * Routines included:
  *   - zheev_  : complex Hermitian eigensolver (standard)
  *   - zhegv_  : complex Hermitian eigensolver (generalized)
+ *   - zhegvd_ : the same by divide and conquer
  *   - dsygv_  : real symmetric eigensolver (generalized)
  *   - dgels_  : real least-squares solver
  *   - dsytrf_ : real symmetric factorization (Bunch-Kaufman)
@@ -42,6 +43,28 @@ void zheev_(const char* jobz,
             const int* lwork,
             double* rwork,
             int* info);
+
+/**
+ * ZHEGVD: ZHEGV by divide and conquer. The same problem and the same answer to
+ * rounding; several times faster when all eigenvectors are wanted, for
+ * workspace quadratic in n.
+ */
+void zhegvd_(const int* itype,
+             const char* jobz,
+             const char* uplo,
+             const int* n,
+             std::complex<double>* a,
+             const int* lda,
+             std::complex<double>* b,
+             const int* ldb,
+             double* w,
+             std::complex<double>* work,
+             const int* lwork,
+             double* rwork,
+             const int* lrwork,
+             int* iwork,
+             const int* liwork,
+             int* info);
 
 /**
  * ZHEGV: Complex Hermitian eigensolver (generalized eigenproblem).

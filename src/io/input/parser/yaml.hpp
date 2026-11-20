@@ -1124,6 +1124,10 @@ class YAMLInputParser : public InputParser {
         }
         if (control_node["disable_symmetry"])
             data.disable_symmetry = control_node["disable_symmetry"].as<bool>();
+        if (control_node["compute_forces"])
+            data.compute_forces = control_node["compute_forces"].as<bool>();
+        if (control_node["compute_stress"])
+            data.compute_stress = control_node["compute_stress"].as<bool>();
         if (control_node["nonlocal_stress_derivative_method"])
             data.nonlocal_stress_derivative_method =
                 control_node["nonlocal_stress_derivative_method"].as<std::string>();

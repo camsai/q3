@@ -124,10 +124,11 @@ struct BuiltRecord {
         quantum_system->allocate_electronic_states(plane_waves_per_kpoint);
         for (int kpoint_index = 0; kpoint_index < number_of_kpoints; kpoint_index++) {
             for (int band_index = 0; band_index < number_of_bands; band_index++) {
-                std::memcpy(quantum_system->wavefunction_band_data(kpoint_index, band_index),
-                            orbitals_by_kpoint[kpoint_index][band_index].data(),
-                            static_cast<std::size_t>(plane_waves_per_kpoint[kpoint_index]) *
-                                sizeof(Complex));
+                std::memcpy(
+                    quantum_system->mutable_wavefunction_band_data(kpoint_index, band_index),
+                    orbitals_by_kpoint[kpoint_index][band_index].data(),
+                    static_cast<std::size_t>(plane_waves_per_kpoint[kpoint_index]) *
+                        sizeof(Complex));
                 quantum_system->set_eigenvalue(
                     kpoint_index, band_index, 0.1 * band_index - 0.35 * kpoint_index);
             }

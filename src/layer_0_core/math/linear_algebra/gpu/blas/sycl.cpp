@@ -18,6 +18,7 @@
 
 #include "layer_0_core/execution/gpu/device/sycl.hpp"
 #include "layer_0_core/math/linear_algebra/gpu/blas/init.hpp"
+#include "layer_0_core/math/linear_algebra/gpu/blas/triangular_solve_serial.hpp"
 
 #include <oneapi/mkl/blas.hpp>
 #include <stdexcept>
@@ -300,6 +301,60 @@ class SYCLGPUBLAS : public GPUBLAS {
                                               matrix_c,
                                               static_cast<std::int64_t>(leading_dimension_c))
             .wait();
+    }
+
+    /**
+     * Triangular solves on the host: this backend's unified memory is addressable there, and
+     * that is what the eigensolver's orthogonalization did before the solve became a backend
+     * call.
+     */
+    void trsm(char side,
+              char upper_or_lower,
+              char transpose_a,
+              char unit_diagonal,
+              int m,
+              int n,
+              Complex alpha,
+              const Complex* matrix_a,
+              int leading_dimension_a,
+              Complex* matrix_b,
+              int leading_dimension_b) const override {
+        triangular_solve_serial(side,
+                                upper_or_lower,
+                                transpose_a,
+                                unit_diagonal,
+                                m,
+                                n,
+                                alpha,
+                                matrix_a,
+                                leading_dimension_a,
+                                matrix_b,
+                                leading_dimension_b);
+    }
+
+    /// Real counterpart of trsm(), also on the host.
+    void dtrsm(char side,
+               char upper_or_lower,
+               char transpose_a,
+               char unit_diagonal,
+               int m,
+               int n,
+               Real alpha,
+               const Real* matrix_a,
+               int leading_dimension_a,
+               Real* matrix_b,
+               int leading_dimension_b) const override {
+        triangular_solve_serial(side,
+                                upper_or_lower,
+                                transpose_a,
+                                unit_diagonal,
+                                m,
+                                n,
+                                alpha,
+                                matrix_a,
+                                leading_dimension_a,
+                                matrix_b,
+                                leading_dimension_b);
     }
 
   private:

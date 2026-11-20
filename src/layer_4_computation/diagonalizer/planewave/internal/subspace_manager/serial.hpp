@@ -985,7 +985,7 @@ class SerialPlanewaveSubspaceManager : public PlanewaveSubspaceManager {
         for (int band_index = 0; band_index < number_of_bands; ++band_index) {
             quantum_system.set_eigenvalue(kpoint_index_state, band_index, eigenvalues[band_index]);
             Complex* band_data =
-                quantum_system.wavefunction_band_data(kpoint_index_state, band_index);
+                quantum_system.mutable_wavefunction_band_data(kpoint_index_state, band_index);
             std::copy(rotated_scratch + band_index * number_of_plane_waves,
                       rotated_scratch + (band_index + 1) * number_of_plane_waves,
                       band_data);

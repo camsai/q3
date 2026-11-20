@@ -19,6 +19,7 @@
 
 #include <cuda_runtime.h>
 #include <cufft.h>
+#include <map>
 #include <stdexcept>
 #include <string>
 
@@ -70,11 +71,8 @@ class CudaGPUFFTGrid : public GPUFFTGrid {
         if (device_buffer_fp32_batch_ != nullptr) {
             cudaFree(device_buffer_fp32_batch_);
         }
-        if (plan_fp64_batch_ != 0) {
-            cufftDestroy(plan_fp64_batch_);
-        }
-        if (device_buffer_fp64_batch_ != nullptr) {
-            cudaFree(device_buffer_fp64_batch_);
+        for (auto& [grids_per_plan, plan] : plans_fp64_by_batch_size_) {
+            cufftDestroy(plan);
         }
     }
 
@@ -292,48 +290,27 @@ class CudaGPUFFTGrid : public GPUFFTGrid {
         cudaMemcpy(data, device_buffer_fp32_batch_, buffer_size, cudaMemcpyDefault);
     }
 
-    // ── Batched FP64 FFT (cufftPlanMany Z2Z) ─────────────────────────────
-
     /**
-     * Batched forward FP64 FFT via cufftPlanMany + cufftExecZ2Z.
+     * ── Batched FP64 FFT (cufftPlanMany Z2Z) ─────────────────────────────
      *
-     * All batch_size grids are transformed in a single cuFFT kernel launch.
+     * A batch is transformed in place, in runs of a power-of-two number of
+     * grids, each run by a plan kept for that size. The eigensolver asks for a
+     * different number of bands on nearly every call -- however many are still
+     * unconverged -- and a plan built for the exact count was destroyed and
+     * rebuilt, with a device buffer of the batch's size freed and allocated
+     * beside it, each time the count changed. Six plans cover every count, and
+     * the transform needs no buffer of its own because `data` is already
+     * device memory.
      */
+
+    /// Batched forward FP64 FFT; `data` must be device-accessible memory.
     void forward_transform_batch(Complex* data, int batch_size) const override {
-        ensure_batch_resources_fp64(batch_size);
-
-        const size_t buffer_size = static_cast<size_t>(total_grid_points_cached_) * batch_size *
-                                   sizeof(cufftDoubleComplex);
-        cudaMemcpy(device_buffer_fp64_batch_, data, buffer_size, cudaMemcpyDefault);
-
-        check_cufft_error(cufftExecZ2Z(plan_fp64_batch_,
-                                       device_buffer_fp64_batch_,
-                                       device_buffer_fp64_batch_,
-                                       CUFFT_FORWARD),
-                          "cufftExecZ2Z batched forward");
-
-        cudaMemcpy(data, device_buffer_fp64_batch_, buffer_size, cudaMemcpyDefault);
+        execute_batch_fp64(data, batch_size, CUFFT_FORWARD);
     }
 
-    /**
-     * Batched inverse FP64 FFT (raw, unnormalized) via cufftPlanMany + cufftExecZ2Z.
-     *
-     * All batch_size grids are transformed in a single cuFFT kernel launch.
-     */
+    /// Batched inverse FP64 FFT (raw, unnormalized); `data` must be device-accessible memory.
     void inverse_transform_batch(Complex* data, int batch_size) const override {
-        ensure_batch_resources_fp64(batch_size);
-
-        const size_t buffer_size = static_cast<size_t>(total_grid_points_cached_) * batch_size *
-                                   sizeof(cufftDoubleComplex);
-        cudaMemcpy(device_buffer_fp64_batch_, data, buffer_size, cudaMemcpyDefault);
-
-        check_cufft_error(cufftExecZ2Z(plan_fp64_batch_,
-                                       device_buffer_fp64_batch_,
-                                       device_buffer_fp64_batch_,
-                                       CUFFT_INVERSE),
-                          "cufftExecZ2Z batched inverse");
-
-        cudaMemcpy(data, device_buffer_fp64_batch_, buffer_size, cudaMemcpyDefault);
+        execute_batch_fp64(data, batch_size, CUFFT_INVERSE);
     }
 
   private:
@@ -351,10 +328,11 @@ class CudaGPUFFTGrid : public GPUFFTGrid {
     mutable cufftComplex* device_buffer_fp32_batch_ = nullptr;
     mutable int current_fp32_batch_size_ = 0;
 
-    // Batched FP64 cuFFT resources — allocated lazily on first batch call.
-    mutable cufftHandle plan_fp64_batch_ = 0;
-    mutable cufftDoubleComplex* device_buffer_fp64_batch_ = nullptr;
-    mutable int current_fp64_batch_size_ = 0;
+    /// Largest number of grids one FP64 batch plan transforms; a power of two.
+    static constexpr int maximum_grids_per_batch_plan = 32;
+
+    /// Batched FP64 cuFFT plans by the number of grids each transforms, built on first use.
+    mutable std::map<int, cufftHandle> plans_fp64_by_batch_size_;
 
     /**
      * Ensure the batched FP32 cuFFT plan and device buffer are large enough.
@@ -399,20 +377,12 @@ class CudaGPUFFTGrid : public GPUFFTGrid {
     }
 
     /**
-     * Ensure the batched FP64 cuFFT plan and device buffer are large enough.
+     * The FP64 plan that transforms `grids_per_plan` contiguous grids, built on first use.
      */
-    void ensure_batch_resources_fp64(int batch_size) const {
-        if (batch_size == current_fp64_batch_size_) {
-            return;
-        }
-
-        if (plan_fp64_batch_ != 0) {
-            cufftDestroy(plan_fp64_batch_);
-            plan_fp64_batch_ = 0;
-        }
-        if (device_buffer_fp64_batch_ != nullptr) {
-            cudaFree(device_buffer_fp64_batch_);
-            device_buffer_fp64_batch_ = nullptr;
+    cufftHandle batch_plan_fp64(int grids_per_plan) const {
+        auto found = plans_fp64_by_batch_size_.find(grids_per_plan);
+        if (found != plans_fp64_by_batch_size_.end()) {
+            return found->second;
         }
 
         int dimensions[3] = {serial_fft_grid_.grid_dimension_1(),
@@ -420,24 +390,40 @@ class CudaGPUFFTGrid : public GPUFFTGrid {
                              serial_fft_grid_.grid_dimension_3()};
         int distance = total_grid_points_cached_;
 
-        check_cufft_error(cufftPlanMany(&plan_fp64_batch_,
-                                        3,           // rank (3D)
-                                        dimensions,  // [d1, d2, d3]
-                                        nullptr,     // inembed (null = contiguous)
-                                        1,           // istride
-                                        distance,    // idist
-                                        nullptr,     // onembed (null = contiguous)
-                                        1,           // ostride
-                                        distance,    // odist
-                                        CUFFT_Z2Z,   // type
-                                        batch_size), // batch
+        cufftHandle plan = 0;
+        check_cufft_error(cufftPlanMany(&plan,
+                                        3,               // rank (3D)
+                                        dimensions,      // [d1, d2, d3]
+                                        nullptr,         // inembed (null = contiguous)
+                                        1,               // istride
+                                        distance,        // idist
+                                        nullptr,         // onembed (null = contiguous)
+                                        1,               // ostride
+                                        distance,        // odist
+                                        CUFFT_Z2Z,       // type
+                                        grids_per_plan), // batch
                           "cufftPlanMany FP64 batch");
+        plans_fp64_by_batch_size_[grids_per_plan] = plan;
+        return plan;
+    }
 
-        const size_t buffer_size = static_cast<size_t>(total_grid_points_cached_) * batch_size *
-                                   sizeof(cufftDoubleComplex);
-        cudaMalloc(&device_buffer_fp64_batch_, buffer_size);
-
-        current_fp64_batch_size_ = batch_size;
+    /**
+     * Transform `batch_size` contiguous grids in place, largest runs first.
+     */
+    void execute_batch_fp64(Complex* data, int batch_size, int direction) const {
+        auto* grids = reinterpret_cast<cufftDoubleComplex*>(data);
+        int grids_done = 0;
+        while (grids_done < batch_size) {
+            int grids_per_plan = maximum_grids_per_batch_plan;
+            while (grids_per_plan > batch_size - grids_done) {
+                grids_per_plan /= 2;
+            }
+            cufftDoubleComplex* run =
+                grids + static_cast<size_t>(grids_done) * total_grid_points_cached_;
+            check_cufft_error(cufftExecZ2Z(batch_plan_fp64(grids_per_plan), run, run, direction),
+                              "cufftExecZ2Z batched");
+            grids_done += grids_per_plan;
+        }
     }
 };
 

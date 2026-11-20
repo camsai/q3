@@ -23,6 +23,7 @@
 
 #include <optional>
 
+#include "layer_0_core/execution/threading.hpp"
 #include "layer_0_core/math/interpolation/lagrange.hpp"
 #include "layer_0_core/math/spherical/harmonics.hpp"
 #include "layer_0_core/math/tolerances.hpp"
@@ -117,6 +118,13 @@ class NormConservingPlanewaveBasis {
                 crystal_structure.convert_from_crystal_to_cartesian(atom_index);
         }
         const LocalDensityGLayout& layout = planewave_basis.local_density_g_layout();
+        /**
+         * Each entry is computed from its own G-vector and written to its own slot, so
+         * sharing the entries out over threads changes no bit. One rank of a device build
+         * holds every G-vector, which made this serial loop a visible part of its setup.
+         */
+        const int entry_threads = execution::threading::thread_count_for(layout.size(), 512);
+#pragma omp parallel for schedule(static) num_threads(entry_threads) if (entry_threads > 1)
         for (int entry = 0; entry < layout.size(); entry++) {
             const int g_vector_index = layout.global_g_indices()[entry];
             const auto& g_vector = planewave_basis.g_vectors()[g_vector_index];

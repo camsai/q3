@@ -27,6 +27,7 @@
  */
 
 #include <chrono>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -233,8 +234,17 @@ compute_stress(const NormConservingPlanewaveKohnShamSCFState& scf_state,
     hartree_calculator.compute();
     auto timer_hartree = std::chrono::high_resolution_clock::now();
 
+    /**
+     * The sums over atoms and G-vectors of the Ewald, local and core-correction terms are
+     * formed where the run that produced the state formed its own: on its device, if it had
+     * one.
+     */
+    const std::unique_ptr<StructureFactorCalculator> structure_factor_calculator =
+        scf_state.create_structure_factor_calculator();
+
     // 3. Ewald stress
-    EwaldStressTensorCalculator ewald_calculator(crystal_structure, planewave_basis, contributions);
+    EwaldStressTensorCalculator ewald_calculator(
+        crystal_structure, planewave_basis, *structure_factor_calculator, contributions);
     ewald_calculator.compute();
     auto timer_ewald = std::chrono::high_resolution_clock::now();
 
@@ -262,6 +272,7 @@ compute_stress(const NormConservingPlanewaveKohnShamSCFState& scf_state,
         kpoint_grid,
         scf_state,
         projector_overlap_coefficients,
+        *structure_factor_calculator,
         contributions,
         nonlocal_stress_derivative_method);
     pseudopotential_calculator.compute();

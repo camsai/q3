@@ -16,6 +16,8 @@ Run:
     .venv/bin/pytest tests/validation/test_paw_forces_and_stress.py -v --q3-bin ./build/q3
 """
 
+# Every q3 run below passes --forces --stress: the decks are plain scf decks, which ask
+# pw.x -- and so Q3 -- for neither, and these tests are about exactly those derivatives.
 import json
 import math
 import re
@@ -137,7 +139,7 @@ def test_paw_hubbard_occupations_include_the_augmentation_charge(
     """
     input_path = write_hubbard_input(tmp_path, nickel_paw_dataset, hubbard=True)
     completed = subprocess.run(
-        [str(q3_bin), str(input_path)],
+        [str(q3_bin), str(input_path), "--forces", "--stress"],
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -179,7 +181,7 @@ def test_paw_hubbard_derivatives_are_both_computed(q3_bin, tmp_path, nickel_paw_
     """
     input_path = write_hubbard_input(tmp_path, nickel_paw_dataset, hubbard=True)
     completed = subprocess.run(
-        [str(q3_bin), str(input_path)],
+        [str(q3_bin), str(input_path), "--forces", "--stress"],
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -285,7 +287,7 @@ def hubbard_ultrasoft_runs(q3_bin, tmp_path_factory):
         directory = tmp_path_factory.mktemp(f"hubbard_us_{label}")
         input_path = write_displaced_hubbard_input(directory, HUBBARD_BASE_DISPLACEMENT + offset)
         completed = subprocess.run(
-            [q3_bin, input_path.name],
+            [q3_bin, input_path.name, "--forces", "--stress"],
             cwd=str(directory),
             capture_output=True,
             text=True,
@@ -445,7 +447,7 @@ def sic_hubbard_runs(q3_bin, tmp_path_factory):
         directory = tmp_path_factory.mktemp(f"sic_u_{label}")
         input_path = write_sic_hubbard_input(directory, SIC_BASE_DISPLACEMENT + offset)
         completed = subprocess.run(
-            [q3_bin, input_path.name],
+            [q3_bin, input_path.name, "--forces", "--stress"],
             cwd=str(directory),
             capture_output=True,
             text=True,
@@ -588,7 +590,7 @@ def sic_hubbard_symmetry_runs(q3_bin, tmp_path_factory):
             directory, SIC_BASE_DISPLACEMENT + offset, disable_symmetry=False
         )
         completed = subprocess.run(
-            [q3_bin, input_path.name],
+            [q3_bin, input_path.name, "--forces", "--stress"],
             cwd=str(directory),
             capture_output=True,
             text=True,
@@ -782,7 +784,7 @@ def run_ortho_atomic_force_set(q3_bin, tmp_path_factory, label, lattice_vectors,
             directory, lattice_vectors, elements, species, [0.25 + value for value in offset]
         )
         completed = subprocess.run(
-            [q3_bin, input_path.name],
+            [q3_bin, input_path.name, "--forces", "--stress"],
             cwd=str(directory),
             capture_output=True,
             text=True,

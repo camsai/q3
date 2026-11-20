@@ -41,12 +41,13 @@
 #include "layer_3_representation/basis/planewave/init.hpp"
 #include "layer_3_representation/basis/planewave/internal/fft/fft_grid.hpp"
 #include "layer_3_representation/basis/planewave/internal/fft/gpu/init.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/norm_conserving/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/gpu_fft_batch.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/gpu_kernels.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/planewave_potential_utils.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/projector_set_provider.hpp"
 
 namespace q3 {
 
@@ -86,7 +87,6 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
         , device_g_to_fft_mapping_(0, device_backend_)
         , device_kinetic_energy_squared_(0, device_backend_)
         , device_kinetic_energy_squared_single_(0, device_backend_)
-        , device_projector_matrix_(0, device_backend_)
         , device_projector_matrix_single_(0, device_backend_)
         , device_dense_d_matrix_(0, device_backend_)
         , device_fft_workspace_(0, device_backend_)
@@ -144,9 +144,9 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
         // Copy scaled potential to GPU buffer.
         device_smooth_potential_ = execution::gpu::device::GPUDeviceBuffer<Real>(
             local_smooth_grid_points, device_backend_);
-        std::memcpy(device_smooth_potential_.data(),
-                    cached_scaled_potential_.data(),
-                    local_smooth_grid_points * sizeof(Real));
+        device_backend_->copy(device_smooth_potential_.data(),
+                              cached_scaled_potential_.data(),
+                              local_smooth_grid_points * sizeof(Real));
 
         // Also prepare single-precision copy for mixed-precision path.
         device_smooth_potential_single_ = execution::gpu::device::GPUDeviceBuffer<RealSingle>(
@@ -179,16 +179,16 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
         // Copy mapping to GPU.
         device_g_to_fft_mapping_ =
             execution::gpu::device::GPUDeviceBuffer<int>(number_of_plane_waves, device_backend_);
-        std::memcpy(device_g_to_fft_mapping_.data(),
-                    g_to_fft_mapping_.data(),
-                    number_of_plane_waves * sizeof(int));
+        device_backend_->copy(device_g_to_fft_mapping_.data(),
+                              g_to_fft_mapping_.data(),
+                              number_of_plane_waves * sizeof(int));
 
         if (planewave_basis_.is_gamma_only()) {
             device_minus_g_to_fft_mapping_ = execution::gpu::device::GPUDeviceBuffer<int>(
                 number_of_plane_waves, device_backend_);
-            std::memcpy(device_minus_g_to_fft_mapping_.data(),
-                        minus_g_to_fft_mapping_.data(),
-                        number_of_plane_waves * sizeof(int));
+            device_backend_->copy(device_minus_g_to_fft_mapping_.data(),
+                                  minus_g_to_fft_mapping_.data(),
+                                  number_of_plane_waves * sizeof(int));
         } else {
             device_minus_g_to_fft_mapping_ =
                 execution::gpu::device::GPUDeviceBuffer<int>(0, device_backend_);
@@ -197,9 +197,9 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
         // Copy kinetic energy to GPU (FP64).
         device_kinetic_energy_squared_ =
             execution::gpu::device::GPUDeviceBuffer<Real>(number_of_plane_waves, device_backend_);
-        std::memcpy(device_kinetic_energy_squared_.data(),
-                    kinetic_energy_squared.data(),
-                    number_of_plane_waves * sizeof(Real));
+        device_backend_->copy(device_kinetic_energy_squared_.data(),
+                              kinetic_energy_squared.data(),
+                              number_of_plane_waves * sizeof(Real));
 
         // Copy kinetic energy to GPU (FP32) for mixed-precision.
         device_kinetic_energy_squared_single_ = execution::gpu::device::GPUDeviceBuffer<RealSingle>(
@@ -208,38 +208,38 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
                                               kinetic_energy_squared.data(),
                                               device_kinetic_energy_squared_single_.data());
 
-        // Compute KB projectors on CPU.
-        Vector3D kpoint_coordinates = kpoint_grid_[kpoint_index].coordinates;
-        compute_kleinman_bylander_projectors(
-            kpoint_coordinates,
+        /**
+         * KB projectors: the iterator's set for this k-point when it handed its store over (see
+         * set_projector_set_store()), else one built here. The set owns its device copy and
+         * knows whether it is current -- the projectors depend on geometry alone -- so a set
+         * that has not been rebuilt is uploaded once, not on every solve.
+         */
+        const KleinmanBylanderProjectorSet& projector_set = projector_set_provider_.projector_set(
+            kpoint_index,
             crystal_structure_,
+            kpoint_grid_,
             planewave_basis_,
-            pseudopotential_quantum_system_.pseudopotential_basis().pseudopotential_set(),
-            pseudopotential_quantum_system_.pseudopotential_basis().beta_function_table(),
+            pseudopotential_quantum_system_.pseudopotential_basis(),
             g_vector_indices,
-            number_of_plane_waves,
-            pseudopotential_quantum_system_.pseudopotential_basis().total_number_of_projectors(),
-            cached_projector_matrix_);
+            number_of_plane_waves);
 
-        if (!cached_projector_matrix_.empty()) {
-            int total_projectors = static_cast<int>(cached_projector_matrix_.rows());
+        if (!projector_set.empty()) {
+            int total_projectors = projector_set.number_of_projectors();
             current_total_projectors_ = total_projectors;
             int projector_data_size = total_projectors * number_of_plane_waves;
 
-            // Copy projectors to GPU (FP64).
-            device_projector_matrix_ = execution::gpu::device::GPUDeviceBuffer<Complex>(
-                projector_data_size, device_backend_);
-            std::memcpy(device_projector_matrix_.data(),
-                        cached_projector_matrix_.data(),
-                        projector_data_size * sizeof(Complex));
+            // The set's device copy (FP64): uploaded here only if it is missing or stale.
+            current_device_projectors_ = projector_set.device(device_backend_);
 
-            // Copy projectors to GPU (FP32) for mixed-precision.
-            device_projector_matrix_single_ =
-                execution::gpu::device::GPUDeviceBuffer<ComplexSingle>(projector_data_size,
-                                                                       device_backend_);
-            precision::cast_double_to_single(projector_data_size,
-                                             cached_projector_matrix_.data(),
-                                             device_projector_matrix_single_.data());
+            // FP32 copy, for the mixed-precision path only.
+            if (use_mixed_precision_) {
+                device_projector_matrix_single_ =
+                    execution::gpu::device::GPUDeviceBuffer<ComplexSingle>(projector_data_size,
+                                                                           device_backend_);
+                precision::cast_double_to_single(projector_data_size,
+                                                 projector_set.host(),
+                                                 device_projector_matrix_single_.data());
+            }
 
             // Build and copy dense D-matrix to GPU.
             build_dense_d_matrix(total_projectors);
@@ -446,17 +446,12 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
     }
 
     /**
-     * No-op: GPU applicator computes projectors internally in prepare_kpoint().
+     * Read the KB projectors from the iterator's store. Each set keeps its own device copy and
+     * knows when a rebuild has made it stale, so nothing here remembers which upload belongs
+     * to which geometry.
      */
-    void set_cached_projectors(int /*kpoint_index*/,
-                               const q3::Matrix<Complex>* /*projectors*/) override {}
-
-    /**
-     * Returns nullptr — GPU applicator manages projectors internally.
-     */
-    [[nodiscard]] const q3::Matrix<Complex>*
-    get_cached_projectors(int /*kpoint_index*/) const override {
-        return nullptr;
+    void set_projector_set_store(KleinmanBylanderProjectorSetStore* projector_set_store) override {
+        projector_set_provider_.set_store(projector_set_store);
     }
 
   private:
@@ -758,7 +753,7 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
                 static_cast<size_t>(total_projectors) * number_of_vectors, device_backend_);
 
             const double* real_projectors =
-                reinterpret_cast<const double*>(device_projector_matrix_.data());
+                reinterpret_cast<const double*>(current_device_projectors_);
             const double* real_wavefunctions = reinterpret_cast<const double*>(input_wavefunctions);
 
             gpu_blas_.dgemm('T',
@@ -787,7 +782,7 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
                 for (int projector_index = 0; projector_index < total_projectors;
                      ++projector_index) {
                     Complex beta_g0 =
-                        device_projector_matrix_.data()[projector_index * number_of_plane_waves];
+                        current_device_projectors_[projector_index * number_of_plane_waves];
                     int index = projector_index + vector_index * total_projectors;
                     double value =
                         device_overlap_real.data()[index] - (std::conj(beta_g0) * psi_g0[0]).real();
@@ -802,7 +797,7 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
                            number_of_vectors,
                            number_of_plane_waves,
                            alpha_one,
-                           device_projector_matrix_.data(),
+                           current_device_projectors_,
                            leading_dimension,
                            input_wavefunctions,
                            leading_dimension,
@@ -833,7 +828,7 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
                        number_of_vectors,
                        total_projectors,
                        alpha_one,
-                       device_projector_matrix_.data(),
+                       current_device_projectors_,
                        leading_dimension,
                        scaled_overlap_buffer.data(),
                        total_projectors,
@@ -924,6 +919,20 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
      * Build and cache the dense block-diagonal D-matrix on GPU.
      */
     void build_dense_d_matrix(int total_projectors) {
+        /**
+         * D depends on the potential and the spin channel, not on the k-point, and both
+         * updating the potential and invalidating it clear the cache. So the matrix built at
+         * a channel's first k-point serves the rest: it is N_proj squared, 21 MB for 64
+         * silicon atoms, and was zeroed, filled and uploaded again before every solve.
+         */
+        const std::size_t dense_size =
+            static_cast<std::size_t>(total_projectors) * total_projectors;
+        if (cached_dense_d_matrix_.size() == dense_size && dense_size > 0 &&
+            dense_d_matrix_spin_channel_ == spin_channel_ &&
+            device_dense_d_matrix_.size() == dense_size) {
+            return;
+        }
+        dense_d_matrix_spin_channel_ = spin_channel_;
         cached_dense_d_matrix_.assign(static_cast<size_t>(total_projectors) * total_projectors,
                                       Complex(0.0, 0.0));
 
@@ -952,9 +961,9 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
         // Copy to GPU.
         device_dense_d_matrix_ = execution::gpu::device::GPUDeviceBuffer<Complex>(
             total_projectors * total_projectors, device_backend_);
-        std::memcpy(device_dense_d_matrix_.data(),
-                    cached_dense_d_matrix_.data(),
-                    total_projectors * total_projectors * sizeof(Complex));
+        device_backend_->copy(device_dense_d_matrix_.data(),
+                              cached_dense_d_matrix_.data(),
+                              total_projectors * total_projectors * sizeof(Complex));
     }
 
     // ─── Smooth potential computation (CPU-side) ──────────────────────
@@ -982,6 +991,11 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
                 " density grid points, and the device path assumes the whole grid. Run one rank "
                 "per k-point pool, or use the CPU path. This was an assert, which a release "
                 "build compiles out.");
+        }
+
+        // Same grid, same points here: the restriction below is the identity (see the basis).
+        if (planewave_basis.wavefunction_grid_is_density_grid()) {
+            return dense_real_space_potential;
         }
 
         // Core: dense FFT -> G-space truncation -> smooth V(G)
@@ -1047,7 +1061,8 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
     std::vector<Real> cached_scaled_potential_;
     bool smooth_potential_cache_valid_ = false;
     std::vector<Complex> cached_dense_d_matrix_;
-    Matrix<Complex> cached_projector_matrix_;
+    /// Spin channel `cached_dense_d_matrix_` was built for; -1 before the first build.
+    int dense_d_matrix_spin_channel_ = -1;
 
     // ─── FFT mappings ─────────────────────────────────────────────────
 
@@ -1068,8 +1083,12 @@ class GPUPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicator 
     execution::gpu::device::GPUDeviceBuffer<Real> device_kinetic_energy_squared_;
     execution::gpu::device::GPUDeviceBuffer<RealSingle> device_kinetic_energy_squared_single_;
 
-    // KB projector matrix (FP64 and FP32).
-    execution::gpu::device::GPUDeviceBuffer<Complex> device_projector_matrix_;
+    /**
+     * Where the KB projectors come from. current_device_projectors_ is the device copy of the
+     * current k-point's set (FP64), which the set owns; the FP32 copy is made here.
+     */
+    ProjectorSetProvider projector_set_provider_;
+    const Complex* current_device_projectors_ = nullptr;
     execution::gpu::device::GPUDeviceBuffer<ComplexSingle> device_projector_matrix_single_;
 
     // Dense block-diagonal D-matrix.

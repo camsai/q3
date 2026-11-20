@@ -130,6 +130,15 @@ struct Options {
      * run_at_material). How q3.workflows relaxes any input on any binary.
      */
     std::string material_file;
+    /**
+     * `--forces` and `--stress`: compute that derivative whatever the input
+     * says. A Quantum ESPRESSO `scf` deck asks for neither unless it sets
+     * `tprnfor` or `tstress`; a driver that needs them -- q3.calculators, for
+     * a relaxation, an equation of state or a phonon displacement -- says so
+     * here rather than by rewriting the user's deck.
+     */
+    bool compute_forces = false;
+    bool compute_stress = false;
 };
 
 /**
@@ -147,6 +156,8 @@ inline void print_usage(const std::string& binary_name) {
     log::error("  --material <file>   run the input at this ESSE structure (cell, positions)");
     log::error("  --check             read the input, report it, and run nothing");
     log::error("  --pools <n>         k-point pools (MPI binaries)");
+    log::error("  --forces            compute forces even if the input does not ask for them");
+    log::error("  --stress            compute the stress even if the input does not ask for it");
     log::error("  --distribute-bands  split bands, not reciprocal space, in a pool (MPI)");
     log::error("  --precision <mode>  double or mixed (GPU binaries)");
     log::error("  --log-file <path>   also log to a file (MPI rank N writes <path>.N)");
@@ -157,7 +168,8 @@ inline void print_usage(const std::string& binary_name) {
  * Parse command-line options shared by the q3, q3_mpi, and q3_gpu* binaries.
  *
  * Recognized flags: --log-level <level>, --log-file <path>, --pools <n>, --distribute-bands,
- * --precision <mode>, --format <name>, --material <file>, --check, --version. The input path is
+ * --precision <mode>, --format <name>, --material <file>, --forces, --stress, --check,
+ * --version. The input path is
  * the first argument that is not a flag or
  * a flag's value, so it may appear before or after the flags — `q3 --format
  * qe scf.in` and `q3 scf.in --format qe` both work, and so does giving no path
@@ -204,6 +216,10 @@ inline Options parse_options(int argc, char* argv[], const std::string& binary_n
             options.format = take_value("--format");
         } else if (argument == "--material") {
             options.material_file = take_value("--material");
+        } else if (argument == "--forces") {
+            options.compute_forces = true;
+        } else if (argument == "--stress") {
+            options.compute_stress = true;
         } else if (argument == "--check") {
             options.check_only = true;
         } else if (argument.rfind("--", 0) == 0) {
@@ -251,6 +267,8 @@ inline InputData read_input(Options& options, const std::string& binary_name) {
     InputData input = parse_input(options.input_file, options.format);
     if (!options.material_file.empty())
         substitute_material(input, options.material_file);
+    input.compute_forces = input.compute_forces || options.compute_forces;
+    input.compute_stress = input.compute_stress || options.compute_stress;
     log::apply_verbosity(input.verbosity, options.log_level);
     return input;
 }

@@ -52,6 +52,7 @@ template <typename T> class GPUDeviceBuffer {
         }
         if (element_count_ > 0) {
             data_ = static_cast<T*>(backend_->allocate_unified(element_count_ * sizeof(T)));
+            backend_->register_device_range(data_, element_count_ * sizeof(T));
         }
     }
 
@@ -123,6 +124,7 @@ template <typename T> class GPUDeviceBuffer {
   private:
     void release() noexcept {
         if (data_ && backend_) {
+            backend_->unregister_device_range(data_);
             backend_->deallocate(data_);
             data_ = nullptr;
         }

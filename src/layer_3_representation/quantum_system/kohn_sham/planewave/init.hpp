@@ -6,6 +6,13 @@
  * Stores the electronic quantum states (wavefunction + eigenvalue + occupation)
  * for all k-point states and bands in a planewave representation.
  *
+ * Eigenvalues and occupations are kept per state. The wavefunction
+ * coefficients are kept per k-point state, as one contiguous block of
+ * plane waves × bands, column-major: band n starts at element
+ * n × number_of_plane_waves. Each block is a DeviceMirroredArray: a device
+ * consumer asks for it on its device, and the block knows which of its copies
+ * is current.
+ *
  * Inheritance chain:
  *   KohnShamQuantumSystem (L2: Crystal, spin)
  *     └─ PlanewaveKohnShamQuantumSystem (this: kpoints, basis, quantum states)
@@ -15,8 +22,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <memory>
 #include <vector>
 
+#include "layer_0_core/execution/gpu/device/device_mirrored_array.hpp"
+#include "layer_0_core/execution/gpu/device/init.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_0_core/types/matrix.hpp"
 #include "layer_1_structure/reciprocal_space/kpoints_grid.hpp"
@@ -97,21 +108,70 @@ class PlanewaveKohnShamQuantumSystem : public KohnShamQuantumSystem<PlanewaveKoh
 
     // ─── Wavefunction access ───────────────────────────────────
     [[nodiscard]] Complex wavefunction(int kpoint_index, int band_index, int g_vector_index) const {
-        return this->quantum_states_[kpoint_index * number_of_bands_ + band_index]
-            .wavefunction.values()[g_vector_index];
+        return wavefunction_band_data(kpoint_index, band_index)[g_vector_index];
     }
 
     /**
-     * Get raw coefficient data for a specific (kpoint_state, band).
+     * One band's coefficients, to read: a host pointer into the k-point state's band block.
+     *
+     * Reading never marks anything stale. The pointer is good until the block is next written on
+     * a device; a writer uses mutable_wavefunction_band_data().
      */
-    Complex* wavefunction_band_data(int kpoint_state_index, int band_index) {
-        return this->quantum_states_[kpoint_state_index * number_of_bands_ + band_index]
-            .wavefunction.coefficient_data();
-    }
     [[nodiscard]] const Complex* wavefunction_band_data(int kpoint_state_index,
                                                         int band_index) const {
-        return this->quantum_states_[kpoint_state_index * number_of_bands_ + band_index]
-            .wavefunction.coefficient_data();
+        return band_blocks_[kpoint_state_index].host() +
+               band_offset(kpoint_state_index, band_index);
+    }
+
+    /**
+     * One band's coefficients, to write. The block's device copy, if there is one, is stale from
+     * this call on. Do not keep the pointer past the write it was taken for: after the block is
+     * next written on a device it no longer shows the block's values.
+     */
+    [[nodiscard]] Complex* mutable_wavefunction_band_data(int kpoint_state_index, int band_index) {
+        return band_blocks_[kpoint_state_index].mutable_host() +
+               band_offset(kpoint_state_index, band_index);
+    }
+
+    /**
+     * All bands of one k-point state on the host, to read: plane waves × bands, column-major, so
+     * band n starts at element n × number_of_plane_waves_for_kpoint_state().
+     */
+    [[nodiscard]] const Complex* band_block(int kpoint_state_index) const {
+        return band_blocks_[kpoint_state_index].host();
+    }
+
+    /// The same block on the host, to write; see mutable_wavefunction_band_data().
+    [[nodiscard]] Complex* mutable_band_block(int kpoint_state_index) {
+        return band_blocks_[kpoint_state_index].mutable_host();
+    }
+
+    /**
+     * All bands of one k-point state on a device, to read: uploaded first if that device holds
+     * no copy of the block or a stale one.
+     */
+    [[nodiscard]] const Complex* device_band_block(
+        int kpoint_state_index,
+        const std::shared_ptr<execution::gpu::device::GPUDeviceBackend>& device_backend) const {
+        return band_blocks_[kpoint_state_index].device(device_backend);
+    }
+
+    /// The same block on a device, to write. The host copy is stale from this call on.
+    [[nodiscard]] Complex* mutable_device_band_block(
+        int kpoint_state_index,
+        const std::shared_ptr<execution::gpu::device::GPUDeviceBackend>& device_backend) {
+        return band_blocks_[kpoint_state_index].mutable_device(device_backend);
+    }
+
+    /**
+     * The same block on a device, for a writer that assigns every band of the k-point state:
+     * nothing is uploaded first, and the host copy is stale from this call on. The caller
+     * writes all plane waves × bands before anything reads the block.
+     */
+    [[nodiscard]] Complex* overwrite_device_band_block(
+        int kpoint_state_index,
+        const std::shared_ptr<execution::gpu::device::GPUDeviceBackend>& device_backend) {
+        return band_blocks_[kpoint_state_index].overwrite_device(device_backend);
     }
 
     // ─── Eigenvalue access ─────────────────────────────────────
@@ -226,6 +286,9 @@ class PlanewaveKohnShamQuantumSystem : public KohnShamQuantumSystem<PlanewaveKoh
      * eigenvalues, occupations, Fermi energy, spin configuration, and the k-point grid /
      * basis pointers needed to interpret them. Does NOT touch PP-specific data — that must
      * already be set up by the factory on the destination.
+     *
+     * The band blocks arrive as host copies, downloaded from the source's device copies where
+     * those were the current ones; this system has no device copy until one is asked for.
      */
     void
     copy_quantum_states_from(const QuantumSystem<PlanewaveKohnShamQuantumState>& source) override {
@@ -235,6 +298,9 @@ class PlanewaveKohnShamQuantumSystem : public KohnShamQuantumSystem<PlanewaveKoh
         QuantumSystem<PlanewaveKohnShamQuantumState>::copy_quantum_states_from(source);
 
         const auto& planewave_source = static_cast<const PlanewaveKohnShamQuantumSystem&>(source);
+        band_blocks_ = planewave_source.band_blocks_;
+        number_of_plane_waves_of_kpoint_states_ =
+            planewave_source.number_of_plane_waves_of_kpoint_states_;
         number_of_bands_ = planewave_source.number_of_bands_;
         number_of_electrons_ = planewave_source.number_of_electrons_;
         fermi_energy_ = planewave_source.fermi_energy_;
@@ -255,22 +321,27 @@ class PlanewaveKohnShamQuantumSystem : public KohnShamQuantumSystem<PlanewaveKoh
 
     /**
      * Allocate quantum states using per-k-point PW counts from the basis.
-     * Creates number_of_kpoint_states * number_of_bands states, each with
-     * its wavefunction sized to the appropriate number of plane waves.
+     * Creates number_of_kpoint_states * number_of_bands states, and one zeroed band block per
+     * k-point state, sized to that k-point's number of plane waves times the number of bands.
      */
     void allocate_electronic_states(const std::vector<int>& number_of_plane_waves_per_kpoint) {
         int total_kpoint_states = number_of_kpoint_states();
         int number_of_kpoints = kpoint_grid_->number_of_kpoints();
         this->quantum_states_.resize(total_kpoint_states * number_of_bands_);
+        band_blocks_.clear();
+        band_blocks_.reserve(total_kpoint_states);
+        number_of_plane_waves_of_kpoint_states_.assign(total_kpoint_states, 0);
 
         for (int kpoint_state_index = 0; kpoint_state_index < total_kpoint_states;
              kpoint_state_index++) {
             int kpoint_index = kpoint_state_index % number_of_kpoints;
             int number_of_plane_waves = number_of_plane_waves_per_kpoint[kpoint_index];
+            number_of_plane_waves_of_kpoint_states_[kpoint_state_index] = number_of_plane_waves;
+            band_blocks_.emplace_back(static_cast<std::size_t>(number_of_plane_waves) *
+                                      static_cast<std::size_t>(number_of_bands_));
             for (int band_index = 0; band_index < number_of_bands_; band_index++) {
                 auto& state =
                     this->quantum_states_[kpoint_state_index * number_of_bands_ + band_index];
-                state.wavefunction.resize(number_of_plane_waves);
                 state.eigenvalue = 0.0;
                 state.occupation = 0.0;
             }
@@ -281,8 +352,7 @@ class PlanewaveKohnShamQuantumSystem : public KohnShamQuantumSystem<PlanewaveKoh
      * Number of plane waves for a given k-point state.
      */
     [[nodiscard]] int number_of_plane_waves_for_kpoint_state(int kpoint_state_index) const {
-        return this->quantum_states_[kpoint_state_index * number_of_bands_]
-            .wavefunction.number_of_plane_waves();
+        return number_of_plane_waves_of_kpoint_states_[kpoint_state_index];
     }
 
   protected:
@@ -292,6 +362,18 @@ class PlanewaveKohnShamQuantumSystem : public KohnShamQuantumSystem<PlanewaveKoh
     Real number_of_electrons_ = 0.0;
     Real fermi_energy_ = 0.0;
     bool is_fractionally_occupied_ = false;
+
+  private:
+    /// Where band_index starts inside its k-point state's block, in elements.
+    [[nodiscard]] std::size_t band_offset(int kpoint_state_index, int band_index) const {
+        return static_cast<std::size_t>(band_index) *
+               static_cast<std::size_t>(
+                   number_of_plane_waves_of_kpoint_states_[kpoint_state_index]);
+    }
+
+    /// One block per k-point state: plane waves × bands, column-major.
+    std::vector<execution::gpu::device::DeviceMirroredArray<Complex>> band_blocks_;
+    std::vector<int> number_of_plane_waves_of_kpoint_states_;
 };
 
 } // namespace q3

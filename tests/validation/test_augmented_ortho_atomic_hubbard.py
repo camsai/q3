@@ -16,6 +16,8 @@ Run:
         --q3-bin ./build/q3
 """
 
+# Every q3 run below passes --forces --stress: the decks are plain scf decks, which ask
+# pw.x -- and so Q3 -- for neither, and these tests are about exactly those derivatives.
 import json
 import math
 import os
@@ -150,7 +152,7 @@ def run_paw_q3(q3_bin, directory, lattice_vectors, atomic_positions, label, samp
         directory, lattice_vectors, atomic_positions, label, sampling=sampling
     )
     completed = subprocess.run(
-        [str(q3_bin), input_path.name],
+        [str(q3_bin), input_path.name, "--forces", "--stress"],
         cwd=directory,
         capture_output=True,
         text=True,
@@ -178,7 +180,7 @@ def ultrasoft_reference_runs(q3_bin, tmp_path_factory):
     ).replace("HUBBARD (atomic)", "HUBBARD (ortho-atomic)")
     outputs = {}
     for engine, command in (
-        ("q3", [str(q3_bin), "scf.in"]),
+        ("q3", [str(q3_bin), "scf.in", "--forces", "--stress"]),
         ("qe", [QE_PW, "-in", "scf.in"]),
     ):
         directory = tmp_path_factory.mktemp(f"augmented_ortho_{engine}")

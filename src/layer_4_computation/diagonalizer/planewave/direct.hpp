@@ -18,9 +18,10 @@
 #include "layer_0_core/execution/serial.hpp"
 #include "layer_0_core/math/tolerances.hpp"
 #include "layer_0_core/types/matrix.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
 #include "layer_4_computation/diagonalizer/planewave/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/overlap/pseudopotential/factory.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/projector_set_provider.hpp"
 #include "layer_4_computation/diagonalizer/planewave/subspace/factory.hpp"
 
 namespace q3 {
@@ -117,27 +118,16 @@ class PlanewaveDirectDiagonalizer : public PlanewaveDiagonalizer {
                                ? kpoint_index_state / kpoint_grid.number_of_kpoints()
                                : 0;
 
-        // Nonlocal potential contribution — use cached projectors if available
-        Matrix<Complex> computed_projectors;
-        const Matrix<Complex>* kleinman_bylander_potential_ptr = nullptr;
-        if (kpoint_index < static_cast<int>(cached_projector_map_.size()) &&
-            cached_projector_map_[kpoint_index] != nullptr) {
-            kleinman_bylander_potential_ptr = cached_projector_map_[kpoint_index];
-        } else {
-            Vector3D kpoint_coordinates = kpoint_grid[kpoint_index].coordinates;
-            compute_kleinman_bylander_projectors(
-                kpoint_coordinates,
+        // Nonlocal potential contribution, from the k-point's projector set.
+        const KleinmanBylanderProjectorSet& kleinman_bylander_projector_set =
+            projector_set_provider_.projector_set(
+                kpoint_index,
                 crystal_structure,
+                kpoint_grid,
                 planewave_basis,
-                pseudopotential_quantum_system.pseudopotential_basis().pseudopotential_set(),
-                pseudopotential_quantum_system.pseudopotential_basis().beta_function_table(),
+                pseudopotential_quantum_system.pseudopotential_basis(),
                 g_vector_indices,
-                number_of_plane_waves,
-                pseudopotential_quantum_system.pseudopotential_basis().total_number_of_projectors(),
-                computed_projectors);
-            kleinman_bylander_potential_ptr = &computed_projectors;
-        }
-        const auto& kleinman_bylander_potential = *kleinman_bylander_potential_ptr;
+                number_of_plane_waves);
 
         int combined_projector_index = 0;
         for (int atom_index = 0; atom_index < crystal_structure.number_of_atoms(); atom_index++) {
@@ -178,6 +168,10 @@ class PlanewaveDirectDiagonalizer : public PlanewaveDiagonalizer {
 
                     int combined_projector_index_a = projector_index_start + projector_index_a;
                     int combined_projector_index_b = projector_index_start + projector_index_b;
+                    const Complex* projector_a =
+                        kleinman_bylander_projector_set.projector(combined_projector_index_a);
+                    const Complex* projector_b =
+                        kleinman_bylander_projector_set.projector(combined_projector_index_b);
 
                     for (int g_index = 0; g_index < number_of_plane_waves; g_index++) {
                         for (int plane_wave_index_jg = 0;
@@ -185,10 +179,8 @@ class PlanewaveDirectDiagonalizer : public PlanewaveDiagonalizer {
                              plane_wave_index_jg++) {
                             hamiltonian_matrix[g_index +
                                                plane_wave_index_jg * number_of_plane_waves] +=
-                                d_matrix_element_value *
-                                kleinman_bylander_potential[combined_projector_index_a][g_index] *
-                                std::conj(kleinman_bylander_potential[combined_projector_index_b]
-                                                                     [plane_wave_index_jg]);
+                                d_matrix_element_value * projector_a[g_index] *
+                                std::conj(projector_b[plane_wave_index_jg]);
                         }
                     }
                 }
@@ -198,7 +190,7 @@ class PlanewaveDirectDiagonalizer : public PlanewaveDiagonalizer {
         // The overlap operator selects the standard (NC, S=I) or generalized (US) eigenproblem.
         auto overlap_operator = create_overlap_operator(crystal_structure,
                                                         pseudopotential_quantum_system,
-                                                        kleinman_bylander_potential,
+                                                        kleinman_bylander_projector_set,
                                                         execution_policy_);
 
         std::vector<Complex> overlap_matrix;
@@ -236,7 +228,7 @@ class PlanewaveDirectDiagonalizer : public PlanewaveDiagonalizer {
             quantum_system.set_eigenvalue(
                 kpoint_index_state, band_index, lapack_eigenvalues[band_index]);
             Complex* band_data =
-                quantum_system.wavefunction_band_data(kpoint_index_state, band_index);
+                quantum_system.mutable_wavefunction_band_data(kpoint_index_state, band_index);
             for (int g_index = 0; g_index < number_of_plane_waves; g_index++) {
                 band_data[g_index] = eigenvectors[band_index * number_of_plane_waves + g_index];
             }
@@ -247,17 +239,14 @@ class PlanewaveDirectDiagonalizer : public PlanewaveDiagonalizer {
         return "direct";
     }
 
-    void set_cached_projectors(int kpoint_index, const q3::Matrix<Complex>* projectors) override {
-        if (kpoint_index >= static_cast<int>(cached_projector_map_.size())) {
-            cached_projector_map_.resize(kpoint_index + 1, nullptr);
-        }
-        cached_projector_map_[kpoint_index] = projectors;
+    void set_projector_set_store(KleinmanBylanderProjectorSetStore* projector_set_store) override {
+        projector_set_provider_.set_store(projector_set_store);
     }
 
   private:
     std::unique_ptr<SubspaceDiagonalizer> subspace_diagonalizer_;
     const execution::ExecutionPolicy& execution_policy_;
-    std::vector<const q3::Matrix<Complex>*> cached_projector_map_;
+    ProjectorSetProvider projector_set_provider_;
 };
 
 } // namespace q3

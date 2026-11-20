@@ -195,6 +195,41 @@ class GPUBLAS {
                        int leading_dimension_c) const = 0;
 
     /**
+     * Complex triangular solve (ZTRSM): matrix_b := alpha * op(A)^-1 * B or alpha * B * op(A)^-1.
+     *
+     * Flags as in BLAS. Every backend supplies its own: a backend whose memory lives on a
+     * discrete device solves there, since a host solve over a device-resident matrix migrates
+     * all of it to the host and back, and one whose unified memory is host memory calls the
+     * host library it already links. There is deliberately no default here. A default would
+     * have to declare the host BLAS in this header, and the Metal backend includes this header
+     * beside Accelerate, whose own prototypes for the same symbols differ.
+     */
+    virtual void trsm(char side,
+                      char upper_or_lower,
+                      char transpose_a,
+                      char unit_diagonal,
+                      int m,
+                      int n,
+                      Complex alpha,
+                      const Complex* matrix_a,
+                      int leading_dimension_a,
+                      Complex* matrix_b,
+                      int leading_dimension_b) const = 0;
+
+    /// Real triangular solve (DTRSM), the gamma-only counterpart of trsm().
+    virtual void dtrsm(char side,
+                       char upper_or_lower,
+                       char transpose_a,
+                       char unit_diagonal,
+                       int m,
+                       int n,
+                       Real alpha,
+                       const Real* matrix_a,
+                       int leading_dimension_a,
+                       Real* matrix_b,
+                       int leading_dimension_b) const = 0;
+
+    /**
      * Access the underlying GPU device backend.
      */
     device::GPUDeviceBackend& device_backend() {

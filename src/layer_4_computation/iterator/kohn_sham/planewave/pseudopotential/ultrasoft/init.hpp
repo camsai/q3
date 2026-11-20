@@ -17,7 +17,7 @@
 
 #include "layer_3_representation/charge_density/planewave/pseudopotential/init.hpp"
 #include "layer_3_representation/effective_potential/planewave/pseudopotential/ultrasoft/init.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/ultrasoft/init.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/pseudopotential/init.hpp"
 
@@ -270,9 +270,9 @@ class UltrasoftPlanewavePseudopotentialKohnShamSCFIterator
             Real kpoint_weight = kpoint_grid()[kpoint_index].weight;
             int plane_waves_at_kpoint = number_of_plane_waves(kpoint_index);
 
-            // Use cached KB projectors (computed once in solve_single_particle_states)
-            const auto& kleinman_bylander_projectors =
-                cached_kleinman_bylander_projectors_[kpoint_index];
+            // The k-point's projector set: the one the eigensolver read.
+            const KleinmanBylanderProjectorSet& kleinman_bylander_projectors =
+                projector_set(kpoint_index);
 
             // Gather occupied band data and weights
             std::vector<int> occupied_band_indices;
@@ -291,48 +291,27 @@ class UltrasoftPlanewavePseudopotentialKohnShamSCFIterator
                 continue;
             }
 
-            // Gather wavefunctions into a contiguous matrix: psi(pw, occupied_bands)
-            std::vector<Complex> psi_matrix(static_cast<size_t>(plane_waves_at_kpoint) *
-                                            number_of_occupied_bands);
-            for (int occupied_index = 0; occupied_index < number_of_occupied_bands;
-                 ++occupied_index) {
-                const Complex* band_data = quantum_system_.wavefunction_band_data(
-                    kpoint_index_state, occupied_band_indices[occupied_index]);
-                std::copy(band_data,
-                          band_data + plane_waves_at_kpoint,
-                          psi_matrix.data() +
-                              static_cast<size_t>(occupied_index) * plane_waves_at_kpoint);
-            }
-
-            // Compute projector_overlaps(total_projectors, occupied_bands) = beta^H × psi
+            /**
+             * projector_overlaps(total_projectors, occupied_bands) = beta^H × psi, through
+             * the run's band projection calculator: the host BLAS on a host run, and on a
+             * device run a product of the projector set's device copy with the bands where
+             * the eigensolver left them, so that the bands are not brought down for it.
+             */
             std::vector<Complex> projector_overlaps(static_cast<size_t>(total_projectors) *
                                                         number_of_occupied_bands,
                                                     Complex(0.0, 0.0));
 
             if (planewave_basis_.is_gamma_only()) {
-                int double_number_of_plane_waves = 2 * plane_waves_at_kpoint;
-                double alpha_two = 2.0;
-                double double_beta_zero = 0.0;
-
                 std::vector<double> real_projector_overlaps(
                     static_cast<size_t>(total_projectors) * number_of_occupied_bands, 0.0);
-                const double* real_kleinman_bylander_projectors =
-                    reinterpret_cast<const double*>(kleinman_bylander_projectors.data());
-                const double* real_psi_matrix = reinterpret_cast<const double*>(psi_matrix.data());
-
-                dgemm_("T",
-                       "N",
-                       &total_projectors,
-                       &number_of_occupied_bands,
-                       &double_number_of_plane_waves,
-                       &alpha_two,
-                       real_kleinman_bylander_projectors,
-                       &double_number_of_plane_waves,
-                       real_psi_matrix,
-                       &double_number_of_plane_waves,
-                       &double_beta_zero,
-                       real_projector_overlaps.data(),
-                       &total_projectors);
+                band_projection_calculator_->project_half_sphere(
+                    kleinman_bylander_projectors.matrix(),
+                    total_projectors,
+                    plane_waves_at_kpoint,
+                    quantum_system_,
+                    kpoint_index_state,
+                    occupied_band_indices,
+                    real_projector_overlaps.data());
 
                 /**
                  * G=0 correction. The 2 Re sum above counts the origin twice, so
@@ -346,12 +325,12 @@ class UltrasoftPlanewavePseudopotentialKohnShamSCFIterator
                 if (has_zero_g_vector) {
                     for (int occupied_index = 0; occupied_index < number_of_occupied_bands;
                          ++occupied_index) {
-                        Complex psi_g0 =
-                            psi_matrix[static_cast<size_t>(occupied_index) * plane_waves_at_kpoint];
+                        Complex psi_g0 = quantum_system_.wavefunction_band_data(
+                            kpoint_index_state, occupied_band_indices[occupied_index])[0];
                         for (int projector_index = 0; projector_index < total_projectors;
                              ++projector_index) {
                             Complex kleinman_bylander_g0 =
-                                kleinman_bylander_projectors[projector_index][0];
+                                kleinman_bylander_projectors.projector(projector_index)[0];
                             size_t index = static_cast<size_t>(projector_index) +
                                            static_cast<size_t>(occupied_index) * total_projectors;
                             real_projector_overlaps[index] -=
@@ -364,29 +343,13 @@ class UltrasoftPlanewavePseudopotentialKohnShamSCFIterator
                     projector_overlaps[index] = Complex(real_projector_overlaps[index], 0.0);
                 }
             } else {
-                Complex alpha_blas(1.0, 0.0);
-                Complex beta_blas(0.0, 0.0);
-                auto* cast_alpha = reinterpret_cast<const std::complex<double>*>(&alpha_blas);
-                auto* cast_beta_coeff = reinterpret_cast<const std::complex<double>*>(&beta_blas);
-                auto* cast_kb = reinterpret_cast<const std::complex<double>*>(
-                    kleinman_bylander_projectors.data());
-                auto* cast_psi = reinterpret_cast<const std::complex<double>*>(psi_matrix.data());
-                auto* cast_projector_overlaps =
-                    reinterpret_cast<std::complex<double>*>(projector_overlaps.data());
-
-                zgemm_("C",
-                       "N",
-                       &total_projectors,
-                       &number_of_occupied_bands,
-                       &plane_waves_at_kpoint,
-                       cast_alpha,
-                       cast_kb,
-                       &plane_waves_at_kpoint,
-                       cast_psi,
-                       &plane_waves_at_kpoint,
-                       cast_beta_coeff,
-                       cast_projector_overlaps,
-                       &total_projectors);
+                band_projection_calculator_->project(kleinman_bylander_projectors.matrix(),
+                                                     total_projectors,
+                                                     plane_waves_at_kpoint,
+                                                     quantum_system_,
+                                                     kpoint_index_state,
+                                                     occupied_band_indices,
+                                                     projector_overlaps.data());
             }
 
             /**

@@ -60,6 +60,21 @@ CBLAS_TRANSPOSE translate_transpose(char transpose_flag) {
     }
 }
 
+/// Translate a BLAS side flag ('L' or 'R') to the Accelerate CBLAS enum.
+CBLAS_SIDE translate_side(char side_flag) {
+    return (side_flag == 'R' || side_flag == 'r') ? CblasRight : CblasLeft;
+}
+
+/// Translate a BLAS triangle flag ('U' or 'L') to the Accelerate CBLAS enum.
+CBLAS_UPLO translate_triangle(char triangle_flag) {
+    return (triangle_flag == 'L' || triangle_flag == 'l') ? CblasLower : CblasUpper;
+}
+
+/// Translate a BLAS diagonal flag ('N' or 'U') to the Accelerate CBLAS enum.
+CBLAS_DIAG translate_diagonal(char diagonal_flag) {
+    return (diagonal_flag == 'U' || diagonal_flag == 'u') ? CblasUnit : CblasNonUnit;
+}
+
 /**
  * Deinterleave a complex single-precision matrix into split real/imag arrays.
  *
@@ -514,6 +529,53 @@ class MetalGPUBLAS : public GPUBLAS {
                     alpha, matrix_a, leading_dimension_a,
                     matrix_b, leading_dimension_b,
                     beta, matrix_c, leading_dimension_c);
+    }
+
+    /**
+     * Complex triangular solve via cblas_ztrsm (CPU): Apple's unified memory is host memory,
+     * so the candidate blocks are solved where they are.
+     */
+    void trsm(char side,
+              char upper_or_lower,
+              char transpose_a,
+              char unit_diagonal,
+              int m,
+              int n,
+              Complex alpha,
+              const Complex* matrix_a,
+              int leading_dimension_a,
+              Complex* matrix_b,
+              int leading_dimension_b) const override {
+        cblas_ztrsm(CblasColMajor,
+                    translate_side(side),
+                    translate_triangle(upper_or_lower),
+                    translate_transpose(transpose_a),
+                    translate_diagonal(unit_diagonal),
+                    m, n,
+                    &alpha, matrix_a, leading_dimension_a,
+                    matrix_b, leading_dimension_b);
+    }
+
+    /// Real triangular solve via cblas_dtrsm (CPU), the gamma-only counterpart of trsm().
+    void dtrsm(char side,
+               char upper_or_lower,
+               char transpose_a,
+               char unit_diagonal,
+               int m,
+               int n,
+               Real alpha,
+               const Real* matrix_a,
+               int leading_dimension_a,
+               Real* matrix_b,
+               int leading_dimension_b) const override {
+        cblas_dtrsm(CblasColMajor,
+                    translate_side(side),
+                    translate_triangle(upper_or_lower),
+                    translate_transpose(transpose_a),
+                    translate_diagonal(unit_diagonal),
+                    m, n,
+                    alpha, matrix_a, leading_dimension_a,
+                    matrix_b, leading_dimension_b);
     }
 
   private:

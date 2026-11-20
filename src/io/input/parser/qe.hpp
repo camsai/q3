@@ -27,6 +27,7 @@
 #include <cmath>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -58,14 +59,11 @@ inline const std::set<std::string>& physics_neutral_keys() {
         "disk_io",
         "wf_collect",
         "max_seconds",
-        "tprnfor",
-        "tstress",
         "lkpoint_dir",
         "wfcdir",
         // &ELECTRONS: they steer how the SCF walks, never where it converges.
         "startingwfc",
         "diago_thr_init",
-        "diago_david_ndim",
         "diago_full_acc",
         "diago_cg_maxiter",
         "adaptive_thr",
@@ -257,7 +255,9 @@ inline const std::map<std::string, std::set<std::string>>& honoured_keys_by_name
           "nstep",
           "etot_conv_thr",
           "forc_conv_thr",
-          "restart_mode"}},
+          "restart_mode",
+          "tprnfor",
+          "tstress"}},
         {"system",
          {
              // Cell
@@ -296,6 +296,7 @@ inline const std::map<std::string, std::set<std::string>>& honoured_keys_by_name
         {"electrons",
          {"mixing_fixed_ns",
           "conv_thr",
+          "diago_david_ndim",
           "mixing_beta",
           "mixing_mode",
           "mixing_ndim",
@@ -333,6 +334,13 @@ class QEInputParser : public InputParser {
         data.mixing_preconditioning = "none";
         /// Raw 1-based starting_ns_eigenvalue (m, ispin, ityp, f), resolved to symbols post-parse.
         std::vector<RawStartingNsEigenvalue> raw_starting_ns_eigenvalues;
+        /**
+         * `tprnfor` and `tstress`, when the deck states them. What they default to
+         * depends on the calculation type, which may be read after them, so they
+         * are resolved once the whole deck is in.
+         */
+        std::optional<bool> forces_were_requested;
+        std::optional<bool> stress_was_requested;
         std::ifstream input_file(filename);
         if (!input_file.is_open())
             throw std::runtime_error("Cannot open input file: " + filename);
@@ -550,6 +558,10 @@ class QEInputParser : public InputParser {
                 }
                 if (extract_key_value(line, "prefix", value))
                     data.prefix = value;
+                if (extract_key_value(line, "tprnfor", value))
+                    forces_were_requested = fortran_logical_is_true(value);
+                if (extract_key_value(line, "tstress", value))
+                    stress_was_requested = fortran_logical_is_true(value);
                 if (extract_key_value(line, "outdir", value))
                     data.output_directory = value;
                 /**
@@ -891,6 +903,22 @@ class QEInputParser : public InputParser {
             } else if (section == "electrons") {
                 if (extract_key_value(line, "conv_thr", value))
                     data.convergence_threshold = fortran_to_double(value);
+                if (extract_key_value(line, "diago_david_ndim", value)) {
+                    /**
+                     * The same quantity under two names: the Davidson working basis as a
+                     * multiple of the band count. pw.x's default is 2, as Q3's is, and a deck
+                     * that raises it is trading memory for fewer restarts in both codes.
+                     */
+                    const int factor = std::stoi(value);
+                    if (factor < 2) {
+                        throw std::runtime_error(
+                            "diago_david_ndim must be at least 2: the working basis has to be "
+                            "able to grow past the bands it is solving for, got " +
+                            std::to_string(factor));
+                    }
+                    data.davidson_basis_expansion_factor = factor;
+                    data.davidson_basis_expansion_factor_set_by_deck = true;
+                }
                 if (extract_key_value(line, "startingpot", value)) {
                     /// pw.x's two starts: overlapping atoms, or the saved density.
                     static const std::map<std::string, bool> starts_from_saved_density = {
@@ -1140,6 +1168,17 @@ class QEInputParser : public InputParser {
                 raw_directive.value,
                 "starting_ns_eigenvalue"));
         }
+
+        /**
+         * Forces and stress as pw.x decides them: computed when the deck asks,
+         * and otherwise only where the calculation cannot do without -- forces
+         * for a relaxation, forces and stress for a variable-cell one. A plain
+         * `scf` deck that names neither gets neither.
+         */
+        const bool is_variable_cell = data.calculation == "variable_cell_relaxation";
+        const bool is_relaxation = is_variable_cell || data.calculation == "relaxation";
+        data.compute_forces = forces_were_requested.value_or(is_relaxation);
+        data.compute_stress = stress_was_requested.value_or(is_variable_cell);
 
         return data;
     }

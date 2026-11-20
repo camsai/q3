@@ -57,6 +57,12 @@ class CudaGPUEigensolver : public GPUEigensolver {
     }
 
     ~CudaGPUEigensolver() override {
+        if (device_workspace_ != nullptr) {
+            cudaFree(device_workspace_);
+        }
+        if (device_info_ != nullptr) {
+            cudaFree(device_info_);
+        }
         if (cusolver_handle_ != nullptr) {
             cusolverDnDestroy(cusolver_handle_);
         }
@@ -90,12 +96,10 @@ class CudaGPUEigensolver : public GPUEigensolver {
                                                          &workspace_size),
                              "cusolverDnZheevd_bufferSize");
 
-        // Allocate workspace and info on device.
-        cuDoubleComplex* device_workspace = nullptr;
-        int* device_info = nullptr;
-        check_cuda_error(cudaMalloc(&device_workspace, sizeof(cuDoubleComplex) * workspace_size),
-                         "cudaMalloc workspace");
-        check_cuda_error(cudaMalloc(&device_info, sizeof(int)), "cudaMalloc info");
+        // The workspace and the status word are kept between calls; see ensure_workspace().
+        ensure_workspace(workspace_size);
+        cuDoubleComplex* device_workspace = device_workspace_;
+        int* device_info = device_info_;
 
         // Solve.
         check_cusolver_error(cusolverDnZheevd(cusolver_handle_,
@@ -114,9 +118,6 @@ class CudaGPUEigensolver : public GPUEigensolver {
         int host_info = 0;
         check_cuda_error(cudaMemcpy(&host_info, device_info, sizeof(int), cudaMemcpyDeviceToHost),
                          "cudaMemcpy info");
-
-        cudaFree(device_workspace);
-        cudaFree(device_info);
 
         if (host_info != 0) {
             throw std::runtime_error("CudaGPUEigensolver: cusolverDnZheevd failed, info = " +
@@ -158,12 +159,10 @@ class CudaGPUEigensolver : public GPUEigensolver {
                                                          &workspace_size),
                              "cusolverDnZhegvd_bufferSize");
 
-        // Allocate workspace and info on device.
-        cuDoubleComplex* device_workspace = nullptr;
-        int* device_info = nullptr;
-        check_cuda_error(cudaMalloc(&device_workspace, sizeof(cuDoubleComplex) * workspace_size),
-                         "cudaMalloc workspace");
-        check_cuda_error(cudaMalloc(&device_info, sizeof(int)), "cudaMalloc info");
+        // The workspace and the status word are kept between calls; see ensure_workspace().
+        ensure_workspace(workspace_size);
+        cuDoubleComplex* device_workspace = device_workspace_;
+        int* device_info = device_info_;
 
         // Solve.
         check_cusolver_error(cusolverDnZhegvd(cusolver_handle_,
@@ -186,9 +185,6 @@ class CudaGPUEigensolver : public GPUEigensolver {
         check_cuda_error(cudaMemcpy(&host_info, device_info, sizeof(int), cudaMemcpyDeviceToHost),
                          "cudaMemcpy info");
 
-        cudaFree(device_workspace);
-        cudaFree(device_info);
-
         if (host_info != 0) {
             throw std::runtime_error("CudaGPUEigensolver: cusolverDnZhegvd failed, info = " +
                                      std::to_string(host_info));
@@ -196,7 +192,33 @@ class CudaGPUEigensolver : public GPUEigensolver {
     }
 
   private:
+    /**
+     * Make the kept workspace hold at least `workspace_size` elements, and the status word
+     * exist. Allocated once and grown, never per call: cudaFree waits for the device, and a
+     * Davidson solver that calls this for every subspace it diagonalizes, a few hundred times
+     * a run, would spend more on freeing two buffers than on the eigenproblem.
+     */
+    void ensure_workspace(int workspace_size) {
+        if (device_info_ == nullptr) {
+            check_cuda_error(cudaMalloc(&device_info_, sizeof(int)), "cudaMalloc info");
+        }
+        if (workspace_size > device_workspace_size_) {
+            if (device_workspace_ != nullptr) {
+                check_cuda_error(cudaFree(device_workspace_), "cudaFree workspace");
+                device_workspace_ = nullptr;
+                device_workspace_size_ = 0;
+            }
+            check_cuda_error(
+                cudaMalloc(&device_workspace_, sizeof(cuDoubleComplex) * workspace_size),
+                "cudaMalloc workspace");
+            device_workspace_size_ = workspace_size;
+        }
+    }
+
     cusolverDnHandle_t cusolver_handle_ = nullptr;
+    cuDoubleComplex* device_workspace_ = nullptr;
+    int device_workspace_size_ = 0;
+    int* device_info_ = nullptr;
 };
 
 std::unique_ptr<GPUEigensolver>

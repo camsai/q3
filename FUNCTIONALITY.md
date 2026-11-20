@@ -816,15 +816,59 @@ tolerances accordingly. `control.use_deterministic_fft_planning: true` opts a ru
 bit-identical — see [KNOWN-ISSUES.md](KNOWN-ISSUES.md).
 
 **GPU offloading** — Davidson `H|ψ⟩` (FFT local potential, KB nonlocal) + subspace
-operations; density/mixing/XC remain on CPU. Selectable via `--precision double|mixed`.
+operations; on CUDA also the density accumulation from the bands and the starting
+rotation (`H|ψ⟩`, the subspace projections and the rotation itself). On every device
+backend the products of projectors with bands also run on the device: the projector
+occupations of ultrasoft and PAW datasets during the SCF, and the nonlocal force and
+nonlocal stress after it. Mixing, XC and the other terms of the forces and the stress
+remain on CPU. Selectable via `--precision double|mixed`.
 
-| Backend                      | Target            | Status | Notes                                                                    |
-| ---------------------------- | ----------------- | :----: | ------------------------------------------------------------------------ |
-| CUDA (cuBLAS/cuSOLVER/cuFFT) | `q3_gpu_cuda`     |   ✅   | Validated on Tesla T4; 6.6× vs serial (GPU-resident Davidson)            |
-| CUDA across several GPUs     | `q3_mpi_gpu_cuda` |   ✅   | One rank per device, one k-point pool each; measured on Perlmutter A100s |
-| Metal / Accelerate           | `q3_gpu`          |   ✅   | Apple Silicon; energies bit-identical to serial                          |
-| HIP / ROCm                   | `q3_gpu_hip`      |   🟡   | Compiles in CI; not yet run on AMD hardware                              |
-| SYCL / oneAPI                | `q3_gpu_sycl`     |   🟡   | Runs on CPU-fallback device; FFT not yet on Intel GPU                    |
+A device run counts every copy it makes between host memory and device memory, in
+each direction, and reports the totals as `runtime_log.device_transfers` in
+`results.json`. The band coefficients (one contiguous block per k-point state) and
+the Kleinman-Bylander projectors (one set per k-point) are held in arrays that know
+which of their host and device copies is current. The bands stay on the device
+between the eigensolver and the density: the solver writes them there, the next
+solve and the device density read them there, and they are copied to the host, once
+per k-point state, only when host code asks for them. A projector set is uploaded
+once per k-point for the whole run and again only if the geometry it was built from
+changes. On CUDA the sets are not uploaded at all: they are formed on the device from
+their factors, a structure factor per atom and a form factor per channel of a species,
+and take no host memory unless something asks for them there. Their device copies are
+a cache with a budget, half the device's memory: with more k-points than fit, the sets
+used longest ago give theirs up and are uploaded or rebuilt when their k-point comes
+round again.
+
+Where the device transforms the bands, the host FFT grids are made for what is left
+for them. The density grid's transforms, made one at a time, each get every thread, in
+place of the one single-threaded transform slot per thread that a host loop over bands
+needs; and both host grids are planned under a time cap. A host run, and a backend
+without a device FFT, keep their grids unchanged.
+
+On CUDA the Davidson's subspace eigenproblem is solved on the device, by cuSOLVER, on
+the subspace matrices where they are; ranks that share a band group, the gamma-point
+representation and the other backends solve it with host LAPACK.
+
+Projectors are contracted with bands through one interface with a host and a device
+implementation, so the occupations, the forces and the stress are the same code on
+either. The device one multiplies where the operands are and brings down only the
+overlaps. For the stress it never forms the projectors' strain derivatives: each is a
+real form factor times the atom's structure factor, so an atom's overlaps of every
+kind are one small product of its species' form factors with the bands multiplied
+through by the conjugate structure factor. What goes up is the form factors, once per
+k-point, and two real vectors per atom, where the derivative columns themselves would
+be seven times the size of the projector set. CPU against GPU, every contribution to
+the forces and to the stress is compared by
+`tests/validation/test_gpu_force_stress_parity.py` (norm-conserving, gamma-only,
+ultrasoft and PAW silicon), which passes on Metal and on an A100.
+
+| Backend                      | Target            | Status | Notes                                                                                                                                                                                        |
+| ---------------------------- | ----------------- | :----: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CUDA (cuBLAS/cuSOLVER/cuFFT) | `q3_gpu_cuda`     |   ✅   | Validated on Tesla T4; 6.6× vs serial (GPU-resident Davidson)                                                                                                                                |
+| CUDA across several GPUs     | `q3_mpi_gpu_cuda` |   ✅   | One rank per device, one k-point pool each; on Perlmutter A100s a 64-atom silicon SCF costs what it costs pw.x, on one device and on four ([measured](docs/performance_nersc_perlmutter.md)) |
+| Metal / Accelerate           | `q3_gpu`          |   ✅   | Apple Silicon; energies bit-identical to serial                                                                                                                                              |
+| HIP / ROCm                   | `q3_gpu_hip`      |   🟡   | Compiles in CI; not yet run on AMD hardware                                                                                                                                                  |
+| SYCL / oneAPI                | `q3_gpu_sycl`     |   🟡   | Runs on CPU-fallback device; FFT not yet on Intel GPU                                                                                                                                        |
 
 The GPU-resident Davidson pipeline (device-resident workspace + CUDA
 scatter/gather/potential kernels) has shipped — see
@@ -907,7 +951,10 @@ names the reason for anything it recognizes but cannot honour (`qe_input::`'s fo
 .false.`, `tot_magnetization = -10000` — are accepted, since they ask for what Q3 already
 does. 96 of 150 of QE's own `scf` regression inputs parse; every refusal names a real
 unimplemented feature (hybrids, noncollinear magnetism, electric fields, explicit
-occupations, forced FFT grids).
+occupations, forced FFT grids). A deck computes the forces and the stress pw.x would
+compute for it — `tprnfor` and `tstress`, each on by itself where the calculation type
+needs it — where a Q3 YAML input computes both unless `control.compute_forces` or
+`control.compute_stress` turns one off.
 
 ### 3.2 Schema & Data Model
 

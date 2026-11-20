@@ -16,6 +16,7 @@
 
 #include <cmath>
 
+#include "layer_0_core/math/contracted_multiply_add.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_1_structure/reciprocal_space/kpoints_grid.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/init.hpp"
@@ -65,8 +66,11 @@ class PlanewaveKohnShamEnergyCalculator {
             for (int band_index = 0; band_index < number_of_bands; ++band_index) {
                 Real occupation = quantum_system_.occupation_by_kpoint_state_index_and_band_index(
                     kpoint_index_state, band_index);
-                band_energy += kpoint_grid_[kpoint_index].weight * occupation *
-                               quantum_system_.eigenvalue(kpoint_index_state, band_index);
+                // The rounding is stated, not left to the optimizer; see contracted_multiply_add().
+                band_energy = contracted_multiply_add(
+                    kpoint_grid_[kpoint_index].weight * occupation,
+                    quantum_system_.eigenvalue(kpoint_index_state, band_index),
+                    band_energy);
             }
         }
 

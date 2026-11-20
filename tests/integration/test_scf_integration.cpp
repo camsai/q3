@@ -367,7 +367,7 @@ TEST(SCFIntegration, DavidsonSingleShot) {
     for (int band_index = 0; band_index < number_of_bands; band_index++) {
         const Complex* src =
             planewave_iterator->quantum_system().wavefunction_band_data(0, band_index);
-        Complex* dst = davidson_quantum_system.wavefunction_band_data(0, band_index);
+        Complex* dst = davidson_quantum_system.mutable_wavefunction_band_data(0, band_index);
         std::copy(src, src + number_of_plane_waves, dst);
     }
 

@@ -563,6 +563,32 @@ subspace path. Remaining work:
         still the launcher's job (`CUDA_VISIBLE_DEVICES=$SLURM_LOCALID`), since `cuda.cpp`
         calls `cudaSetDevice(0)`. The single-process GPU binaries refuse a multi-task launch
         rather than duplicating the calculation (`src/io/launcher.hpp`).
+-   [ ] **[M]** **Take the rest of a device run off the host** — the 64-atom silicon SCF
+        costs the same on Perlmutter A100s as in pw.x, on one device (14.5 to 14.7 s against
+        15.4 to 16.0 s) and on four (11.2 to 11.6 s against 11.5 s), in the job of 2026-11-19
+        ([docs/performance_nersc_perlmutter.md](docs/performance_nersc_perlmutter.md)),
+        which is one cell and a handful of pairs, not a general statement. What a device
+        run still does on the host, or pays once on the device, in order of size: when a
+        run asks for them, the forces and the stress beyond their nonlocal terms, about 6 s
+        where pw.x takes 0.6 s, so that a run with forces and stress was 1.2 to 1.3 times
+        slower. The sums over atoms and G-vectors of the local, core-correction and Ewald
+        terms now run on the device (`GPUStructureFactorCalculator`), which is not yet
+        measured on a device; what stays on the host is per species and G-vector (the
+        radial interpolations), the Ewald real-space sum, and the exchange-correlation
+        stress, a host loop over the density grid with its gradient transforms. XC and the
+        density-grid transforms of the SCF, about 2 s against pw.x's 0.1; and setup, about 4 s against 1.7 (the starting rotation's Hamiltonian on the
+        device, the projector sets with the device's first touch of their unified memory,
+        the starting orbitals with their packing, host tables and grids; the split was
+        last measured on 2026-11-17). Smaller: at the gamma point the solver still brings
+        the bands to the host to make the `G = 0` coefficient real and solves its subspace
+        problem there; a band-path run copies bands between k-points on the host. Not
+        tried: device memory that is not unified for the arrays only the device touches,
+        which would remove the first-touch cost.
+-   [ ] **[S]** **Find why pw.x's device FFTs run two to three times faster in some jobs** —
+        the only unexplained number in the comparison above. It was fast in one job of four
+        on 15 and 16 November and in all three of 17 November, on 40 GB and 80 GB cards
+        alike; on four devices that moved pw.x from 11.9 to 21.1 s to 7.5 to 8.3 s, which
+        is more than any difference between the two codes measured inside one job.
 -   [ ] **[L]** **Native GPU FFT for SYCL and Metal** — `SYCLGPUFFTGrid` delegates to
         CPU FFTW (add oneMKL DFT descriptors); Metal FP64 FFT / eigensolve also fall back
         to CPU (Apple GPUs lack FP64).
@@ -575,23 +601,24 @@ subspace path. Remaining work:
 -   [ ] **[S]** **Stage the subspace collapse through the wavefunction storage, for exact
         parity** — the solver holds one band-sized rotation scratch that Quantum ESPRESSO
         does not, because that code stages its collapse through its wavefunction array,
-        which is contiguous per k-point. Q3's is a vector per band, so a single GEMM cannot
-        target it. It does not have to: rotate in blocks of a few dozen columns into a small
-        buffer and copy each block out band by band into
-        `quantum_system.wavefunction_band_data(...)`, which is free scratch between the seed
+        which is contiguous per k-point. Q3's is contiguous per k-point too since the bands
+        moved into one block per k-point state, so the rotation can be written straight into
+        `quantum_system.mutable_band_block(...)`, which is free scratch between the seed
         and the extraction — nothing reads it in between. That removes the last
         `nbnd x npw` array, taking the 432-atom deck from 40.6 GB to 37.8 GB per rank
         against Quantum ESPRESSO's 36.4, within 4%. The cost is two extra copies of `nbnd x npw` per
         collapse and a blocked rather than single GEMM.
 -   [ ] **[M]** **Cache nonlocal projectors for the k-point being solved, not for all of
-        them** — `cached_kleinman_bylander_projectors_` holds one `nkb x npw` matrix per
-        k-point for the whole run, so a multi-k-point calculation carries `nkpt` copies
+        them** — the iterator's `KleinmanBylanderProjectorSetStore` keeps one `nkb x npw`
+        set per k-point while the SCF runs, so a multi-k-point calculation carries `nkpt` copies
         where Quantum ESPRESSO carries one and rebuilds it per k-point in the loop. It costs
         nothing on a gamma-only supercell, which has a single k-point, and it is the second
         largest term in the footprint there regardless (20.8 GB on the 432-atom deck). On a
         100-atom cell with ten k-points it would be the difference between 1.2 GB and
         12 GB. The trade is recomputation time against memory, so it wants a measurement
-        and probably a knob rather than an unconditional change.
+        and probably a knob rather than an unconditional change. The store already has the
+        mode (`keep_latest_set_only()`, which the forces and stress run under once the SCF has
+        released its workspace); the knob would switch the SCF to it.
 -   [x] **[M]** **Gamma-only under a shared pool** — done 2026-09-12. The stick FFT
         co-locates every G-vector with its negative, so the half sphere is rebuilt locally
         again, and the `G = 0` corrections -- the `2 Re(...) - G0` terms in the subspace

@@ -190,6 +190,18 @@ struct InputData {
      * mesh then gives the raw-mesh energy rather than the symmetrized-mesh one.
      */
     bool disable_symmetry = false;
+
+    /**
+     * Whether the forces and the stress tensor are computed once the SCF has
+     * converged. Both are on unless the input says otherwise: a Q3 input asks
+     * for neither by name, and gets both. A Quantum ESPRESSO deck follows
+     * pw.x's own rule instead -- `tprnfor` and `tstress`, each defaulting to
+     * what the calculation type needs -- so that a deck costs in Q3 what it
+     * asks for in pw.x. Neither is free on a large cell: together they were a
+     * third of a one-device run of 64-atom silicon.
+     */
+    bool compute_forces = true;
+    bool compute_stress = true;
     std::string ibz_reduction_method = "internal"; // "internal" or "spglib"
 
     /**

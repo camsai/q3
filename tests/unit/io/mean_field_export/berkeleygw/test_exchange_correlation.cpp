@@ -226,7 +226,7 @@ TEST(BerkeleyGWExchangeCorrelationFile, ConstantPotentialGivesV0ForNormalizedWav
     scf_state.exchange_correlation_potential_g[gamma_index] = Complex(v0_ry, 0.0);
 
     // 0.6^2 + 0.8^2 = 1.0 exactly -- an exact Pythagorean normalization.
-    Complex* coefficients = quantum_system->wavefunction_band_data(0, 0);
+    Complex* coefficients = quantum_system->mutable_wavefunction_band_data(0, 0);
     coefficients[0] = Complex(0.6, 0.0);
     coefficients[1] = Complex(0.0, 0.8);
     for (size_t index = 2; index < g_indices.size(); index++) {
@@ -291,7 +291,7 @@ TEST(BerkeleyGWExchangeCorrelationFile, OneNonzeroOffGammaVxcComponentMatchesHan
     scf_state.exchange_correlation_potential_g[difference_index] = v;
     scf_state.exchange_correlation_potential_g[negated_difference_index] = std::conj(v);
 
-    Complex* coefficients = quantum_system->wavefunction_band_data(0, 0);
+    Complex* coefficients = quantum_system->mutable_wavefunction_band_data(0, 0);
     Real inverse_sqrt2 = 1.0 / std::sqrt(2.0);
     coefficients[0] = Complex(inverse_sqrt2, 0.0);
     coefficients[1] = Complex(inverse_sqrt2, 0.0);
@@ -351,7 +351,7 @@ TEST(BerkeleyGWExchangeCorrelationFile, ImaginaryPartIsNegligibleForGenericHermi
     const auto& g_indices = basis.kpoint_g_vector_indices()[0];
     int number_of_plane_waves = static_cast<int>(g_indices.size());
     ASSERT_GE(number_of_plane_waves, 6);
-    Complex* coefficients = quantum_system->wavefunction_band_data(0, 0);
+    Complex* coefficients = quantum_system->mutable_wavefunction_band_data(0, 0);
     Real norm_squared = 0.0;
     for (int index = 0; index < number_of_plane_waves; index++) {
         Complex value(std::sin(0.3 * index + 0.1), 0.3 * std::cos(0.2 * index + 0.7));
@@ -446,7 +446,7 @@ TEST(BerkeleyGWExchangeCorrelationFile, FileContentsMatchExactFixedWidthColumnsF
         }
     }
     ASSERT_GE(local_gamma_index, 0);
-    Complex* coefficients_k0 = quantum_system->wavefunction_band_data(0, 0);
+    Complex* coefficients_k0 = quantum_system->mutable_wavefunction_band_data(0, 0);
     for (int index = 0; index < static_cast<int>(g_indices_k0.size()); index++) {
         coefficients_k0[index] = Complex(0.0, 0.0);
     }
@@ -457,7 +457,7 @@ TEST(BerkeleyGWExchangeCorrelationFile, FileContentsMatchExactFixedWidthColumnsF
      * 0), but must still be a valid normalized state for write_to_file() to succeed at all.
      */
     const auto& g_indices_k1 = basis.kpoint_g_vector_indices()[1];
-    Complex* coefficients_k1 = quantum_system->wavefunction_band_data(1, 0);
+    Complex* coefficients_k1 = quantum_system->mutable_wavefunction_band_data(1, 0);
     for (int index = 0; index < static_cast<int>(g_indices_k1.size()); index++) {
         coefficients_k1[index] = Complex(0.0, 0.0);
     }

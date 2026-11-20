@@ -26,6 +26,16 @@ class FFTGridFactory {
      * configuration (serial, MPI slab-decomposed, ...).
      */
     virtual std::unique_ptr<FFTGrid> create_fft_grid() const = 0;
+
+    /**
+     * Create the grid the density and the potentials are transformed on. The same kind of
+     * grid as create_fft_grid() unless the configuration knows better: that grid's transforms
+     * are made one at a time, never from inside a loop over bands, so a configuration whose
+     * band loops do not run on the host can give each of them every thread.
+     */
+    virtual std::unique_ptr<FFTGrid> create_density_fft_grid() const {
+        return create_fft_grid();
+    }
 };
 
 } // namespace q3

@@ -22,6 +22,7 @@
  */
 
 #include <cmath>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -63,8 +64,17 @@ struct ForceCalculator {
         const auto& projector_overlap_coefficients = scf_state.projector_overlap_coefficients;
         int number_of_atoms = crystal_structure.number_of_atoms();
 
+        /**
+         * The sums over atoms and G-vectors of the Ewald, local and core-correction terms are
+         * formed where the run that produced the state formed its own: on its device, if it
+         * had one.
+         */
+        const std::unique_ptr<StructureFactorCalculator> structure_factor_calculator =
+            scf_state.create_structure_factor_calculator();
+
         // 1. Ewald forces
-        EwaldForceCalculator ewald_calculator(crystal_structure, planewave_basis);
+        EwaldForceCalculator ewald_calculator(
+            crystal_structure, planewave_basis, *structure_factor_calculator);
         auto ewald_forces = ewald_calculator.compute();
 
         /**
@@ -84,7 +94,8 @@ struct ForceCalculator {
             planewave_basis,
             kpoint_grid,
             scf_state,
-            projector_overlap_coefficients);
+            projector_overlap_coefficients,
+            *structure_factor_calculator);
         auto pseudopotential_contributions = pseudopotential_calculator.compute();
 
         /**

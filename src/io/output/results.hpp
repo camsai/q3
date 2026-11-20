@@ -31,6 +31,7 @@
 #include "generated/esse/properties/scalar/total_energy.hpp"
 #include "generated/esse/properties/structural/atomic_forces.hpp"
 #include "generated/q3/results.hpp"
+#include "io/file_backup.hpp"
 #include "io/json_file.hpp"
 #include "layer_0_core/execution/threading.hpp"
 #include "layer_0_core/types/init.hpp"
@@ -187,8 +188,14 @@ inline void set_fermi_energy(generated::Results& results, Real fermi_energy_in_r
     return nlohmann::json(results).dump(4) + "\n";
 }
 
-/// Write the results to `output_path` as results.json.
+/**
+ * Write the results to `output_path` as results.json. A results file already
+ * at that path -- an earlier run into the same output directory -- is first
+ * moved to its first unused `<path>-N` name (io/file_backup.hpp), so a run
+ * never overwrites another run's results.
+ */
 inline void write_results_json(const generated::Results& results, const std::string& output_path) {
+    back_up_existing_file(output_path);
     write_json_file(output_path, results);
 }
 

@@ -575,6 +575,16 @@
                     "default": false,
                     "description": "If true, use no symmetry at all: the k-point mesh is not reduced, and the density, forces and stress are not symmetrized (Quantum ESPRESSO nosym + noinv)"
                 },
+                "compute_forces": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "If false, the forces are not computed after the SCF and the results carry none. A Quantum ESPRESSO deck sets this from tprnfor, which pw.x turns on by itself for relax and vc-relax and leaves off for scf"
+                },
+                "compute_stress": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "If false, the stress tensor and pressure are not computed after the SCF and the results carry none. A Quantum ESPRESSO deck sets this from tstress, which pw.x turns on by itself for vc-relax and leaves off otherwise"
+                },
                 "nonlocal_stress_derivative_method": {
                     "type": "string",
                     "enum": ["analytical", "numerical"],

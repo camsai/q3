@@ -781,6 +781,7 @@ if(Q3_BUILD_TESTS)
         tests/unit/layer_0_core/math/linear_algebra/test_singular_value_decomposition.cpp
         tests/unit/layer_0_core/math/linear_algebra/test_unitary_exponential.cpp
         tests/unit/layer_0_core/math/test_convergence_window.cpp
+        tests/unit/layer_0_core/math/test_contracted_multiply_add.cpp
         tests/unit/layer_0_core/math/spherical/test_harmonics.cpp
         tests/unit/layer_0_core/math/spherical/test_bessel.cpp
         tests/unit/layer_0_core/math/spherical/test_coefficients.cpp
@@ -789,6 +790,8 @@ if(Q3_BUILD_TESTS)
         tests/unit/layer_0_core/math/test_phase_factor.cpp
         tests/unit/layer_0_core/math/test_tolerances.cpp
         tests/unit/layer_0_core/execution/test_threading.cpp
+        tests/unit/layer_0_core/execution/gpu/device/test_init.cpp
+        tests/unit/layer_0_core/execution/gpu/device/test_device_mirrored_array.cpp
         tests/unit/layer_0_core/profiling/test_counters.cpp
         tests/unit/layer_0_core/profiling/test_stage_timer.cpp
         tests/unit/layer_0_core/profiling/test_memory.cpp
@@ -820,7 +823,7 @@ if(Q3_BUILD_TESTS)
         tests/unit/layer_2_quantum_system/test_quantum_system.cpp
         # layer_3_representation
         tests/unit/layer_3_representation/basis/planewave/internal/fft/test_fft_grid.cpp
-        tests/unit/layer_3_representation/basis/planewave/internal/fft/test_serial_pocket_fft_grid.cpp
+        tests/unit/layer_3_representation/basis/planewave/internal/fft/test_fft_grid_serial_pocket.cpp
         tests/unit/layer_3_representation/basis/planewave/internal/fft/test_grid_sizer.cpp
         tests/unit/layer_3_representation/basis/planewave/internal/fft/test_stick_partition.cpp
         tests/unit/layer_3_representation/basis/planewave/internal/test_g_vectors_grid.cpp
@@ -828,6 +831,15 @@ if(Q3_BUILD_TESTS)
         tests/unit/layer_3_representation/basis/planewave/internal/test_spherical_harmonics_table.cpp
         tests/unit/layer_3_representation/basis/planewave/internal/test_miller_index_lookup.cpp
         tests/unit/layer_3_representation/basis/planewave/internal/fft/test_pair.cpp
+        tests/unit/layer_3_representation/basis/planewave/test_structure_factor_calculator_serial.cpp
+        tests/unit/layer_3_representation/quantum_system/kohn_sham/planewave/test_init.cpp
+        tests/unit/layer_3_representation/pseudopotential/planewave/test_kleinman_bylander_projector_set.cpp
+        tests/unit/layer_3_representation/pseudopotential/planewave/test_projector_set_builder_serial.cpp
+        tests/unit/layer_3_representation/pseudopotential/planewave/test_band_projection_calculator_serial.cpp
+        tests/unit/layer_3_representation/pseudopotential/planewave/test_projector_strain_overlap_calculator_serial.cpp
+        tests/unit/layer_3_representation/pseudopotential/planewave/test_kleinman_bylander_projector_set_store.cpp
+        tests/unit/layer_4_computation/diagonalizer/planewave/internal/test_projector_set_provider.cpp
+        tests/unit/layer_4_computation/iterator/kohn_sham/planewave/pseudopotential/test_init.cpp
         tests/unit/layer_3_representation/basis/planewave/internal/kpoint/test_plane_wave_selector.cpp
         tests/unit/layer_3_representation/basis/planewave/internal/kpoint/test_plane_wave_table.cpp
         tests/unit/layer_3_representation/mixins/test_ff_transformable.cpp
@@ -857,7 +869,17 @@ if(Q3_BUILD_TESTS)
         tests/unit/layer_4_computation/diagonalizer/planewave/test_factory.cpp
         tests/unit/layer_4_computation/diagonalizer/planewave/test_direct.cpp
         tests/unit/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/test_gpu_fft_batch.cpp
+        tests/unit/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/test_band_projection_calculator_gpu.cpp
+        tests/unit/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/test_structure_factor_calculator_gpu.cpp
+        tests/unit/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/test_projector_set_builder_gpu.cpp
+        tests/unit/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/test_projector_strain_overlap_calculator_gpu.cpp
+        tests/unit/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/test_starting_subspace_solver_gpu.cpp
+        tests/unit/layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/test_starting_subspace_solver_provider_factory_gpu.cpp
+        tests/unit/layer_4_computation/diagonalizer/planewave/internal/subspace_manager/test_gpu.cpp
+        tests/unit/layer_4_computation/diagonalizer/planewave/internal/subspace_manager/test_gpu_gamma_point.cpp
         tests/unit/layer_4_computation/diagonalizer/planewave/internal/overlap/test_orbital_metric.cpp
+        tests/unit/layer_4_computation/diagonalizer/planewave/internal/overlap/test_overlap_block_gpu_copied.cpp
+        tests/unit/layer_4_computation/diagonalizer/planewave/internal/overlap/test_overlap_block_gpu_recomputed.cpp
         tests/unit/layer_4_computation/diagonalizer/planewave/subspace/test_subspace_diagonalizer.cpp
         tests/unit/layer_4_computation/effective_potential/internal/dispersion/test_d3bj.cpp
         tests/unit/layer_4_computation/effective_potential/internal/dispersion/test_factory.cpp
@@ -894,6 +916,7 @@ if(Q3_BUILD_TESTS)
         tests/unit/layer_4_computation/iterator/kohn_sham/test_factory.cpp
         tests/unit/layer_4_computation/charge_density/planewave/test_init.cpp
         tests/unit/layer_4_computation/charge_density/planewave/internal/test_accumulator.cpp
+        tests/unit/layer_4_computation/charge_density/planewave/internal/test_accumulator_gpu.cpp
         tests/unit/layer_4_computation/fermi_energy/planewave/test_fermi_energy.cpp
         tests/unit/layer_3_representation/wavefunction/planewave/norm_conserving/test_initializer.cpp
         # io
@@ -909,6 +932,7 @@ if(Q3_BUILD_TESTS)
         tests/unit/io/interpolation/test_record_and_export.cpp
         tests/unit/io/interpolation/test_results_document.cpp
         tests/unit/io/test_json_file.cpp
+        tests/unit/io/test_file_backup.cpp
         tests/unit/io/input/test_data.cpp
         tests/unit/io/input/test_system_builder.cpp
         tests/unit/io/input/test_utils.cpp
@@ -919,6 +943,7 @@ if(Q3_BUILD_TESTS)
         tests/unit/io/output/material/test_init.cpp
         tests/unit/io/output/test_companion_outputs.cpp
         tests/unit/io/output/test_results.cpp
+        tests/unit/io/output/test_device_transfers.cpp
         tests/unit/io/pseudopotential/test_upf_reader.cpp
         tests/unit/io/pseudopotential/test_paw_upf_reader.cpp
         tests/unit/io/pseudopotential/test_functional_label.cpp
@@ -956,6 +981,7 @@ if(Q3_BUILD_TESTS)
         tests/integration/test_scf_integration.cpp
         tests/integration/test_non_self_consistent_field_integration.cpp
         tests/integration/test_cli.cpp
+        tests/integration/test_device_transfer_budget.cpp
         # layer_3 augmentation
         tests/unit/layer_3_representation/pseudopotential/planewave/ultrasoft/internal/test_charge_density_augmentation.cpp
         tests/unit/layer_3_representation/pseudopotential/planewave/internal/test_atomic_orbital_builder.cpp

@@ -32,6 +32,7 @@
 #endif
 #include "layer_3_representation/basis/planewave/internal/fft/fft_grid_serial.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/execution/init.hpp"
+#include "layer_4_computation/iterator/kohn_sham/planewave/execution/serial.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/internal/kpoint_distributor.hpp"
 
 #include <algorithm>
@@ -367,7 +368,13 @@ class PlanewaveMPIExecutionPolicy : public MPIExecutionPolicy, public PlanewaveE
          * MPI FFT overhead and enables hybrid thread parallelism for FFTs.
          */
         if (group_size() <= 1) {
-            return std::make_unique<SerialFFTGrid>();
+            auto grid = std::make_unique<SerialFFTGrid>();
+            if (bands_are_transformed_on_a_device_) {
+                grid->honor_planning_time_limit();
+                grid->limit_planning_time(
+                    PlanewaveSerialExecutionPolicy::device_run_planning_seconds_per_plan);
+            }
+            return grid;
         }
         /**
          * Ranks sharing a pool distribute reciprocal space by stick. The FFTW-MPI
@@ -376,6 +383,26 @@ class PlanewaveMPIExecutionPolicy : public MPIExecutionPolicy, public PlanewaveE
          * ranks empty at eight. The stick grid needs only serial FFTW plus MPI.
          */
         return std::make_unique<FFTGridSticks>(get_group_communicator());
+    }
+
+    /**
+     * Say that this run transforms its bands on a device, so that the host grids of a rank
+     * that holds them whole are made for what is left for them: the density grid's
+     * transforms get every thread, and both grids are planned under a time cap. See
+     * PlanewaveSerialExecutionPolicy::set_bands_are_transformed_on_a_device().
+     */
+    void set_bands_are_transformed_on_a_device() {
+        bands_are_transformed_on_a_device_ = true;
+    }
+
+    /// The density grid: threaded as a whole on a device run if held whole, else as any grid.
+    std::unique_ptr<FFTGrid> create_density_fft_grid() const override {
+        if (bands_are_transformed_on_a_device_ && group_size() <= 1) {
+            auto density_grid = std::make_unique<SerialFFTGrid>();
+            density_grid->give_every_thread_to_each_transform();
+            return density_grid;
+        }
+        return create_fft_grid();
     }
 
     // ── Pool topology accessors ───────────────────────────────────────────────
@@ -414,6 +441,7 @@ class PlanewaveMPIExecutionPolicy : public MPIExecutionPolicy, public PlanewaveE
   private:
     int number_of_pools_ = 1;
     bool number_of_pools_was_requested_ = false;
+    bool bands_are_transformed_on_a_device_ = false;
     MPI_Comm inter_pool_communicator_ = MPI_COMM_NULL;
 };
 

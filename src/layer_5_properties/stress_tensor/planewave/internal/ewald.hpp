@@ -13,24 +13,30 @@
  * This is a purely planewave contribution, independent of pseudopotential type.
  */
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <vector>
 
-#include "layer_0_core/math/phase_factor.hpp"
 #include "layer_0_core/math/tolerances.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
+#include "layer_3_representation/basis/planewave/structure_factor_calculator.hpp"
 #include "layer_5_properties/stress_tensor/planewave/contributions.hpp"
 
 namespace q3 {
 
 class EwaldStressTensorCalculator {
   public:
+    /// `structure_factor_calculator` forms S(G), the G-space sum over atoms; see compute().
     EwaldStressTensorCalculator(const Crystal& crystal_structure,
                                 const PlanewaveBasis& planewave_basis,
+                                const StructureFactorCalculator& structure_factor_calculator,
                                 StressTensorContributions& result)
         : crystal_structure_(crystal_structure)
         , planewave_basis_(planewave_basis)
+        , structure_factor_calculator_(structure_factor_calculator)
         , result_(result) {}
 
     void compute() {
@@ -66,6 +72,27 @@ class EwaldStressTensorCalculator {
                 (total_charge / crystal_structure_.cell_volume());
         }
 
+        /**
+         * S(G) = Σ_a Z_a e^{-iGτ_a} at every G-vector the sum below reads, formed by the
+         * structure factor calculator. Only |S(G)|² enters, so the sign of the phase does not.
+         */
+        std::vector<int> g_vector_indices;
+        for (int g_vector_index = std::max(g_vector_start, 0);
+             g_vector_index < planewave_basis_.number_of_g_vectors();
+             g_vector_index++) {
+            g_vector_indices.push_back(g_vector_index);
+        }
+        std::vector<Real> valence_charges(
+            static_cast<std::size_t>(crystal_structure_.number_of_atoms()));
+        for (int atom_index = 0; atom_index < crystal_structure_.number_of_atoms(); atom_index++) {
+            valence_charges[static_cast<std::size_t>(atom_index)] =
+                crystal_structure_.valence_charge(
+                    crystal_structure_.species_type_index(atom_index));
+        }
+        const std::vector<Complex> structure_factors =
+            structure_factor_calculator_.structure_factors(g_vector_indices, {valence_charges})
+                .front();
+
         Real stress_xx = 0, stress_yx = 0, stress_yy = 0, stress_zx = 0, stress_zy = 0,
              stress_zz = 0;
         for (int g_vector_index = g_vector_start;
@@ -78,16 +105,8 @@ class EwaldStressTensorCalculator {
                 continue;
             Real g_squared_over_four_alpha = g_vector_squared / (4.0 * alpha_ewald);
 
-            Complex structure_factor(0.0, 0.0);
-            for (int atom_index = 0; atom_index < crystal_structure_.number_of_atoms();
-                 atom_index++) {
-                int species_index = crystal_structure_.species_type_index(atom_index);
-                Real valence_charge = crystal_structure_.valence_charge(species_index);
-                Vector3D atomic_position =
-                    crystal_structure_.convert_from_crystal_to_cartesian(atom_index);
-                Real phase = constants::two_pi * g_vector.g_cart.dot(atomic_position);
-                structure_factor += valence_charge * compute_phase_factor_conjugate(phase);
-            }
+            Complex structure_factor = structure_factors[static_cast<std::size_t>(
+                g_vector_index - g_vector_indices.front())];
             structure_factor /= Complex(crystal_structure_.cell_volume(), 0.0);
 
             Real ewald_stress_term = reciprocal_space_multiplicity * constants::two_pi *
@@ -215,6 +234,7 @@ class EwaldStressTensorCalculator {
   private:
     const Crystal& crystal_structure_;
     const PlanewaveBasis& planewave_basis_;
+    const StructureFactorCalculator& structure_factor_calculator_;
     StressTensorContributions& result_;
 };
 

@@ -32,6 +32,7 @@
 #include "io/quantum_system/kohn_sham/planewave/checkpoint/q3.hpp"
 #include "io/wavefunction/kohn_sham/planewave/checkpoint/factory.hpp"
 #include "io/wavefunction/kohn_sham/planewave/checkpoint/qe_reader.hpp"
+#include "layer_0_core/execution/threading.hpp"
 
 #include "layer_0_core/math/linear_algebra/blas.hpp"
 #include "layer_0_core/math/phase_factor.hpp"
@@ -41,8 +42,12 @@
 #include "layer_3_representation/pseudopotential/planewave/internal/atomic_orbital_builder.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/lowdin_orthogonalization.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/wavefunction_atomic.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set_store.hpp"
+#include "layer_3_representation/pseudopotential/planewave/projector_set_builder_serial.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/norm_conserving/factory.hpp"
 #include "layer_3_representation/wavefunction/planewave/norm_conserving/initializer.hpp"
+#include "layer_3_representation/wavefunction/planewave/starting_subspace_solver_serial.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/planewave_potential_utils.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/overlap/pseudopotential/factory.hpp"
 #include "layer_4_computation/effective_potential/internal/dispersion/factory.hpp"
@@ -107,6 +112,11 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
         data.hubbard_manifolds = hubbard_manifolds_;
         data.hubbard_d_matrix_per_spin = hubbard_d_matrix_per_spin_;
         data.hubbard_projector_type = config().hubbard_projector_type;
+        data.projector_sets = projector_set_store_;
+        data.band_projections = band_projection_calculator_;
+        data.projector_strain_overlap_calculator_factory =
+            projector_strain_overlap_calculator_factory_;
+        data.structure_factor_calculator_factory = structure_factor_calculator_factory_;
         return data;
     }
 
@@ -388,25 +398,62 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
 
   public:
     /**
-     * The projector cache is the SCF's too: the forces and stress build their
-     * own. The applicator holds pointers into it, so its view is cleared first
-     * and the storage freed after; the cache refills on demand.
+     * The projector sets are the SCF's too, and by far its largest cache. They are freed here,
+     * and from now on the store holds one k-point's set at a time: the forces and stress read
+     * them through the SCF state, a k-point at a time, and each is built again when asked for.
      */
     void release_scf_workspace() override {
         PlanewaveKohnShamSCFIterator::release_scf_workspace();
-        if (diagonalizer_) {
-            for (int kpoint_index = 0;
-                 kpoint_index < static_cast<int>(cached_kleinman_bylander_projectors_.size());
-                 ++kpoint_index) {
-                diagonalizer_->set_cached_projectors(kpoint_index, nullptr);
-            }
+        if (projector_set_store_) {
+            projector_set_store_->release();
+            projector_set_store_->keep_latest_set_only();
         }
-        std::vector<q3::Matrix<Complex>>().swap(cached_kleinman_bylander_projectors_);
+    }
+
+    /**
+     * The Kleinman-Bylander projector sets of this run, one per k-point, each built when first
+     * asked for. The one source of projectors for everything that needs them.
+     */
+    [[nodiscard]] KleinmanBylanderProjectorSetStore& projector_set_store() {
+        if (!projector_set_store_) {
+            renew_projector_set_store();
+        }
+        return *projector_set_store_;
+    }
+
+    /// The projector set of one k-point, from projector_set_store().
+    [[nodiscard]] const KleinmanBylanderProjectorSet& projector_set(int kpoint_index) {
+        return projector_set_store().at(kpoint_index);
     }
 
   protected:
-    /// Cached KB projectors per k-point (reused by the projector overlap accumulation).
-    std::vector<q3::Matrix<Complex>> cached_kleinman_bylander_projectors_;
+    /**
+     * Start a store for the crystal, k-points, basis and pseudopotentials as they are now, and
+     * hand it to the eigensolver. Called when a run initializes its states: any of those may
+     * have been replaced since the last run, and the store holds references to them.
+     */
+    void renew_projector_set_store() {
+        std::unique_ptr<ProjectorSetBuilder> builder =
+            projector_set_builder_factory_
+                ? projector_set_builder_factory_(crystal_structure(),
+                                                 planewave_basis_,
+                                                 quantum_system_snapshot_->pseudopotential_basis())
+                : std::make_unique<SerialProjectorSetBuilder>(
+                      crystal_structure(),
+                      planewave_basis_,
+                      quantum_system_snapshot_->pseudopotential_basis());
+        projector_set_store_ = std::make_shared<KleinmanBylanderProjectorSetStore>(
+            crystal_structure(),
+            kpoint_grid(),
+            planewave_basis_.kpoint_g_vector_indices(),
+            std::move(builder));
+        if (diagonalizer_) {
+            diagonalizer_->set_projector_set_store(projector_set_store_.get());
+        }
+    }
+
+    /// One Kleinman-Bylander projector set per k-point; see projector_set_store().
+    std::shared_ptr<KleinmanBylanderProjectorSetStore> projector_set_store_;
 
     /// DFT+U (Hubbard): resolved atom/shell manifolds; empty means no correction is active.
     std::vector<HubbardManifold> hubbard_manifolds_;
@@ -639,23 +686,10 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
             int plane_waves_at_kpoint = number_of_plane_waves(kpoint_index);
             int number_of_atomic_orbitals = static_cast<int>(all_atomic_orbitals.size());
             std::unique_ptr<OverlapOperator> overlap_operator;
-            q3::Matrix<Complex> kleinman_bylander_projectors;
             if (quantum_system_snapshot_->has_ultrasoft()) {
-                const auto& pseudopotential_basis =
-                    quantum_system_snapshot_->pseudopotential_basis();
-                compute_kleinman_bylander_projectors(
-                    kpoint_grid()[kpoint_index].coordinates,
-                    crystal_structure(),
-                    planewave_basis_,
-                    pseudopotential_basis.pseudopotential_set(),
-                    pseudopotential_basis.beta_function_table(),
-                    g_vector_indices(kpoint_index),
-                    plane_waves_at_kpoint,
-                    pseudopotential_basis.total_number_of_projectors(),
-                    kleinman_bylander_projectors);
                 overlap_operator = create_overlap_operator(crystal_structure(),
                                                            *quantum_system_snapshot_,
-                                                           kleinman_bylander_projectors,
+                                                           projector_set(kpoint_index),
                                                            *execution_policy_);
             }
 
@@ -778,25 +812,18 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
     }
 
     void initialize_single_particle_states() override {
+        /**
+         * A new run gets a new store: the previous run's sets are dropped with it, so nothing
+         * built for an earlier geometry or basis is read again, on the host or on a device.
+         */
+        renew_projector_set_store();
         setup_hubbard();
         if (quantum_system_.preloaded_quantum_system_ != nullptr) {
             preload_single_particle_states();
 
             int number_of_kpoints = kpoint_grid().number_of_kpoints();
-            cached_kleinman_bylander_projectors_.resize(number_of_kpoints);
             for (int kpoint_index = 0; kpoint_index < number_of_kpoints; ++kpoint_index) {
-                compute_kleinman_bylander_projectors(
-                    kpoint_grid()[kpoint_index].coordinates,
-                    crystal_structure(),
-                    planewave_basis_,
-                    quantum_system_snapshot_->pseudopotential_basis().pseudopotential_set(),
-                    quantum_system_snapshot_->pseudopotential_basis().beta_function_table(),
-                    g_vector_indices(kpoint_index),
-                    number_of_plane_waves(kpoint_index),
-                    quantum_system_snapshot_->pseudopotential_basis().total_number_of_projectors(),
-                    cached_kleinman_bylander_projectors_[kpoint_index]);
-                diagonalizer_->set_cached_projectors(
-                    kpoint_index, &cached_kleinman_bylander_projectors_[kpoint_index]);
+                (void)projector_set(kpoint_index);
             }
             return;
         }
@@ -820,22 +847,9 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
 
         int number_of_kpoints = kpoint_grid().number_of_kpoints();
 
-        // Pre-compute KB projectors for each k-point (needed for initial density construction)
-        cached_kleinman_bylander_projectors_.resize(number_of_kpoints);
+        // Build every k-point's projector set now (needed for initial density construction).
         for (int kpoint_index = 0; kpoint_index < number_of_kpoints; ++kpoint_index) {
-            compute_kleinman_bylander_projectors(
-                kpoint_grid()[kpoint_index].coordinates,
-                crystal_structure(),
-                planewave_basis_,
-                quantum_system_snapshot_->pseudopotential_basis().pseudopotential_set(),
-                quantum_system_snapshot_->pseudopotential_basis().beta_function_table(),
-                g_vector_indices(kpoint_index),
-                number_of_plane_waves(kpoint_index),
-                quantum_system_snapshot_->pseudopotential_basis().total_number_of_projectors(),
-                cached_kleinman_bylander_projectors_[kpoint_index]);
-            // Wire the cached projectors to the diagonalizer to avoid recomputation
-            diagonalizer_->set_cached_projectors(
-                kpoint_index, &cached_kleinman_bylander_projectors_[kpoint_index]);
+            (void)projector_set(kpoint_index);
         }
         auto timer_3 = std::chrono::high_resolution_clock::now();
         ProfilingCounters::instance().log_resident_checkpoint("projector caching");
@@ -924,11 +938,18 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
                     .count();
             ProfilingCounters::instance().log_resident_checkpoint_debug("atomic orbitals");
 
-            atomic_wavefunction_initializer.rotate_wavefunctions(
+            /**
+             * The rotation's large operations are done by the diagonalizer's solver where it
+             * has one that beats the host loops, and by the host solver otherwise. The
+             * diagonalizer's holds one potential at a time, so it is told at each channel's
+             * first k-point that the one it holds has gone stale.
+             */
+            if (kpoint_index == 0) {
+                diagonalizer_->invalidate_smooth_potential_cache();
+            }
+            SerialStartingSubspaceSolver serial_rotation_solver(
                 kpoint_index,
-                kpoint_index_state,
                 number_of_plane_waves(kpoint_index),
-                number_of_bands_,
                 g_vector_indices(kpoint_index),
                 kinetic_energy_squared()[kpoint_index],
                 starting_guess_potential[static_cast<std::size_t>(spin_index)],
@@ -937,9 +958,33 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
                 planewave_basis_,
                 *execution_policy_,
                 *quantum_system_snapshot_,
+                projector_set(kpoint_index));
+            std::optional<StageTimer> device_prepare_timer(std::in_place,
+                                                           "setup.rotation.solver_prepare");
+            StartingSubspaceSolver& rotation_solver =
+                diagonalizer_->prepare_starting_subspace_solver(
+                    kpoint_index_state,
+                    kpoint_index,
+                    number_of_plane_waves(kpoint_index),
+                    g_vector_indices(kpoint_index),
+                    kinetic_energy_squared()[kpoint_index],
+                    real_space_potential_[spin_index],
+                    crystal_structure(),
+                    kpoint_grid(),
+                    planewave_basis_,
+                    *quantum_system_snapshot_,
+                    projector_set(kpoint_index),
+                    serial_rotation_solver);
+            device_prepare_timer.reset();
+            atomic_wavefunction_initializer.rotate_wavefunctions(
+                kpoint_index_state,
+                number_of_plane_waves(kpoint_index),
+                number_of_bands_,
+                planewave_basis_,
+                *execution_policy_,
                 atomic_wavefunctions,
                 quantum_system_,
-                cached_kleinman_bylander_projectors_[kpoint_index]);
+                rotation_solver);
             auto timer_rotate_end = std::chrono::high_resolution_clock::now();
             rotate_ms +=
                 std::chrono::duration<double, std::milli>(timer_rotate_end - timer_awfc_end)
@@ -994,29 +1039,14 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
         int number_of_kpoints = kpoint_grid().number_of_kpoints();
         int number_of_kpoint_states = number_of_kpoints * number_of_spin_components();
 
-        // Wire or pre-compute KB projectors for each k-point (reused by ρ_ij accumulation)
-        if (cached_kleinman_bylander_projectors_.empty()) {
-            cached_kleinman_bylander_projectors_.resize(number_of_kpoints);
-            for (int kpoint_index = 0; kpoint_index < number_of_kpoints; ++kpoint_index) {
-                compute_kleinman_bylander_projectors(
-                    kpoint_grid()[kpoint_index].coordinates,
-                    crystal_structure(),
-                    planewave_basis_,
-                    quantum_system_snapshot_->pseudopotential_basis().pseudopotential_set(),
-                    quantum_system_snapshot_->pseudopotential_basis().beta_function_table(),
-                    g_vector_indices(kpoint_index),
-                    number_of_plane_waves(kpoint_index),
-                    quantum_system_snapshot_->pseudopotential_basis().total_number_of_projectors(),
-                    cached_kleinman_bylander_projectors_[kpoint_index]);
-                diagonalizer_->set_cached_projectors(
-                    kpoint_index, &cached_kleinman_bylander_projectors_[kpoint_index]);
-            }
-        } else {
-            for (int kpoint_index = 0; kpoint_index < number_of_kpoints; ++kpoint_index) {
-                diagonalizer_->set_cached_projectors(
-                    kpoint_index, &cached_kleinman_bylander_projectors_[kpoint_index]);
-            }
-        }
+        /**
+         * The eigensolver reads the projector sets from the store, and every solve needs every
+         * k-point's set, so the store keeps them all while the SCF runs. Sets the store no
+         * longer holds -- after the SCF workspace was released -- are built again when the
+         * solver asks.
+         */
+        projector_set_store().keep_all_sets();
+        diagonalizer_->set_projector_set_store(&projector_set_store());
 
         /**
          * ── Forward pass: solve k-points 0, 1, 2, ..., N-1 ──
@@ -1593,7 +1623,7 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
             const Complex* source_band_data =
                 quantum_system_.wavefunction_band_data(current_kpoint_state_index, band_index);
             Complex* target_band_data =
-                quantum_system_.wavefunction_band_data(next_kpoint_state_index, band_index);
+                quantum_system_.mutable_wavefunction_band_data(next_kpoint_state_index, band_index);
 
             // Copy the shared leading coefficients
             std::copy(source_band_data, source_band_data + coefficients_to_copy, target_band_data);
@@ -1634,8 +1664,8 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
         for (int band_index = 0; band_index < number_of_bands_; ++band_index) {
             const Complex* source_band_data =
                 quantum_system_.wavefunction_band_data(source_kpoint_state_index, band_index);
-            Complex* target_band_data =
-                quantum_system_.wavefunction_band_data(target_kpoint_state_index, band_index);
+            Complex* target_band_data = quantum_system_.mutable_wavefunction_band_data(
+                target_kpoint_state_index, band_index);
 
             std::copy(source_band_data, source_band_data + coefficients_to_copy, target_band_data);
 
@@ -2088,6 +2118,13 @@ class PlanewavePseudopotentialKohnShamSCFIterator : public PlanewaveKohnShamSCFI
                 crystal_structure().convert_from_crystal_to_cartesian(atom_index);
         }
         const LocalDensityGLayout& layout = planewave_basis_.local_density_g_layout();
+        /**
+         * Each entry is computed from its own G-vector and written to its own slot, so
+         * sharing the entries out over threads changes no bit. One rank of a device build
+         * holds every G-vector, which made this serial loop a visible part of its setup.
+         */
+        const int entry_threads = execution::threading::thread_count_for(layout.size(), 512);
+#pragma omp parallel for schedule(static) num_threads(entry_threads) if (entry_threads > 1)
         for (int entry = 0; entry < layout.size(); ++entry) {
             const int g_vector_index = layout.global_g_indices()[entry];
             for (int atom_index = 0; atom_index < number_of_atoms; ++atom_index) {

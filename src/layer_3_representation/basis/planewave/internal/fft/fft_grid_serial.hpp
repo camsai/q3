@@ -7,7 +7,7 @@
  */
 #ifdef Q3_FFT_BACKEND_POCKETFFT
 
-#include "layer_3_representation/basis/planewave/internal/fft/serial_pocket_fft_grid.hpp"
+#include "layer_3_representation/basis/planewave/internal/fft/fft_grid_serial_pocket.hpp"
 
 namespace q3 {
 using SerialFFTGrid = SerialPocketFFTGrid;
@@ -71,6 +71,41 @@ class SerialFFTGrid : public FFTGrid {
     SerialFFTGrid(SerialFFTGrid&&) = default;
     SerialFFTGrid& operator=(SerialFFTGrid&&) = default;
 
+    /**
+     * Give every thread to each transform, and keep one transform slot, where the default is
+     * one single-threaded slot per thread. For a grid whose transforms are made one at a
+     * time: with a slot per thread such a grid plans and allocates slots nothing uses, and
+     * each of its transforms runs on one core while the others wait. Not for a grid that a
+     * loop over bands transforms on, which needs the slots. Call before init().
+     *
+     * A transform planned for several threads is decomposed differently from one planned
+     * for a single thread, so its last bits differ: results of a run that turns this on are
+     * not bit-identical to one that does not.
+     */
+    void give_every_thread_to_each_transform() {
+        every_thread_to_each_transform_ = true;
+        planning_cap_is_honored_ = true;
+    }
+
+    /**
+     * Cap the planner's search, per plan. Honored only by a grid that was told to
+     * (honor_planning_time_limit(), or give_every_thread_to_each_transform()); any other
+     * grid keeps its exhaustive search, which is what a host run's timings were taken with.
+     */
+    void limit_planning_time(double seconds_per_plan) override {
+        planning_seconds_per_plan_ = seconds_per_plan;
+    }
+
+    /**
+     * Have limit_planning_time() apply to this grid. For a run whose bands are transformed
+     * on a device: its host grids are planned once and used little, and the exhaustive
+     * search cost such a run 0.9 s of setup on a Milan node (the first grid planned pays it,
+     * whichever that is). Call before init().
+     */
+    void honor_planning_time_limit() {
+        planning_cap_is_honored_ = true;
+    }
+
     void init(int dimension_1,
               int dimension_2,
               int dimension_3,
@@ -116,6 +151,9 @@ class SerialFFTGrid : public FFTGrid {
             1 + static_cast<int>(maximum_additional_scratch_bytes /
                                  std::max<std::size_t>(bytes_per_slot, std::size_t{1}));
         requested_slots = std::min(requested_slots, affordable_slots);
+        if (every_thread_to_each_transform_) {
+            requested_slots = 1;
+        }
 
 #ifdef Q3_USE_FFTW_THREADS
         static bool fftw_threads_initialized = false;
@@ -138,17 +176,31 @@ class SerialFFTGrid : public FFTGrid {
         if (requested_slots > 1) {
             number_of_fft_threads = 1;
         }
-        if (number_of_fft_threads > 1) {
-            if (!fftw_threads_initialized) {
-                fftw_init_threads();
-                fftw_threads_initialized = true;
-            }
+        if (every_thread_to_each_transform_) {
+            number_of_fft_threads = execution::threading::maximum_threads();
+        }
+        if (number_of_fft_threads > 1 && !fftw_threads_initialized) {
+            fftw_init_threads();
+            fftw_threads_initialized = true;
+        }
+        /**
+         * The thread count is the planner's own state and stays with it for every later
+         * plan, so it is set for this grid whenever a grid has set it before: a grid of
+         * single-threaded slots planned after a threaded one would otherwise get threaded
+         * plans, and run them inside a loop that is already parallel.
+         */
+        if (fftw_threads_initialized) {
             fftw_plan_with_nthreads(number_of_fft_threads);
         }
 #endif
 
         unsigned int planning_flags = use_measured_planning ? FFTW_MEASURE : FFTW_ESTIMATE;
         output_buffer_.resize(total_points);
+        const bool planning_is_capped =
+            planning_cap_is_honored_ && use_measured_planning && planning_seconds_per_plan_ > 0.0;
+        if (planning_is_capped) {
+            fftw_set_timelimit(planning_seconds_per_plan_);
+        }
 
         /**
          * Out-of-place plans: input from work_, output to output_buffer_.
@@ -198,6 +250,9 @@ class SerialFFTGrid : public FFTGrid {
                                  reinterpret_cast<fftw_complex*>(slot.output.data()),
                                  FFTW_BACKWARD,
                                  planning_flags);
+        }
+        if (planning_is_capped) {
+            fftw_set_timelimit(FFTW_NO_TIMELIMIT);
         }
     }
 
@@ -344,6 +399,11 @@ class SerialFFTGrid : public FFTGrid {
 
   private:
     int grid_dimension_1_{}, grid_dimension_2_{}, grid_dimension_3_{};
+    /// One slot planned for every thread, in place of a slot per thread; see the setter.
+    bool every_thread_to_each_transform_ = false;
+    /// Planner time cap per plan, or 0 for none; applies only if planning_cap_is_honored_.
+    double planning_seconds_per_plan_ = 0.0;
+    bool planning_cap_is_honored_ = false;
     fftw_plan plan_forward_{nullptr};
     fftw_plan plan_inverse_{nullptr};
     mutable std::vector<Complex> work_;                   // input workspace for FFTW plan creation

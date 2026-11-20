@@ -28,10 +28,11 @@
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_1_structure/reciprocal_space/kpoints_grid.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/norm_conserving/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/planewave_potential_utils.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/projector_set_provider.hpp"
 #include "layer_4_computation/effective_potential/internal/hubbard/hubbard.hpp"
 
 namespace q3 {
@@ -92,6 +93,15 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
         gamma_origin_is_local_current_ = planewave_basis_.gamma_origin_is_local();
 
         precompute_g_to_fft_mapping(number_of_plane_waves, g_vector_indices, planewave_basis_);
+
+        current_projector_set_ = &projector_set_provider_.projector_set(
+            kpoint_index,
+            crystal_structure_,
+            kpoint_grid_,
+            planewave_basis_,
+            pseudopotential_quantum_system_.pseudopotential_basis(),
+            g_vector_indices,
+            number_of_plane_waves);
     }
 
     /**
@@ -192,30 +202,16 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
     }
 
     /**
-     * Set pre-computed KB projectors for a specific k-point.
-     * If set, apply_batch() will use these instead of recomputing them.
+     * Read the KB projectors from the iterator's store instead of building them here. The set of
+     * a k-point is taken in prepare_kpoint().
      */
-    void set_cached_projectors(int kpoint_index, const q3::Matrix<Complex>* projectors) override {
-        if (kpoint_index >= static_cast<int>(cached_projector_map_.size())) {
-            cached_projector_map_.resize(kpoint_index + 1, nullptr);
-        }
-        cached_projector_map_[kpoint_index] = projectors;
-    }
-
-    /**
-     * Get pre-computed KB projectors for the current k-point, or nullptr if none.
-     */
-    [[nodiscard]] const q3::Matrix<Complex>*
-    get_cached_projectors(int kpoint_index) const override {
-        if (kpoint_index < static_cast<int>(cached_projector_map_.size())) {
-            return cached_projector_map_[kpoint_index];
-        }
-        return nullptr;
+    void set_projector_set_store(KleinmanBylanderProjectorSetStore* projector_set_store) override {
+        projector_set_provider_.set_store(projector_set_store);
     }
 
     /**
      * Set pre-computed DFT+U (Hubbard) atomic-orbital projectors for a specific k-point.
-     * Geometry-only, set once per k-point at SCF setup (mirrors set_cached_projectors).
+     * Geometry-only, set once per k-point at SCF setup.
      */
     void set_cached_hubbard_projectors(int kpoint_index,
                                        const q3::Matrix<Complex>* projectors) override {
@@ -488,39 +484,26 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
          *
          * Get the KB projectors for this k-point.
          */
-        Matrix<Complex> computed_projectors;
-        const Matrix<Complex>* kleinman_bylander_potential_ptr = nullptr;
-        if (current_kpoint_index_ < static_cast<int>(cached_projector_map_.size()) &&
-            cached_projector_map_[current_kpoint_index_] != nullptr) {
-            kleinman_bylander_potential_ptr = cached_projector_map_[current_kpoint_index_];
-        } else {
-            Vector3D kpoint_coordinates = kpoint_grid_[current_kpoint_index_].coordinates;
-            compute_kleinman_bylander_projectors(
-                kpoint_coordinates,
-                crystal_structure_,
-                planewave_basis_,
-                pseudopotential_quantum_system_.pseudopotential_basis().pseudopotential_set(),
-                pseudopotential_quantum_system_.pseudopotential_basis().beta_function_table(),
-                g_vector_indices,
-                number_of_plane_waves,
-                pseudopotential_quantum_system_.pseudopotential_basis()
-                    .total_number_of_projectors(),
-                computed_projectors);
-            kleinman_bylander_potential_ptr = &computed_projectors;
+        if (current_projector_set_ == nullptr || !current_projector_set_->is_built()) {
+            throw std::logic_error(
+                "SerialPlanewaveHamiltonianApplicator: the projector set of the current k-point "
+                "is not built; prepare_kpoint() must be called before apply_batch(), and again "
+                "after the projector sets were released");
         }
-        const auto& kleinman_bylander_potential = *kleinman_bylander_potential_ptr;
+        const KleinmanBylanderProjectorSet& kleinman_bylander_projector_set =
+            *current_projector_set_;
 
-        if (kleinman_bylander_potential.empty()) {
+        if (kleinman_bylander_projector_set.empty()) {
             return;
         }
 
-        int total_number_of_projectors = static_cast<int>(kleinman_bylander_potential.rows());
+        int total_number_of_projectors = kleinman_bylander_projector_set.number_of_projectors();
 
         auto* cast_wavefunctions = reinterpret_cast<const std::complex<double>*>(psi_wavefunctions);
         auto* cast_hamiltonian_wavefunctions =
             reinterpret_cast<std::complex<double>*>(hamiltonian_psi_wavefunctions);
         auto* cast_projector_matrix =
-            reinterpret_cast<const std::complex<double>*>(kleinman_bylander_potential.data());
+            reinterpret_cast<const std::complex<double>*>(kleinman_bylander_projector_set.host());
 
         Complex alpha_one(1.0, 0.0);
         Complex beta_zero(0.0, 0.0);
@@ -541,7 +524,7 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
             double d_beta_zero = 0.0;
 
             auto* real_projectors =
-                reinterpret_cast<const double*>(kleinman_bylander_potential.data());
+                reinterpret_cast<const double*>(kleinman_bylander_projector_set.host());
             auto* real_wavefunctions = reinterpret_cast<const double*>(psi_wavefunctions);
 
             std::vector<double> overlap_real(
@@ -570,7 +553,8 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
                      ++projector_index) {
                     int index = projector_index + vector_index * total_number_of_projectors;
                     if (gamma_origin_is_local_current_) {
-                        Complex beta_g0 = kleinman_bylander_potential(projector_index, 0);
+                        Complex beta_g0 =
+                            kleinman_bylander_projector_set.projector(projector_index)[0];
                         overlap_real[index] -= (std::conj(beta_g0) * psi_g0[0]).real();
                     }
                     all_overlap_coefficients[index] = Complex(overlap_real[index], 0.0);
@@ -971,7 +955,9 @@ class SerialPlanewaveHamiltonianApplicator : public PlanewaveHamiltonianApplicat
     // ─── Cached data ────────────────────────────────────────────────
 
     // Pre-computed KB projectors per k-point (set externally, nullptr means compute internally).
-    std::vector<const q3::Matrix<Complex>*> cached_projector_map_;
+    /// Where the KB projectors come from, and the set taken for the current k-point.
+    ProjectorSetProvider projector_set_provider_;
+    const KleinmanBylanderProjectorSet* current_projector_set_ = nullptr;
     /**
      * Pre-computed DFT+U (Hubbard) atomic-orbital projectors per k-point (set externally;
      * nullptr means no Hubbard correction is active).

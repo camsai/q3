@@ -53,6 +53,19 @@ cublasOperation_t translate_transpose(char transpose_flag) {
     }
 }
 
+cublasSideMode_t translate_side(char side) {
+    return (side == 'L' || side == 'l') ? CUBLAS_SIDE_LEFT : CUBLAS_SIDE_RIGHT;
+}
+
+cublasFillMode_t translate_fill(char upper_or_lower) {
+    return (upper_or_lower == 'U' || upper_or_lower == 'u') ? CUBLAS_FILL_MODE_UPPER
+                                                            : CUBLAS_FILL_MODE_LOWER;
+}
+
+cublasDiagType_t translate_diagonal(char unit_diagonal) {
+    return (unit_diagonal == 'U' || unit_diagonal == 'u') ? CUBLAS_DIAG_UNIT : CUBLAS_DIAG_NON_UNIT;
+}
+
 } // anonymous namespace
 
 class CudaGPUBLAS : public GPUBLAS {
@@ -273,6 +286,65 @@ class CudaGPUBLAS : public GPUBLAS {
                                        matrix_c,
                                        leading_dimension_c),
                            "cublasDgemm");
+    }
+
+    /**
+     * Complex triangular solve via cublasZtrsm. matrix_a must be device-accessible (managed).
+     */
+    void trsm(char side,
+              char upper_or_lower,
+              char transpose_a,
+              char unit_diagonal,
+              int m,
+              int n,
+              Complex alpha,
+              const Complex* matrix_a,
+              int leading_dimension_a,
+              Complex* matrix_b,
+              int leading_dimension_b) const override {
+        auto cuda_alpha = make_cuda_double_complex(alpha);
+        check_cublas_error(cublasZtrsm(cublas_handle_,
+                                       translate_side(side),
+                                       translate_fill(upper_or_lower),
+                                       translate_transpose(transpose_a),
+                                       translate_diagonal(unit_diagonal),
+                                       m,
+                                       n,
+                                       &cuda_alpha,
+                                       reinterpret_cast<const cuDoubleComplex*>(matrix_a),
+                                       leading_dimension_a,
+                                       reinterpret_cast<cuDoubleComplex*>(matrix_b),
+                                       leading_dimension_b),
+                           "cublasZtrsm");
+    }
+
+    /**
+     * Real triangular solve via cublasDtrsm. matrix_a must be device-accessible (managed).
+     */
+    void dtrsm(char side,
+               char upper_or_lower,
+               char transpose_a,
+               char unit_diagonal,
+               int m,
+               int n,
+               Real alpha,
+               const Real* matrix_a,
+               int leading_dimension_a,
+               Real* matrix_b,
+               int leading_dimension_b) const override {
+        check_cublas_error(cublasDtrsm(cublas_handle_,
+                                       translate_side(side),
+                                       translate_fill(upper_or_lower),
+                                       translate_transpose(transpose_a),
+                                       translate_diagonal(unit_diagonal),
+                                       m,
+                                       n,
+                                       &alpha,
+                                       matrix_a,
+                                       leading_dimension_a,
+                                       matrix_b,
+                                       leading_dimension_b),
+                           "cublasDtrsm");
     }
 
   private:

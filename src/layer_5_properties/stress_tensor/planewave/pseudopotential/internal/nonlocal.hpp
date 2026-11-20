@@ -14,25 +14,28 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
-#include "layer_0_core/math/linear_algebra/blas.hpp"
 #include "layer_0_core/math/phase_factor.hpp"
 #include "layer_0_core/math/spherical/harmonics.hpp"
 #include "layer_0_core/math/tolerances.hpp"
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_0_core/types/matrix.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_1_structure/reciprocal_space/kpoints_grid.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
+#include "layer_3_representation/pseudopotential/planewave/projector_strain_inputs.hpp"
+#include "layer_3_representation/pseudopotential/planewave/projector_strain_overlap_calculator.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/norm_conserving/init.hpp"
 #include "layer_4_computation/state/kohn_sham/planewave/norm_conserving/init.hpp"
 #include "layer_5_properties/stress_tensor/planewave/contributions.hpp"
 
 namespace q3 {
-using namespace q3::blas;
 
 class NonlocalPseudopotentialStressTensorCalculator {
   public:
@@ -73,6 +76,14 @@ class NonlocalPseudopotentialStressTensorCalculator {
         }
         int number_of_lm_components =
             (maximum_angular_momentum + 1) * (maximum_angular_momentum + 1);
+
+        /**
+         * What forms the overlaps of the bands with the projectors and their strain
+         * derivatives: the run's own, so that on a device run they are formed there. One for
+         * the whole calculation, since it keeps workspaces worth keeping.
+         */
+        std::unique_ptr<ProjectorStrainOverlapCalculator> strain_overlaps =
+            scf_state_.create_projector_strain_overlap_calculator();
 
         int number_of_kpoints = kpoint_grid_.number_of_kpoints();
         /**
@@ -141,22 +152,6 @@ class NonlocalPseudopotentialStressTensorCalculator {
                                                number_of_lm_components,
                                                geometry);
 
-                // Collect occupied wavefunctions into contiguous matrix (NPW × Nocc)
-                std::vector<Complex> wavefunction_matrix(
-                    static_cast<std::size_t>(number_of_plane_waves_kpoint) *
-                    number_of_occupied_bands);
-                for (int occupied_index = 0; occupied_index < number_of_occupied_bands;
-                     occupied_index++) {
-                    int band_index = occupied_band_indices[occupied_index];
-                    for (int g_index = 0; g_index < number_of_plane_waves_kpoint; g_index++) {
-                        wavefunction_matrix[static_cast<std::size_t>(occupied_index) *
-                                                number_of_plane_waves_kpoint +
-                                            g_index] =
-                            scf_state_.wavefunction_coefficient(
-                                kpoint_state_index, band_index, g_index);
-                    }
-                }
-
                 // Precompute eigenvalues for occupied bands (needed for US)
                 std::vector<Real> occupied_eigenvalues(number_of_occupied_bands);
                 if (use_effective_d_matrix) {
@@ -171,6 +166,22 @@ class NonlocalPseudopotentialStressTensorCalculator {
                         ? find_g_zero_plane_wave_index(plane_wave_indices_kpoint,
                                                        number_of_plane_waves_kpoint)
                         : -1;
+                /**
+                 * The occupied bands' G = 0 coefficients, which is all of the bands that the
+                 * half-sphere completion below reads on the host.
+                 */
+                std::vector<Complex> occupied_band_g_zero_coefficients;
+                if (g_zero_plane_wave_index >= 0) {
+                    occupied_band_g_zero_coefficients.resize(number_of_occupied_bands);
+                    for (int occupied_index = 0; occupied_index < number_of_occupied_bands;
+                         occupied_index++) {
+                        occupied_band_g_zero_coefficients[occupied_index] =
+                            scf_state_.wavefunction_coefficient(
+                                kpoint_state_index,
+                                occupied_band_indices[occupied_index],
+                                g_zero_plane_wave_index);
+                    }
+                }
 
                 /**
                  * The D matrix couples projectors of the same atom only, so every
@@ -194,17 +205,17 @@ class NonlocalPseudopotentialStressTensorCalculator {
                 int projectors_per_block =
                     std::max(largest_atom_projector_count,
                              std::max(number_of_occupied_bands / 8, minimum_projectors_per_block));
-                BlockWorkspace workspace;
-                workspace.allocate(projectors_per_block, number_of_plane_waves_kpoint);
 
                 std::array<std::vector<Real>, 6> radial_strain_weights;
                 const std::vector<Real>* kpoint_plus_g_components[3] = {
                     &kpoint_plus_g_x, &kpoint_plus_g_y, &kpoint_plus_g_z};
                 for (int strain_pair = 0; strain_pair < 6; strain_pair++) {
                     const auto& component_a =
-                        *kpoint_plus_g_components[bessel_direction_a[strain_pair]];
+                        *kpoint_plus_g_components
+                            [ProjectorStrainOverlapCalculator::strain_direction_a[strain_pair]];
                     const auto& component_b =
-                        *kpoint_plus_g_components[bessel_direction_b[strain_pair]];
+                        *kpoint_plus_g_components
+                            [ProjectorStrainOverlapCalculator::strain_direction_b[strain_pair]];
                     radial_strain_weights[strain_pair].resize(number_of_plane_waves_kpoint);
                     for (int g_index = 0; g_index < number_of_plane_waves_kpoint; g_index++) {
                         radial_strain_weights[strain_pair][g_index] =
@@ -212,6 +223,19 @@ class NonlocalPseudopotentialStressTensorCalculator {
                             kpoint_plus_g_norm_inverse[g_index];
                     }
                 }
+
+                ProjectorStrainInputs strain_inputs;
+                strain_inputs.kpoint_cartesian = kpoint_coordinates_cartesian;
+                strain_inputs.plane_wave_indices = &plane_wave_indices_kpoint;
+                strain_inputs.number_of_plane_waves = number_of_plane_waves_kpoint;
+                strain_inputs.magnitude_bohr = &geometry.magnitude_bohr;
+                strain_inputs.spherical_harmonics = &geometry.spherical_harmonics;
+                strain_inputs.spherical_harmonic_derivatives =
+                    &geometry.spherical_harmonic_derivatives;
+                strain_inputs.kpoint_plus_g_components = {
+                    &kpoint_plus_g_x, &kpoint_plus_g_y, &kpoint_plus_g_z};
+                strain_inputs.radial_strain_weights = &radial_strain_weights;
+                strain_overlaps->begin_kpoint(strain_inputs, projectors_per_block);
 
                 int block_first_atom = 0;
                 while (block_first_atom < crystal_structure_.number_of_atoms()) {
@@ -229,22 +253,17 @@ class NonlocalPseudopotentialStressTensorCalculator {
                     }
                     if (block_projectors > 0) {
                         accumulate_block(spin_index,
-                                         kpoint_coordinates_cartesian,
-                                         plane_wave_indices_kpoint,
-                                         number_of_plane_waves_kpoint,
-                                         geometry,
-                                         kpoint_plus_g_components,
-                                         radial_strain_weights,
-                                         wavefunction_matrix,
-                                         number_of_occupied_bands,
+                                         kpoint_state_index,
+                                         *strain_overlaps,
+                                         occupied_band_indices,
+                                         occupied_band_g_zero_coefficients,
                                          occupied_band_weights,
                                          occupied_eigenvalues,
                                          g_zero_plane_wave_index,
                                          use_effective_d_matrix,
                                          block_first_atom,
                                          block_end_atom,
-                                         block_projectors,
-                                         workspace);
+                                         block_projectors);
                     }
                     block_first_atom = block_end_atom;
                 }
@@ -268,13 +287,13 @@ class NonlocalPseudopotentialStressTensorCalculator {
     }
 
     /**
-     * Completes a Gamma half-sphere contraction and leaves G = 0 single-counted.
+     * Completes a Gamma half-sphere contraction and leaves G = 0 single-counted. Of either
+     * side only the G = 0 coefficients are needed, one per function.
      */
-    static void complete_gamma_only_overlap_matrix(int number_of_plane_waves,
-                                                   int number_of_left_functions,
+    static void complete_gamma_only_overlap_matrix(int number_of_left_functions,
                                                    int number_of_right_functions,
-                                                   const Complex* left_functions,
-                                                   const Complex* right_functions,
+                                                   const std::vector<Complex>& left_g_zero,
+                                                   const std::vector<Complex>& right_g_zero,
                                                    int g_zero_plane_wave_index,
                                                    std::vector<Complex>& overlaps) {
         for (int left_function_index = 0; left_function_index < number_of_left_functions;
@@ -283,12 +302,8 @@ class NonlocalPseudopotentialStressTensorCalculator {
                  right_function_index++) {
                 Real g_zero_product =
                     g_zero_plane_wave_index >= 0
-                        ? (std::conj(left_functions[static_cast<size_t>(left_function_index) *
-                                                        number_of_plane_waves +
-                                                    g_zero_plane_wave_index]) *
-                           right_functions[static_cast<size_t>(right_function_index) *
-                                               number_of_plane_waves +
-                                           g_zero_plane_wave_index])
+                        ? (std::conj(left_g_zero[static_cast<size_t>(left_function_index)]) *
+                           right_g_zero[static_cast<size_t>(right_function_index)])
                               .real()
                         : 0.0;
                 size_t overlap_index =
@@ -348,9 +363,6 @@ class NonlocalPseudopotentialStressTensorCalculator {
         }
     }
 
-    static constexpr int bessel_direction_a[6] = {0, 0, 0, 1, 1, 2};
-    static constexpr int bessel_direction_b[6] = {0, 1, 2, 1, 2, 2};
-
     /**
      * The atom-independent part of the projector geometry at one k-point: k+G in
      * units of 2π/a and in atomic units, and the real spherical harmonics and
@@ -401,175 +413,60 @@ class NonlocalPseudopotentialStressTensorCalculator {
         }
     }
 
-    /// The projectors and the six strain derivatives of each: seven kinds of column.
-    static constexpr int number_of_projector_kinds = 7;
-
     /**
-     * One block's projectors and strain derivatives in a single column-major
-     * array, allocated once per k-point for the largest block and reused: a
-     * column of plane waves per projector, the block's projectors first and then
-     * each strain component's derivatives in the same order. Holding the seven
-     * kinds side by side lets one matrix product contract all of them with the
-     * bands.
-     */
-    struct BlockWorkspace {
-        std::vector<Complex> columns;
-
-        void allocate(int maximum_projectors, int number_of_plane_waves) {
-            columns.resize(static_cast<std::size_t>(number_of_projector_kinds) *
-                           static_cast<std::size_t>(maximum_projectors) * number_of_plane_waves);
-        }
-    };
-
-    /**
-     * Build the projectors of the atoms [first_atom, end_atom) and their strain
-     * derivatives, contract them with the occupied bands, and add the block's
-     * contribution to the nonlocal stress.
-     *
-     * The strain derivative of <β|ψ> along (a,b) has a radial part,
-     * dβ/dq (k+G)_a (k+G)_b / |k+G| Y_lm, and an angular part,
-     * β ∂Y_lm/∂(k+G)_a (k+G)_b. Both enter the (a,b) component with the same
-     * D-matrix element and band weights, so they are summed into one projector
-     * per component before contracting: six products with the bands rather
-     * than twelve, and no band-sized array to reweight. Rebuilding those
-     * reweighted bands for every block is what made the first blocked version
-     * half again as slow as the whole-cell one.
+     * Take the overlaps of the occupied bands with the projectors of the atoms
+     * [first_atom, end_atom) and with their strain derivatives, and add the block's
+     * contribution to the nonlocal stress. The (a,b) derivative enters the (a,b) component
+     * with the same D-matrix element and band weights as the projector itself.
      */
     void accumulate_block(int spin_index,
-                          const Vector3D& kpoint_coordinates_cartesian,
-                          const std::vector<int>& plane_wave_indices_kpoint,
-                          int number_of_plane_waves_kpoint,
-                          const KpointPlusGGeometry& geometry,
-                          const std::vector<Real>* const kpoint_plus_g_components[3],
-                          const std::array<std::vector<Real>, 6>& radial_strain_weights,
-                          const std::vector<Complex>& wavefunction_matrix,
-                          int number_of_occupied_bands,
+                          int kpoint_state_index,
+                          ProjectorStrainOverlapCalculator& strain_overlaps,
+                          const std::vector<int>& occupied_band_indices,
+                          const std::vector<Complex>& occupied_band_g_zero_coefficients,
                           const std::vector<Real>& occupied_band_weights,
                           const std::vector<Real>& occupied_eigenvalues,
                           int g_zero_plane_wave_index,
                           bool use_effective_d_matrix,
                           int first_atom,
                           int end_atom,
-                          int number_of_projectors,
-                          BlockWorkspace& workspace) {
+                          int number_of_projectors) {
         const auto& pseudopotential_basis = scf_state_.quantum_system().pseudopotential_basis();
-        Real inverse_sqrt_cell_volume = 1.0 / std::sqrt(crystal_structure_.cell_volume());
         Real inverse_cell_volume = 1.0 / crystal_structure_.cell_volume();
-        Real inverse_two_pi_over_lattice_parameter =
-            1.0 / crystal_structure_.two_pi_over_lattice_parameter();
-        std::size_t plane_waves = static_cast<std::size_t>(number_of_plane_waves_kpoint);
-
-        {
-            std::vector<Complex> structure_factor(number_of_plane_waves_kpoint);
-            std::vector<Real> beta_derivative_at_g(number_of_plane_waves_kpoint);
-            std::vector<Real> beta_at_g(number_of_plane_waves_kpoint);
-            int projector_index = 0;
-            for (int atom_index = first_atom; atom_index < end_atom; atom_index++) {
-                int index_type = crystal_structure_.species_type_index(atom_index);
-                Vector3D atomic_position =
-                    crystal_structure_.convert_from_crystal_to_cartesian(atom_index);
-                for (int g_index = 0; g_index < number_of_plane_waves_kpoint; g_index++) {
-                    const auto& g_vector =
-                        planewave_basis_.g_vectors()[plane_wave_indices_kpoint[g_index]];
-                    Real phase =
-                        constants::two_pi * (g_vector.g_cart.dot(atomic_position) +
-                                             kpoint_coordinates_cartesian.dot(atomic_position));
-                    structure_factor[g_index] = compute_phase_factor(phase);
-                }
-                for (int index_beta = 0;
-                     index_beta < pseudopotential_basis.number_of_projectors(index_type);
-                     index_beta++) {
-                    int angular_momentum =
-                        pseudopotential_basis.beta_angular_momentum(index_type, index_beta);
-                    Complex prefactor =
-                        inverse_sqrt_cell_volume * compute_angular_phase_factor(angular_momentum);
-                    for (int g_index = 0; g_index < number_of_plane_waves_kpoint; g_index++) {
-                        beta_derivative_at_g[g_index] = pseudopotential_basis.interpolate_dbeta(
-                            index_type, index_beta, geometry.magnitude_bohr[g_index]);
-                        beta_at_g[g_index] = pseudopotential_basis.interpolate_beta(
-                            index_type, index_beta, geometry.magnitude_bohr[g_index]);
-                    }
-                    for (int magnetic_projection : harmonic_order_sequence(angular_momentum)) {
-                        int lm_index = harmonic_combined_degree_order_index(angular_momentum,
-                                                                            magnetic_projection);
-                        Complex* projector =
-                            workspace.columns.data() +
-                            static_cast<std::size_t>(projector_index) * plane_waves;
-                        std::array<Complex*, 6> strain_projector;
-                        for (int strain_pair = 0; strain_pair < 6; strain_pair++) {
-                            strain_projector[strain_pair] =
-                                workspace.columns.data() +
-                                static_cast<std::size_t>((strain_pair + 1) * number_of_projectors +
-                                                         projector_index) *
-                                    plane_waves;
-                        }
-                        for (int g_index = 0; g_index < number_of_plane_waves_kpoint; g_index++) {
-                            Complex phased = structure_factor[g_index] * prefactor;
-                            Real spherical_harmonic =
-                                geometry.spherical_harmonics[g_index][lm_index];
-                            projector[g_index] = beta_at_g[g_index] * spherical_harmonic * phased;
-                            Complex radial =
-                                beta_derivative_at_g[g_index] * spherical_harmonic * phased;
-                            /**
-                             * β divided by 2π/a to match the unit convention of the
-                             * spherical-harmonic derivatives, which are in (2π/a)⁻¹.
-                             */
-                            Complex angular_scale =
-                                beta_at_g[g_index] * inverse_two_pi_over_lattice_parameter * phased;
-                            for (int strain_pair = 0; strain_pair < 6; strain_pair++) {
-                                int direction_a = bessel_direction_a[strain_pair];
-                                int direction_b = bessel_direction_b[strain_pair];
-                                strain_projector[strain_pair][g_index] =
-                                    radial * radial_strain_weights[strain_pair][g_index] +
-                                    angular_scale *
-                                        geometry.spherical_harmonic_derivatives[direction_a]
-                                                                               [g_index][lm_index] *
-                                        (*kpoint_plus_g_components[direction_b])[g_index];
-                            }
-                        }
-                        projector_index++;
-                    }
-                }
-            }
-        }
+        int number_of_occupied_bands = static_cast<int>(occupied_band_indices.size());
 
         /**
-         * All seven kinds against the occupied bands in one product:
-         * overlaps(7·Nproj, Nocc) = columns†(7·Nproj, NPW) Ψ(NPW, Nocc). Rows
-         * [0, Nproj) are ⟨β|ψ⟩; rows [(s+1)·Nproj, (s+2)·Nproj) are the
-         * derivatives along strain component s.
+         * All seven kinds against the occupied bands:
+         * overlaps(7·Nproj, Nocc). Rows [0, Nproj) are ⟨β|ψ⟩; rows
+         * [(s+1)·Nproj, (s+2)·Nproj) are the derivatives along strain component s.
          */
-        Complex alpha_blas(1.0, 0.0);
-        Complex beta_blas(0.0, 0.0);
-        int blas_rows = number_of_projector_kinds * number_of_projectors;
-        int blas_k_pw = number_of_plane_waves_kpoint;
-        int blas_n_bands = number_of_occupied_bands;
+        std::optional<StageTimer> stage_timer(std::in_place, "post.stress.nonlocal.overlaps");
+        int blas_rows = ProjectorStrainOverlapCalculator::number_of_kinds * number_of_projectors;
         std::vector<Complex> overlaps(static_cast<std::size_t>(blas_rows) *
                                           static_cast<std::size_t>(number_of_occupied_bands),
                                       Complex(0.0, 0.0));
-        zgemm_("C",
-               "N",
-               &blas_rows,
-               &blas_n_bands,
-               &blas_k_pw,
-               reinterpret_cast<const std::complex<double>*>(&alpha_blas),
-               reinterpret_cast<const std::complex<double>*>(workspace.columns.data()),
-               &blas_k_pw,
-               reinterpret_cast<const std::complex<double>*>(wavefunction_matrix.data()),
-               &blas_k_pw,
-               reinterpret_cast<const std::complex<double>*>(&beta_blas),
-               reinterpret_cast<std::complex<double>*>(overlaps.data()),
-               &blas_rows);
+        strain_overlaps.compute_block(first_atom,
+                                      end_atom,
+                                      number_of_projectors,
+                                      scf_state_.quantum_system(),
+                                      kpoint_state_index,
+                                      occupied_band_indices,
+                                      overlaps.data());
         if (planewave_basis_.is_gamma_only()) {
-            complete_gamma_only_overlap_matrix(number_of_plane_waves_kpoint,
-                                               blas_rows,
+            std::vector<Complex> projector_g_zero_values;
+            if (g_zero_plane_wave_index >= 0) {
+                strain_overlaps.block_values_at_plane_wave(g_zero_plane_wave_index,
+                                                           projector_g_zero_values);
+            }
+            complete_gamma_only_overlap_matrix(blas_rows,
                                                number_of_occupied_bands,
-                                               workspace.columns.data(),
-                                               wavefunction_matrix.data(),
+                                               projector_g_zero_values,
+                                               occupied_band_g_zero_coefficients,
                                                g_zero_plane_wave_index,
                                                overlaps);
         }
 
+        stage_timer.emplace("post.stress.nonlocal.accumulate");
         // Accumulate this block's atoms: projector pairs within each atom, bands inline.
         int projector_offset = 0;
         for (int atom_index = first_atom; atom_index < end_atom; atom_index++) {
@@ -676,8 +573,10 @@ class NonlocalPseudopotentialStressTensorCalculator {
                             d_element * diagonal_sum * inverse_cell_volume;
                     }
                     for (int strain_pair = 0; strain_pair < 6; strain_pair++) {
-                        int direction_a = bessel_direction_a[strain_pair];
-                        int direction_b = bessel_direction_b[strain_pair];
+                        int direction_a =
+                            ProjectorStrainOverlapCalculator::strain_direction_a[strain_pair];
+                        int direction_b =
+                            ProjectorStrainOverlapCalculator::strain_direction_b[strain_pair];
                         result_.nonlocal[direction_a][direction_b] +=
                             d_element * strain_sums[strain_pair] * inverse_cell_volume;
                     }
@@ -688,8 +587,10 @@ class NonlocalPseudopotentialStressTensorCalculator {
                                 overlap_integral * eigenvalue_diagonal_sum * inverse_cell_volume;
                         }
                         for (int strain_pair = 0; strain_pair < 6; strain_pair++) {
-                            int direction_a = bessel_direction_a[strain_pair];
-                            int direction_b = bessel_direction_b[strain_pair];
+                            int direction_a =
+                                ProjectorStrainOverlapCalculator::strain_direction_a[strain_pair];
+                            int direction_b =
+                                ProjectorStrainOverlapCalculator::strain_direction_b[strain_pair];
                             result_.nonlocal[direction_a][direction_b] -=
                                 overlap_integral * eigenvalue_strain_sums[strain_pair] *
                                 inverse_cell_volume;

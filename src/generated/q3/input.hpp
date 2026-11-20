@@ -1189,6 +1189,10 @@ struct InputControl {
     std::optional<InputControlVerbosityEnum> verbosity;
     // If true, use no symmetry at all: the k-point mesh is not reduced, and the density, forces and stress are not symmetrized (Quantum ESPRESSO nosym + noinv)
     std::optional<bool> disable_symmetry;
+    // If false, the forces are not computed after the SCF and the results carry none. A Quantum ESPRESSO deck sets this from tprnfor, which pw.x turns on by itself for relax and vc-relax and leaves off for scf
+    std::optional<bool> compute_forces;
+    // If false, the stress tensor and pressure are not computed after the SCF and the results carry none. A Quantum ESPRESSO deck sets this from tstress, which pw.x turns on by itself for vc-relax and leaves off otherwise
+    std::optional<bool> compute_stress;
     // Method for nonlocal stress derivatives: 'analytical' (Lagrange polynomial differentiation, matches QE) or 'numerical' (finite-difference)
     std::optional<InputControlNonlocalStressDerivativeMethodEnum> nonlocal_stress_derivative_method;
     // Number of k-point pool groups for MPI parallelization. 0 = choose automatically from the irreducible k-point count. An explicit --pools flag overrides this
@@ -1245,6 +1249,12 @@ inline void to_json(nlohmann::json& json_output, const InputControl& data) {
     }
     if (data.disable_symmetry) {
         json_output["disable_symmetry"] = *data.disable_symmetry;
+    }
+    if (data.compute_forces) {
+        json_output["compute_forces"] = *data.compute_forces;
+    }
+    if (data.compute_stress) {
+        json_output["compute_stress"] = *data.compute_stress;
     }
     if (data.nonlocal_stress_derivative_method) {
         json_output["nonlocal_stress_derivative_method"] = *data.nonlocal_stress_derivative_method;
@@ -1320,6 +1330,12 @@ inline void from_json(const nlohmann::json& json_input, InputControl& data) {
     }
     if (json_input.contains("disable_symmetry")) {
         data.disable_symmetry = json_input.at("disable_symmetry").get<bool>();
+    }
+    if (json_input.contains("compute_forces")) {
+        data.compute_forces = json_input.at("compute_forces").get<bool>();
+    }
+    if (json_input.contains("compute_stress")) {
+        data.compute_stress = json_input.at("compute_stress").get<bool>();
     }
     if (json_input.contains("nonlocal_stress_derivative_method")) {
         data.nonlocal_stress_derivative_method = json_input.at("nonlocal_stress_derivative_method").get<InputControlNonlocalStressDerivativeMethodEnum>();
@@ -1446,7 +1462,9 @@ inline const std::map<std::string, std::vector<std::string>>& allowed_keys_by_pa
              "band_path",
              "band_path_points_per_segment",
              "calculation",
+             "compute_forces",
              "compute_projections",
+             "compute_stress",
              "disable_symmetry",
              "dos_broadening",
              "dos_energy_max",

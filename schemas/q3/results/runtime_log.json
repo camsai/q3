@@ -38,6 +38,9 @@
         "execution": {
             "$ref": "./runtime_log/execution.json"
         },
+        "device_transfers": {
+            "$ref": "./runtime_log/device_transfers.json"
+        },
         "incomplete": {
             "$ref": "./runtime_log/incomplete.json"
         }

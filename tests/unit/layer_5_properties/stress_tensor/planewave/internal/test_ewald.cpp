@@ -5,6 +5,7 @@
 
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
+#include "layer_3_representation/basis/planewave/structure_factor_calculator_serial.hpp"
 #include "layer_5_properties/stress_tensor/planewave/contributions.hpp"
 #include "layer_5_properties/stress_tensor/planewave/internal/ewald.hpp"
 #include "utils/boron_phosphate.hpp"
@@ -18,7 +19,9 @@ StressTensorContributions ewald_stress(const std::vector<Atom>& atoms) {
     PlanewaveBasis basis;
     test_support::generate_boron_phosphate_basis(basis, crystal);
     StressTensorContributions contributions;
-    EwaldStressTensorCalculator(crystal, basis, contributions).compute();
+    SerialStructureFactorCalculator structure_factor_calculator(crystal, basis);
+    EwaldStressTensorCalculator(crystal, basis, structure_factor_calculator, contributions)
+        .compute();
     return contributions;
 }
 

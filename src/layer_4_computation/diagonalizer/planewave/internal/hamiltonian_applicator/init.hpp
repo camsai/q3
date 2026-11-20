@@ -9,7 +9,7 @@
  * Lifecycle:
  *   1. Construct with run-constant context (crystal, basis, pseudopotentials, FFT grid)
  *   2. Call update_potential() at each SCF iteration (computes smooth-grid potential)
- *   3. Call prepare_kpoint() once per k-point (sets up FFT mappings, KB projectors)
+ *   3. Call prepare_kpoint() once per k-point (sets up FFT mappings, takes the projector set)
  *   4. Call apply_batch() per Davidson iteration (lean H|ψ⟩ application)
  *
  * GPU implementations override to use GPU BLAS, GPU FFT, and device memory.
@@ -21,6 +21,7 @@
 
 #include "layer_0_core/types/init.hpp"
 #include "layer_0_core/types/matrix.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set_store.hpp"
 
 namespace q3 {
 
@@ -116,21 +117,12 @@ class PlanewaveHamiltonianApplicator {
     }
 
     /**
-     * Get pre-computed KB projectors for a specific k-point, or nullptr if none.
-     * Default: nullptr (no cached projectors).
+     * Read the Kleinman-Bylander projectors from this store, which the caller owns and keeps
+     * alive, instead of building them here. Null returns to building them here.
+     * Default: no-op, for an applicator with no nonlocal term to apply.
      */
-    virtual const q3::Matrix<Complex>* get_cached_projectors(int kpoint_index) const {
-        (void)kpoint_index;
-        return nullptr;
-    }
-
-    /**
-     * Set pre-computed KB projectors for a specific k-point.
-     * Default: no-op (implementations that cache projectors override this).
-     */
-    virtual void set_cached_projectors(int kpoint_index, const q3::Matrix<Complex>* projectors) {
-        (void)kpoint_index;
-        (void)projectors;
+    virtual void set_projector_set_store(KleinmanBylanderProjectorSetStore* projector_set_store) {
+        (void)projector_set_store;
     }
 
     /**

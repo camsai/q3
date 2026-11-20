@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "io/logger.hpp"
+#include "layer_0_core/execution/threading.hpp"
 #include "layer_0_core/math/phase_factor.hpp"
 #include "layer_0_core/math/tolerances.hpp"
 #include "layer_0_core/types/init.hpp"
@@ -71,8 +72,15 @@ inline Real compute_ewald(const Crystal& crystal_structure, const PlanewaveBasis
      * Over this rank's density G-vectors, completed across the pool: the terms are those
      * every rank used to sum in full, now each taken once.
      */
-    Real local_g_space_sum = 0.0;
     const LocalDensityGLayout& layout = planewave_basis.local_density_g_layout();
+    /**
+     * The terms are computed across threads and then added in entry order, so the sum is
+     * the serial loop's to the last bit: only the structure factors, which are most of the
+     * work, are shared out.
+     */
+    std::vector<Real> g_space_terms(static_cast<std::size_t>(layout.size()), 0.0);
+    const int entry_threads = execution::threading::thread_count_for(layout.size(), 512);
+#pragma omp parallel for schedule(static) num_threads(entry_threads) if (entry_threads > 1)
     for (int entry = 0; entry < layout.size(); entry++) {
         const int g_index = layout.global_g_indices()[entry];
         if (g_index < first_nonzero_g_index) {
@@ -95,6 +103,10 @@ inline Real compute_ewald(const Crystal& crystal_structure, const PlanewaveBasis
         if (planewave_basis.is_gamma_only()) {
             term *= 2.0;
         }
+        g_space_terms[static_cast<std::size_t>(entry)] = term;
+    }
+    Real local_g_space_sum = 0.0;
+    for (Real term : g_space_terms) {
         local_g_space_sum += term;
     }
     std::vector<Real> partial_sum{local_g_space_sum};

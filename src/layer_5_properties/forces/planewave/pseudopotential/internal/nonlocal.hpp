@@ -31,16 +31,19 @@
 
 #include <cmath>
 #include <complex>
+#include <optional>
 #include <vector>
 
 #include "layer_0_core/math/linear_algebra/blas.hpp"
 #include "layer_0_core/math/tolerances.hpp"
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_0_core/types/matrix.hpp"
 #include "layer_1_structure/crystal/crystal.hpp"
 #include "layer_1_structure/reciprocal_space/kpoints_grid.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
+#include "layer_3_representation/pseudopotential/planewave/band_projection_calculator.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/norm_conserving/init.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/ultrasoft/init.hpp"
 #include "layer_4_computation/state/kohn_sham/planewave/norm_conserving/init.hpp"
@@ -85,17 +88,11 @@ class NonlocalPseudopotentialForceCalculator {
                     kpoint_vector.z * reciprocal_lattice_vectors[2][direction];
             }
 
-            Matrix<Complex> projector_functions;
-            compute_kleinman_bylander_projectors(
-                kpoint_vector,
-                crystal_structure_,
-                planewave_basis_,
-                scf_state_.quantum_system().pseudopotential_basis().pseudopotential_set(),
-                scf_state_.quantum_system().pseudopotential_basis().beta_function_table(),
-                plane_wave_indices,
-                number_of_plane_waves,
-                scf_state_.quantum_system().pseudopotential_basis().total_number_of_projectors(),
-                projector_functions);
+            std::optional<StageTimer> stage_timer(std::in_place,
+                                                  "post.forces.nonlocal.projector_set");
+            const KleinmanBylanderProjectorSet& projector_functions =
+                scf_state_.projector_set(kpoint_index);
+            stage_timer.reset();
 
             // Collect occupied band indices and weights
             std::vector<int> occupied_band_indices;
@@ -123,19 +120,16 @@ class NonlocalPseudopotentialForceCalculator {
             int number_of_projectors =
                 scf_state_.quantum_system().pseudopotential_basis().total_number_of_projectors();
 
-            // Precompute -i(k+G) components
-            std::vector<std::vector<Complex>> minus_i_k_plus_g(
-                3, std::vector<Complex>(number_of_plane_waves));
+            // The Cartesian components of k+G: the weights of the three position derivatives.
+            std::vector<std::vector<Real>> k_plus_g(3, std::vector<Real>(number_of_plane_waves));
             for (int plane_wave_index = 0; plane_wave_index < number_of_plane_waves;
                  plane_wave_index++) {
                 const auto& g_vector =
                     planewave_basis_.g_vectors()[plane_wave_indices[plane_wave_index]];
                 for (int direction = 0; direction < 3; direction++) {
-                    Real k_plus_g_direction =
+                    k_plus_g[direction][plane_wave_index] =
                         (g_vector.g_cart[direction] + kpoint_cartesian[direction]) *
                         crystal_structure_.two_pi_over_lattice_parameter();
-                    minus_i_k_plus_g[direction][plane_wave_index] =
-                        Complex(0.0, -k_plus_g_direction);
                 }
             }
 
@@ -143,50 +137,35 @@ class NonlocalPseudopotentialForceCalculator {
              * We need 4 overlaps per band:
              * 0: <beta | psi>
              * 1,2,3: <beta | -i(k+G) psi> for x,y,z
+             *
+             * They are formed by the run's band projection calculator, so on a device run
+             * the four products are taken there, on the projector set's device copy and the
+             * bands' device block, and only the overlaps come down.
              */
+            stage_timer.emplace("post.forces.nonlocal.projections");
             std::vector<std::vector<Complex>> batched_overlaps(
                 4, std::vector<Complex>(number_of_projectors * number_of_occupied_bands));
-
-            std::vector<Complex> modified_wavefunction(number_of_plane_waves *
-                                                       number_of_occupied_bands);
-
-            Complex alpha_blas(1.0, 0.0);
-            Complex beta_blas(0.0, 0.0);
-            int blas_rows = number_of_projectors;
-            int blas_columns = number_of_occupied_bands;
-            int blas_inner_dimension = number_of_plane_waves;
-
-            for (int component = 0; component < 4; component++) {
-                for (int occupied_band_index = 0; occupied_band_index < number_of_occupied_bands;
-                     occupied_band_index++) {
-                    int band_index = occupied_band_indices[occupied_band_index];
-                    int offset = occupied_band_index * number_of_plane_waves;
-                    for (int g_index = 0; g_index < number_of_plane_waves; g_index++) {
-                        Complex psi = scf_state_.wavefunction_coefficient(
-                            kpoint_spin_index, band_index, g_index);
-                        if (component == 0) {
-                            modified_wavefunction[offset + g_index] = psi;
-                        } else {
-                            modified_wavefunction[offset + g_index] =
-                                psi * minus_i_k_plus_g[component - 1][g_index];
-                        }
-                    }
-                }
-
-                zgemm_("C",
-                       "N",
-                       &blas_rows,
-                       &blas_columns,
-                       &blas_inner_dimension,
-                       reinterpret_cast<const std::complex<double>*>(&alpha_blas),
-                       reinterpret_cast<const std::complex<double>*>(projector_functions.data()),
-                       &blas_inner_dimension,
-                       reinterpret_cast<const std::complex<double>*>(modified_wavefunction.data()),
-                       &blas_inner_dimension,
-                       reinterpret_cast<const std::complex<double>*>(&beta_blas),
-                       reinterpret_cast<std::complex<double>*>(batched_overlaps[component].data()),
-                       &blas_rows);
+            const BandProjectionCalculator& band_projections =
+                scf_state_.band_projection_calculator();
+            band_projections.project(projector_functions.matrix(),
+                                     number_of_projectors,
+                                     number_of_plane_waves,
+                                     scf_state_.quantum_system(),
+                                     kpoint_spin_index,
+                                     occupied_band_indices,
+                                     batched_overlaps[0].data());
+            for (int direction = 0; direction < 3; direction++) {
+                band_projections.project_scaled_bands(projector_functions.matrix(),
+                                                      number_of_projectors,
+                                                      number_of_plane_waves,
+                                                      scf_state_.quantum_system(),
+                                                      kpoint_spin_index,
+                                                      occupied_band_indices,
+                                                      k_plus_g[direction].data(),
+                                                      Complex(0.0, -1.0),
+                                                      batched_overlaps[direction + 1].data());
             }
+            stage_timer.reset();
 
             /**
              * When ranks share a k-point pool, each holds only its slab of this
@@ -249,7 +228,9 @@ class NonlocalPseudopotentialForceCalculator {
                             gamma_g0_overlap[static_cast<size_t>(projector) *
                                                  number_of_occupied_bands +
                                              occupied_band_index] =
-                                (std::conj(projector_functions[projector][g0_index]) * psi).real();
+                                (std::conj(projector_functions.projector(projector)[g0_index]) *
+                                 psi)
+                                    .real();
                         }
                     }
                 }

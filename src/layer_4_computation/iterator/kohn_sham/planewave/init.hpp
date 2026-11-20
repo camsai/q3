@@ -17,9 +17,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -31,6 +33,10 @@
 #include "layer_0_core/types/constants.hpp"
 #include "layer_2_quantum_system/derived/magnetization.hpp"
 #include "layer_3_representation/basis/planewave/init.hpp"
+#include "layer_3_representation/basis/planewave/pseudopotential/init.hpp"
+#include "layer_3_representation/pseudopotential/planewave/band_projection_calculator.hpp"
+#include "layer_3_representation/pseudopotential/planewave/band_projection_calculator_serial.hpp"
+#include "layer_3_representation/pseudopotential/planewave/projector_set_builder.hpp"
 #include "layer_3_representation/quantum_state/kohn_sham/planewave/init.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/init.hpp"
 #include "layer_4_computation/charge_density/planewave/init.hpp"
@@ -96,6 +102,86 @@ class PlanewaveKohnShamSCFIterator : public KohnShamSCFIterator {
      */
     void set_diagonalizer(std::unique_ptr<PlanewaveDiagonalizer> diagonalizer) {
         diagonalizer_ = std::move(diagonalizer);
+    }
+
+    /// Builds the object that sums the bands into the density, from what it reads.
+    using ChargeDensityAccumulatorFactory =
+        std::function<std::unique_ptr<PlanewaveChargeDensityAccumulator>(
+            const PlanewaveBasis&, const KPointsGrid&, const PlanewaveKohnShamQuantumSystem&)>;
+
+    /**
+     * Choose how the density is accumulated from the bands.
+     *
+     * The iterator builds the host accumulator unless told otherwise; an entry
+     * point that owns a device hands in a factory for one that transforms the
+     * bands there. Takes effect whether the accumulator has been built yet or
+     * not.
+     */
+    void set_charge_density_accumulator_factory(ChargeDensityAccumulatorFactory factory) {
+        charge_density_accumulator_factory_ = std::move(factory);
+        if (charge_density_accumulator_ != nullptr) {
+            charge_density_accumulator_ = create_charge_density_accumulator();
+        }
+    }
+
+    /**
+     * Choose how columns of plane waves (projectors, their derivatives) are contracted with
+     * the bands.
+     *
+     * The iterator uses the host BLAS unless told otherwise; an entry point that owns a
+     * device hands in a calculator that multiplies there, on the bands the eigensolver left
+     * on the device. The converged state carries the same calculator to forces and stress.
+     */
+    void set_band_projection_calculator(
+        std::shared_ptr<const BandProjectionCalculator> band_projection_calculator) {
+        if (!band_projection_calculator) {
+            throw std::invalid_argument(
+                "PlanewaveKohnShamSCFIterator: the band projection calculator must not be null");
+        }
+        band_projection_calculator_ = std::move(band_projection_calculator);
+    }
+
+    /// Builds what fills the Kleinman-Bylander projector sets, from what a set is made of.
+    using ProjectorSetBuilderFactory = std::function<std::unique_ptr<ProjectorSetBuilder>(
+        const Crystal&, const PlanewaveBasis&, const NormConservingPlanewaveBasis&)>;
+
+    /**
+     * Choose how the Kleinman-Bylander projector sets are built.
+     *
+     * The iterator builds them on the host unless told otherwise; an entry point whose device
+     * memory is apart from the host's hands in a factory for a builder that forms them on the
+     * device. Takes effect when the next run initializes its states.
+     */
+    void set_projector_set_builder_factory(ProjectorSetBuilderFactory factory) {
+        projector_set_builder_factory_ = std::move(factory);
+    }
+
+    /**
+     * Choose how the overlaps of bands with projectors and their strain derivatives are
+     * formed for the stress. Left unset, they are built as columns on the host; an entry
+     * point that owns a device hands in a factory for a calculator that forms them there.
+     * The converged state carries the factory to the stress.
+     */
+    void set_projector_strain_overlap_calculator_factory(
+        NormConservingPlanewaveKohnShamSCFState::ProjectorStrainOverlapCalculatorFactory factory) {
+        projector_strain_overlap_calculator_factory_ = std::move(factory);
+    }
+
+    /**
+     * Choose how the sums over atoms and G-vectors of the local, core-correction and Ewald
+     * forces and stress are formed. Left unset, on the host; an entry point that owns a
+     * device hands in a factory for a calculator that forms them there. The converged state
+     * carries the factory to the forces and the stress.
+     */
+    void set_structure_factor_calculator_factory(
+        NormConservingPlanewaveKohnShamSCFState::StructureFactorCalculatorFactory factory) {
+        structure_factor_calculator_factory_ = std::move(factory);
+    }
+
+    /// What this run contracts projectors with bands through; see the setter.
+    [[nodiscard]] const std::shared_ptr<const BandProjectionCalculator>&
+    band_projection_calculator() const {
+        return band_projection_calculator_;
     }
 
     /**
@@ -398,6 +484,28 @@ class PlanewaveKohnShamSCFIterator : public KohnShamSCFIterator {
     PlanewaveChargeDensitySymmetrizer density_symmetrizer_;
     /// Accumulates real-space charge density from wavefunctions each SCF iteration.
     std::unique_ptr<PlanewaveChargeDensityAccumulator> charge_density_accumulator_;
+    ChargeDensityAccumulatorFactory charge_density_accumulator_factory_;
+    /// Empty unless an entry point injected one; the projector sets are then built on the host.
+    ProjectorSetBuilderFactory projector_set_builder_factory_;
+    /// Empty unless an entry point injected one; the stress then builds its columns on the host.
+    NormConservingPlanewaveKohnShamSCFState::ProjectorStrainOverlapCalculatorFactory
+        projector_strain_overlap_calculator_factory_;
+    /// Empty unless an entry point injected one; the phase sums are then formed on the host.
+    NormConservingPlanewaveKohnShamSCFState::StructureFactorCalculatorFactory
+        structure_factor_calculator_factory_;
+    /// Contracts projectors with bands: the host BLAS unless an entry point injected a device.
+    std::shared_ptr<const BandProjectionCalculator> band_projection_calculator_ =
+        std::make_shared<SerialBandProjectionCalculator>();
+
+    /// The accumulator the injected factory builds, or the host one when none was injected.
+    std::unique_ptr<PlanewaveChargeDensityAccumulator> create_charge_density_accumulator() {
+        if (charge_density_accumulator_factory_) {
+            return charge_density_accumulator_factory_(
+                planewave_basis_, kpoint_grid(), quantum_system_);
+        }
+        return std::make_unique<PlanewaveChargeDensityAccumulator>(
+            planewave_basis_, kpoint_grid(), quantum_system_);
+    }
     /// Computes band energy and smearing entropy from the occupied Kohn-Sham states.
     std::unique_ptr<PlanewaveKohnShamEnergyCalculator> energy_calculator_;
 
@@ -546,8 +654,7 @@ class PlanewaveKohnShamSCFIterator : public KohnShamSCFIterator {
             allocate_electronic_states();
         }
         ProfilingCounters::instance().log_resident_checkpoint("basis + wavefunctions");
-        charge_density_accumulator_ = std::make_unique<PlanewaveChargeDensityAccumulator>(
-            planewave_basis_, kpoint_grid(), quantum_system_);
+        charge_density_accumulator_ = create_charge_density_accumulator();
         energy_calculator_ = std::make_unique<PlanewaveKohnShamEnergyCalculator>(
             kpoint_grid(), quantum_system_, smearing_scheme_.get());
 

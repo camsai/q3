@@ -70,7 +70,7 @@ void populate_synthetic_state(
                 kpoint_index, band_index, 0.1 * band_index + 0.01 * kpoint_index);
 
             Complex* coefficients =
-                quantum_system->wavefunction_band_data(kpoint_index, band_index);
+                quantum_system->mutable_wavefunction_band_data(kpoint_index, band_index);
             Real norm_squared = 0.0;
             for (int plane_wave_index = 0; plane_wave_index < number_of_plane_waves;
                  plane_wave_index++) {

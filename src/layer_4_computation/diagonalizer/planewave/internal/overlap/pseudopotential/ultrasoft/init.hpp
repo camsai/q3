@@ -11,13 +11,14 @@
 #include <algorithm>
 #include <complex>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "layer_0_core/math/linear_algebra/blas.hpp"
 #include "layer_0_core/math/tolerances.hpp"
 #include "layer_0_core/types/init.hpp"
 #include "layer_0_core/types/matrix.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/ultrasoft/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/overlap/pseudopotential/init.hpp"
 
@@ -31,13 +32,24 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
         return false;
     }
 
+    /// S carries the augmentation: the overlap block is formed and updated by this operator.
+    [[nodiscard]] std::unique_ptr<GPUOverlapBlock>
+    create_gpu_overlap_block(execution::gpu::device::GPUDeviceBackend& device_backend,
+                             int number_of_plane_waves,
+                             int number_of_vectors,
+                             const Complex* vectors,
+                             Complex* overlap_vectors) const override {
+        return OverlapOperator::create_gpu_overlap_block(
+            device_backend, number_of_plane_waves, number_of_vectors, vectors, overlap_vectors);
+    }
+
     void apply(int number_of_plane_waves,
                const Complex* wavefunction,
                Complex* overlap_wavefunction) const override {
         // Copy input to output: S = I + augmentation
         std::memcpy(overlap_wavefunction, wavefunction, number_of_plane_waves * sizeof(Complex));
 
-        int total_projectors = static_cast<int>(kleinman_bylander_potential_.rows());
+        int total_projectors = kleinman_bylander_projector_set_.number_of_projectors();
         if (total_projectors == 0) {
             return;
         }
@@ -58,15 +70,15 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
             int one_increment = 1;
 
             std::vector<double> real_projector_overlaps(total_projectors, 0.0);
-            const double* real_kleinman_bylander_potential =
-                reinterpret_cast<const double*>(kleinman_bylander_potential_.data());
+            const double* real_kleinman_bylander_projector_set =
+                reinterpret_cast<const double*>(kleinman_bylander_projector_set_.host());
             const double* real_wavefunction = reinterpret_cast<const double*>(wavefunction);
 
             q3::blas::dgemv_("T",
                              &double_number_of_plane_waves,
                              &total_projectors,
                              &alpha_two,
-                             real_kleinman_bylander_potential,
+                             real_kleinman_bylander_projector_set,
                              &double_number_of_plane_waves,
                              real_wavefunction,
                              &one_increment,
@@ -82,7 +94,8 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
             if (has_zero_g_vector) {
                 for (int projector_index = 0; projector_index < total_projectors;
                      ++projector_index) {
-                    Complex kleinman_bylander_g0 = kleinman_bylander_potential_[projector_index][0];
+                    Complex kleinman_bylander_g0 =
+                        kleinman_bylander_projector_set_.projector(projector_index)[0];
                     Complex wavefunction_g0 = wavefunction[0];
                     real_projector_overlaps[projector_index] -=
                         (std::conj(kleinman_bylander_g0) * wavefunction_g0).real();
@@ -99,8 +112,8 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
             int one_increment = 1;
             auto* cast_alpha = reinterpret_cast<const std::complex<double>*>(&alpha_one);
             auto* cast_beta_zero = reinterpret_cast<const std::complex<double>*>(&beta_zero_val);
-            auto* cast_kleinman_bylander =
-                reinterpret_cast<const std::complex<double>*>(kleinman_bylander_potential_.data());
+            auto* cast_kleinman_bylander = reinterpret_cast<const std::complex<double>*>(
+                kleinman_bylander_projector_set_.host());
             auto* cast_wavefunction = reinterpret_cast<const std::complex<double>*>(wavefunction);
             auto* cast_projector_overlaps =
                 reinterpret_cast<std::complex<double>*>(projector_overlaps.data());
@@ -150,7 +163,7 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
         Complex beta_one(1.0, 0.0);
         auto* cast_one = reinterpret_cast<const std::complex<double>*>(&beta_one);
         auto* cast_kleinman_bylander =
-            reinterpret_cast<const std::complex<double>*>(kleinman_bylander_potential_.data());
+            reinterpret_cast<const std::complex<double>*>(kleinman_bylander_projector_set_.host());
         auto* cast_overlap_wavefunction =
             reinterpret_cast<std::complex<double>*>(overlap_wavefunction);
 
@@ -183,7 +196,7 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
                     static_cast<size_t>(number_of_plane_waves) * number_of_vectors *
                         sizeof(Complex));
 
-        int total_projectors = static_cast<int>(kleinman_bylander_potential_.rows());
+        int total_projectors = kleinman_bylander_projector_set_.number_of_projectors();
         if (total_projectors == 0) {
             return;
         }
@@ -203,8 +216,8 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
 
             std::vector<double> real_projector_overlaps(
                 static_cast<size_t>(total_projectors) * number_of_vectors, 0.0);
-            const double* real_kleinman_bylander_potential =
-                reinterpret_cast<const double*>(kleinman_bylander_potential_.data());
+            const double* real_kleinman_bylander_projector_set =
+                reinterpret_cast<const double*>(kleinman_bylander_projector_set_.host());
             const double* real_wavefunctions = reinterpret_cast<const double*>(wavefunctions);
 
             // Compute 2 * Re(KB^H · wavefunctions) via DGEMM
@@ -214,7 +227,7 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
                              &number_of_vectors,
                              &double_number_of_plane_waves,
                              &alpha_two,
-                             real_kleinman_bylander_potential,
+                             real_kleinman_bylander_projector_set,
                              &double_number_of_plane_waves,
                              real_wavefunctions,
                              &double_number_of_plane_waves,
@@ -234,7 +247,7 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
                     for (int projector_index = 0; projector_index < total_projectors;
                          ++projector_index) {
                         Complex kleinman_bylander_g0 =
-                            kleinman_bylander_potential_[projector_index][0];
+                            kleinman_bylander_projector_set_.projector(projector_index)[0];
                         size_t index = static_cast<size_t>(projector_index) +
                                        static_cast<size_t>(vector_index) * total_projectors;
                         real_projector_overlaps[index] -=
@@ -251,8 +264,8 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
             Complex beta_blas_zero(0.0, 0.0);
             auto* cast_alpha = reinterpret_cast<const std::complex<double>*>(&alpha_blas);
             auto* cast_zero = reinterpret_cast<const std::complex<double>*>(&beta_blas_zero);
-            auto* cast_kleinman_bylander =
-                reinterpret_cast<const std::complex<double>*>(kleinman_bylander_potential_.data());
+            auto* cast_kleinman_bylander = reinterpret_cast<const std::complex<double>*>(
+                kleinman_bylander_projector_set_.host());
             auto* cast_wavefunctions = reinterpret_cast<const std::complex<double>*>(wavefunctions);
             auto* cast_projector_overlaps =
                 reinterpret_cast<std::complex<double>*>(projector_overlaps.data());
@@ -313,7 +326,7 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
         Complex beta_blas_one(1.0, 0.0);
         auto* cast_one = reinterpret_cast<const std::complex<double>*>(&beta_blas_one);
         auto* cast_kleinman_bylander =
-            reinterpret_cast<const std::complex<double>*>(kleinman_bylander_potential_.data());
+            reinterpret_cast<const std::complex<double>*>(kleinman_bylander_projector_set_.host());
         auto* cast_overlap_wavefunctions =
             reinterpret_cast<std::complex<double>*>(overlap_wavefunctions);
 
@@ -376,17 +389,17 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
                     if (std::abs(overlap_coefficient) <
                         math::tolerances::d_matrix_element_threshold)
                         continue;
+                    const Complex* projector_a = kleinman_bylander_projector_set_.projector(
+                        projector_index_offset + projector_index_a);
+                    const Complex* projector_b = kleinman_bylander_projector_set_.projector(
+                        projector_index_offset + projector_index_b);
                     for (int g_index = 0; g_index < number_of_plane_waves; g_index++) {
                         for (int plane_wave_index_jg = 0;
                              plane_wave_index_jg < number_of_plane_waves;
                              plane_wave_index_jg++) {
                             overlap_matrix[g_index + plane_wave_index_jg * number_of_plane_waves] +=
-                                Complex(overlap_coefficient, 0.0) *
-                                kleinman_bylander_potential_[projector_index_offset +
-                                                             projector_index_a][g_index] *
-                                std::conj(kleinman_bylander_potential_[projector_index_offset +
-                                                                       projector_index_b]
-                                                                      [plane_wave_index_jg]);
+                                Complex(overlap_coefficient, 0.0) * projector_a[g_index] *
+                                std::conj(projector_b[plane_wave_index_jg]);
                         }
                     }
                 }
@@ -401,7 +414,7 @@ class UltrasoftPseudopotentialOverlapOperator : public PseudopotentialOverlapOpe
      * Q(i,j) = q_ab for the corresponding beta functions if l,m quantum numbers match.
      */
     void build_q_matrix() const {
-        int total_projectors = static_cast<int>(kleinman_bylander_potential_.rows());
+        int total_projectors = kleinman_bylander_projector_set_.number_of_projectors();
         cached_q_matrix_.assign(static_cast<size_t>(total_projectors) * total_projectors,
                                 Complex(0.0, 0.0));
 

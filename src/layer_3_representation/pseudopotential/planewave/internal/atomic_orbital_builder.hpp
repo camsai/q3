@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "layer_0_core/execution/threading.hpp"
 #include "layer_0_core/math/interpolation/lagrange.hpp"
 #include "layer_0_core/math/phase_factor.hpp"
 #include "layer_0_core/math/spherical/harmonics.hpp"
@@ -212,8 +213,30 @@ inline void build_atomic_orbitals_g_space(
     orbitals.assign(number_of_atomic_orbitals,
                     std::vector<Complex>(number_of_plane_waves, Complex(0.0, 0.0)));
 
-    int orbital_index = 0;
-    for (int atom_index = 0; atom_index < crystal_structure.number_of_atoms(); atom_index++) {
+    /**
+     * Each atom fills its own orbitals from its own structure factors, so the
+     * atoms are shared out over threads without changing a bit: the first
+     * orbital of each atom is fixed beforehand, in the order the serial loop
+     * numbered them.
+     */
+    const int number_of_atoms = crystal_structure.number_of_atoms();
+    std::vector<int> first_orbital_of_atom(static_cast<std::size_t>(number_of_atoms), 0);
+    int orbitals_so_far = 0;
+    for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+        first_orbital_of_atom[atom_index] = orbitals_so_far;
+        const auto& atom_pseudopotential =
+            pseudopotential_set[crystal_structure.species_type_index(atom_index)];
+        for (const auto& atomic_wavefunction : atom_pseudopotential.wavefunctions_atomic) {
+            if (atomic_wavefunction.occupations >= 0.0) {
+                orbitals_so_far += 2 * atomic_wavefunction.angular_momentum + 1;
+            }
+        }
+    }
+
+    const int atom_threads = execution::threading::thread_count_for(number_of_atoms, 1);
+#pragma omp parallel for schedule(static) num_threads(atom_threads) if (atom_threads > 1)
+    for (int atom_index = 0; atom_index < number_of_atoms; atom_index++) {
+        int orbital_index = first_orbital_of_atom[atom_index];
         Vector3D atomic_position_cartesian =
             crystal_structure.convert_from_crystal_to_cartesian(atom_index); // units of alat
         int type_index = crystal_structure.species_type_index(atom_index);

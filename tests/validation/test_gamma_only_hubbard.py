@@ -49,6 +49,8 @@ Run:
     .venv/bin/pytest tests/validation/test_gamma_only_hubbard.py -v --q3-bin ./build/q3
 """
 
+# Every q3 run below passes --forces --stress: the decks are plain scf decks, which ask
+# pw.x -- and so Q3 -- for neither, and these tests are about exactly those derivatives.
 import json
 import math
 import re
@@ -212,7 +214,7 @@ def run_q3(q3_bin, directory, dataset, gamma_only, displacement, hubbard=True):
     """
     input_path = write_input(directory, dataset, gamma_only, displacement, hubbard)
     completed = subprocess.run(
-        [str(q3_bin), input_path.name],
+        [str(q3_bin), input_path.name, "--forces", "--stress"],
         cwd=str(directory),
         capture_output=True,
         text=True,

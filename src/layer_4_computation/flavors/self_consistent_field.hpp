@@ -31,6 +31,7 @@
 #include "io/output/results.hpp"
 #include "io/quantum_system/kohn_sham/planewave/checkpoint/q3.hpp"
 #include "layer_0_core/profiling/counters.hpp"
+#include "layer_0_core/profiling/stage_timer.hpp"
 #include "layer_4_computation/flavors/base.hpp"
 #include "layer_4_computation/iterator/factory.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/execution/kpoint_states.hpp"
@@ -52,8 +53,10 @@ class SelfConsistentFieldFlavor : public Flavor {
 
   protected:
     generated::Results run_calculation(const InputData& input) override {
+        std::optional<StageTimer> create_timer(std::in_place, "setup.create_iterator");
         std::unique_ptr<PlanewaveKohnShamSCFIterator> owned_iterator =
             create_iterator(input, iterator_factory_);
+        create_timer.reset();
         PlanewaveKohnShamSCFIterator* iterator = owned_iterator.get();
         auto* planewave_iterator =
             dynamic_cast<PlanewavePseudopotentialKohnShamSCFIterator*>(iterator);
@@ -71,7 +74,10 @@ class SelfConsistentFieldFlavor : public Flavor {
         auto scf_state = iterator->result();
 
         // Write binary checkpoints.
-        planewave_iterator->write_checkpoints(input.output_directory, input.prefix);
+        {
+            StageTimer stage_timer("post.checkpoints");
+            planewave_iterator->write_checkpoints(input.output_directory, input.prefix);
+        }
 
         /**
          * ─── Mean-field export (BerkeleyGW, etc.) ──────────────────────────────
@@ -110,35 +116,6 @@ class SelfConsistentFieldFlavor : public Flavor {
          * others.
          */
         results.runtime_log.execution = iterator->execution_policy().execution_record();
-        /**
-         * Carry the timing breakdown into the result, so a measurement does not
-         * have to be scraped back out of the log. Counts go alongside the
-         * stage times: a stage that got slower because it ran more often is a
-         * different finding from one that got slower per call, and the times
-         * alone cannot tell them apart.
-         */
-        {
-            const auto& counters = ProfilingCounters::instance();
-            nlohmann::json timings = counters.davidson_timing.as_map();
-            timings["fft_calls"] = static_cast<double>(counters.fft_call_count.load());
-            timings["davidson_iterations"] =
-                static_cast<double>(counters.davidson_iteration_count.load());
-            timings["hamiltonian_applications"] =
-                static_cast<double>(counters.hamiltonian_application_count.load());
-            for (const auto& [stage, milliseconds] : counters.stage_time_ms) {
-                timings[stage] = milliseconds;
-                timings[stage + ".calls"] =
-                    static_cast<double>(counters.stage_call_count.at(stage));
-            }
-            if (!timings.empty()) {
-                results.runtime_log.timings_ms = timings;
-            }
-            /**
-             * total_solve_calls is deliberately not emitted: it is declared in
-             * DavidsonTimingAccumulator but never incremented anywhere, so it
-             * would publish a constant zero that reads as "no solves happened".
-             */
-        }
         const auto& energies = scf_state.energies();
         set_energy_records(results, energies.total(), energies);
         set_fermi_energy(results, planewave_iterator->quantum_system().fermi_energy());
@@ -191,21 +168,25 @@ class SelfConsistentFieldFlavor : public Flavor {
          */
         planewave_iterator->release_scf_workspace();
 
-        // ─── Forces (if SCF converged) ────────────────────────────────────────
-        if (converged) {
-            auto timer_forces_start = std::chrono::high_resolution_clock::now();
+        /**
+         * ─── Forces and stress (if SCF converged) ─────────────────────────────
+         * Each is computed unless the input turned it off; a Quantum ESPRESSO
+         * deck turns off whatever it did not ask for (InputData::compute_forces).
+         */
+        if (converged && input.compute_forces) {
+            StageTimer forces_timer("post.forces");
             auto [total_forces, forces_contributions] = ForceCalculator::compute_forces(
                 scf_state, input.dispersion_correction, input.disable_symmetry);
-            auto timer_forces_end = std::chrono::high_resolution_clock::now();
-
             record_forces(results, total_forces, forces_contributions);
+        }
 
+        if (converged && input.compute_stress) {
             /**
              * Record the derivative terms Q3 knows it left out, in the result
-             * rather than only in the log. A relaxation driven by forces with
-             * the Hubbard term missing converges to the wrong geometry without
-             * anything in its output saying so; the Python relax and vc-relax
-             * workflows read these and stop.
+             * rather than only in the log. A relaxation driven by a stress with
+             * the Hubbard term missing converges to the wrong cell without
+             * anything in its output saying so; the Python vc-relax workflow
+             * reads these and stops.
              *
              * Atomic-projector and ortho-atomic force and stress include their complete
              * orbital, overlap-operator, and cell-wide Lowdin-transform derivatives for
@@ -219,14 +200,13 @@ class SelfConsistentFieldFlavor : public Flavor {
             }
 
             /**
-             * ─── Stress tensor ────────────────────────────────────────────────
              * Stress computation is not yet G-vector-distribution-aware.
              * Skip when band_size > 1 to avoid out-of-bounds access on
              * distributed wavefunctions/projectors.
              */
             bool skip_stress = (iterator->execution_policy().band_size() > 1);
-            auto timer_stress_start = std::chrono::high_resolution_clock::now();
             if (!skip_stress) {
+                StageTimer stage_timer("post.stress");
                 auto [stress_total, stress_contributions] =
                     compute_stress(scf_state,
                                    input.nonlocal_stress_derivative_method,
@@ -242,26 +222,50 @@ class SelfConsistentFieldFlavor : public Flavor {
                     "stress is not implemented when wavefunctions are distributed across an "
                     "MPI band group, so the reported zero tensor is not a physical result");
             }
-            auto timer_stress_end = std::chrono::high_resolution_clock::now();
+        }
 
-            log::debug("     Force/Stress timing:");
-            log::debug(
-                "       forces:  {:.1f} ms",
-                std::chrono::duration<double, std::milli>(timer_forces_end - timer_forces_start)
-                    .count());
-            log::debug(
-                "       stress:  {:.1f} ms",
-                std::chrono::duration<double, std::milli>(timer_stress_end - timer_stress_start)
-                    .count());
-        } else {
+        if (!converged && (input.compute_forces || input.compute_stress)) {
             log::warn(
                 "SelfConsistentFieldFlavor: skipping forces and stress — SCF did not converge");
         }
 
         // ─── Eigenvalues ──────────────────────────────────────────────────────
-        set_record(results, assemble_global_eigenvalues_at_kpoints(*planewave_iterator));
+        {
+            StageTimer stage_timer("post.eigenvalues");
+            set_record(results, assemble_global_eigenvalues_at_kpoints(*planewave_iterator));
+        }
 
+        record_timings(results);
         return results;
+    }
+
+    /**
+     * Carry the timing breakdown into the result, so a measurement does not
+     * have to be scraped back out of the log. Taken last, so the stages after
+     * the SCF (checkpoints, forces, stress) are in it. Counts go alongside the
+     * stage times: a stage that got slower because it ran more often is a
+     * different finding from one that got slower per call, and the times alone
+     * cannot tell them apart.
+     *
+     * total_solve_calls is deliberately not emitted: it is declared in
+     * DavidsonTimingAccumulator but never incremented anywhere, so it would
+     * publish a constant zero that reads as "no solves happened".
+     */
+    static void record_timings(generated::Results& results) {
+        const auto& counters = ProfilingCounters::instance();
+        nlohmann::json timings = counters.davidson_timing.as_map();
+        timings["fft_calls"] = static_cast<double>(counters.fft_call_count.load());
+        timings["davidson_iterations"] =
+            static_cast<double>(counters.davidson_iteration_count.load());
+        timings["hamiltonian_applications"] =
+            static_cast<double>(counters.hamiltonian_application_count.load());
+        for (const auto& [stage, milliseconds] : counters.stage_time_ms) {
+            timings[stage] = milliseconds;
+            timings[stage + ".calls"] = static_cast<double>(counters.stage_call_count.at(stage));
+        }
+        if (!timings.empty()) {
+            results.runtime_log.timings_ms = timings;
+        }
     }
 
   public:

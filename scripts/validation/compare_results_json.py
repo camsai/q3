@@ -81,6 +81,7 @@ import argparse
 import fnmatch
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -205,6 +206,17 @@ def read_json(path: Path):
         raise ComparisonError(f"{path} is not valid JSON: {error}") from error
 
 
+def is_json_file(relative: Path) -> bool:
+    """Whether a run-tree file is JSON: ``*.json``, or a backup of one, ``*.json-N``.
+
+    A run into an output directory that already holds ``<prefix>_results.json``
+    (a case's prerequisite SCF, say) keeps it as ``<prefix>_results.json-1``. It
+    is a results file like any other, so it is compared leaf by leaf with the
+    volatile leaves skipped, not byte for byte.
+    """
+    return re.fullmatch(r".*\.json(-\d+)?", relative.name) is not None
+
+
 def relative_paths_under(root: Path) -> set[Path]:
     """Every file under ``root``, as paths relative to it."""
     return {path.relative_to(root) for path in root.rglob("*") if path.is_file()}
@@ -224,7 +236,7 @@ def compare_directories(base_root: Path, head_root: Path, tolerance: float) -> l
     for relative in sorted(base_files & head_files):
         base_path = base_root / relative
         head_path = head_root / relative
-        if relative.suffix == ".json":
+        if is_json_file(relative):
             for message in compare_documents(read_json(base_path), read_json(head_path), tolerance):
                 differences.append(f"{relative}{message}")
             continue

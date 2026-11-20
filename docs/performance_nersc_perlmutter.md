@@ -354,6 +354,75 @@ The honest summary is that 280 bands and 384,455 G-vectors is not enough work to
 an A100. A larger cell, more bands, or a k-point set the GPU path could stride over would
 change the picture -- and none of that has been measured.
 
+## 64-atom silicon against pw.x: a CPU node and A100s
+
+One deck run by both codes: a 64-atom silicon supercell, norm-conserving, 48 Ry, a 2x2x2
+k-point grid (four irreducible points), 132 bands, as a Quantum ESPRESSO `scf` input that
+Q3 reads as it is. pw.x is NERSC's Quantum ESPRESSO 7.5 module (its GPU build on the GPU
+nodes). Both codes use the same `cray-fftw` and LibSci. Q3's energy is -541.596421439 Ry
+in every run below and pw.x's is -541.596488 Ry; the 6.7e-5 Ry between them is the known
+offset between the two codes on this deck.
+
+Unlike the rest of this page, the times in this section are **wall clock, launch
+included**, because that is the only clock the two codes share. `srun` costs both of
+them several seconds per run, which matters on runs this short: read the ratios, and the
+codes' own timers where they are given.
+
+### GPU: one and four A100s
+
+Measured 2026-11-19 in one job on a node of its own (job 61587498, A100-SXM4-40GB), Q3
+and pw.x alternating, one rank and 16 threads per device, one k-point pool per device.
+Three pairs for each SCF row and two for the last. Wall seconds:
+
+| Run                              | Q3               | pw.x             | Q3 / pw.x    |
+| -------------------------------- | ---------------- | ---------------- | ------------ |
+| SCF, one A100                    | 14.5, 14.6, 14.7 | 15.8, 15.4, 16.0 | 0.91 to 0.95 |
+| SCF, four A100s                  | 11.4, 11.6, 11.2 | 11.5, 11.5, 11.5 | 0.97 to 1.01 |
+| SCF, forces and stress, one A100 | 20.3, 20.8       | 16.6, 16.0       | 1.22 to 1.30 |
+
+By the codes' own timers, which leave the launch out, the SCF takes Q3 12.5 to 12.7 s
+and pw.x 13.9 to 14.4 s on one device, and 7.8 to 8.0 s against 7.8 to 7.9 s on four.
+
+-   **The SCF costs the same in the two codes on this deck**, on one device and on four.
+    The one-device ratio below 1 is inside what pw.x moves between jobs: two days earlier,
+    on shared nodes, the same pw.x run took 13.3 to 13.5 s and Q3 13.2 to 13.6 s.
+-   **A run that also asks for forces and stress is 1.2 to 1.3 times slower in Q3.** The
+    SCF part is the same; Q3 then spends about 6 s where pw.x spends 0.6 s, in the local,
+    core-correction, Ewald and exchange-correlation terms, which are still host loops.
+    [TODOs.md](../TODOs.md) §2.2 has what is left on the host.
+-   CPU against CUDA, the four silicon energy cases and the four force and stress cases
+    of the parity suite pass on this node with the same binaries.
+
+This is one cell, one job and a handful of pairs. It is not a statement about other
+systems, about ultrasoft or PAW datasets, or about cells that do not fit one device.
+
+### CPU: one node, 1 to 128 cores
+
+Measured 2026-11-14 on one CPU node (2x EPYC 7763, 128 cores), all MPI, one core per
+rank, k-point pools in Q3 and in pw.x; each core count is one job that ran both codes,
+once each. **These were not remeasured for the GPU work above**: that work leaves CPU
+results bit for bit as they were, and its effect on CPU time has not been measured.
+
+| Cores | Q3 wall (s) | pw.x wall (s) | Q3 / pw.x | Q3 SCF (s) | pw.x SCF (s) |
+| ----: | ----------: | ------------: | --------: | ---------: | -----------: |
+|     1 |       751.3 |         781.4 |      0.96 |      638.1 |        741.0 |
+|     2 |       391.4 |         405.7 |      0.96 |      330.4 |        384.0 |
+|     4 |       214.4 |         226.4 |      0.95 |      179.6 |        213.6 |
+|     8 |        97.8 |         105.7 |      0.93 |       85.8 |         99.2 |
+|    16 |        52.7 |          65.2 |      0.81 |       44.8 |         60.6 |
+|    32 |        33.6 |          35.2 |      0.95 |       26.9 |         30.6 |
+|    64 |        24.1 |          24.0 |      1.01 |       16.9 |         18.4 |
+|   128 |        25.2 |          24.1 |      1.05 |       15.0 |         15.3 |
+
+Q3 converges in 8 SCF iterations and pw.x in 10 to 12, which is part of why Q3's SCF
+column is the smaller one; Q3's setup is the larger (2.7 s against 1.6 s at 64 cores).
+The rows are single runs, so differences of a few percent are not distinguishable from
+the machine, and the 16-core row, where pw.x took 12 iterations, should be read with
+that in mind. Neither code gains from 64 to 128 cores on a deck with four k-points.
+
+**CPU node or GPU?** For this deck one A100 (about 12.5 s by Q3's timer) does the work
+of a little more than a whole 128-core node (15.0 s of SCF, 25 s of wall).
+
 ## What to actually run
 
 | If your system...                        | use                                                                                                                                                                |

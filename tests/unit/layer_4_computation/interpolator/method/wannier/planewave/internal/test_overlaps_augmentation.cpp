@@ -11,8 +11,9 @@
 #include "layer_3_representation/basis/planewave/pseudopotential/ultrasoft/init.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/atomic_orbital_builder.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/lowdin_orthogonalization.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/wavefunction_atomic.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
+#include "layer_3_representation/pseudopotential/planewave/projector_set_builder_serial.hpp"
 #include "layer_3_representation/pseudopotential/set.hpp"
 #include "layer_4_computation/interpolator/method/wannier/planewave/internal/overlaps.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/execution/serial.hpp"
@@ -134,16 +135,12 @@ TEST(BlochOverlapCalculatorAugmentation, AddAugmentationContributionRejectsExact
                              kinetic_energy_squared);
     int number_of_plane_waves = static_cast<int>(g_vector_indices.size());
 
-    Matrix<Complex> projectors;
-    compute_kleinman_bylander_projectors(fixture.kpoint_grid[0].coordinates,
-                                         fixture.crystal_structure,
-                                         fixture.basis,
-                                         fixture.pseudopotential_set,
-                                         fixture.ultrasoft_basis.beta_function_table(),
-                                         g_vector_indices,
-                                         number_of_plane_waves,
-                                         fixture.ultrasoft_basis.total_number_of_projectors(),
-                                         projectors);
+    KleinmanBylanderProjectorSet projectors;
+    SerialProjectorSetBuilder(fixture.crystal_structure, fixture.basis, fixture.ultrasoft_basis)
+        .build(fixture.kpoint_grid[0].coordinates,
+               g_vector_indices,
+               number_of_plane_waves,
+               projectors);
 
     MillerIndexLookup global_lookup;
     global_lookup.build(fixture.basis.g_vectors());
@@ -219,16 +216,12 @@ TEST(BlochOverlapCalculatorAugmentation,
     lowdin_orthogonalize_orbitals(orbitals);
     const std::vector<Complex>& psi = orbitals[0];
 
-    Matrix<Complex> projectors;
-    compute_kleinman_bylander_projectors(fixture.kpoint_grid[0].coordinates,
-                                         fixture.crystal_structure,
-                                         fixture.basis,
-                                         fixture.pseudopotential_set,
-                                         fixture.ultrasoft_basis.beta_function_table(),
-                                         g_vector_indices,
-                                         number_of_plane_waves,
-                                         fixture.ultrasoft_basis.total_number_of_projectors(),
-                                         projectors);
+    KleinmanBylanderProjectorSet projectors;
+    SerialProjectorSetBuilder(fixture.crystal_structure, fixture.basis, fixture.ultrasoft_basis)
+        .build(fixture.kpoint_grid[0].coordinates,
+               g_vector_indices,
+               number_of_plane_waves,
+               projectors);
 
     MillerIndexLookup global_lookup;
     global_lookup.build(fixture.basis.g_vectors());
@@ -275,7 +268,7 @@ TEST(BlochOverlapCalculatorAugmentation,
     for (int projector_index = 0; projector_index < total_number_of_projectors; projector_index++) {
         Complex sum(0.0, 0.0);
         for (int g_index = 0; g_index < number_of_plane_waves; g_index++) {
-            sum += std::conj(projectors[projector_index][g_index]) * psi[g_index];
+            sum += std::conj(projectors.projector(projector_index)[g_index]) * psi[g_index];
         }
         amplitude[projector_index] = sum;
     }

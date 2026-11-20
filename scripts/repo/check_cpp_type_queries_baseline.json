@@ -77,13 +77,12 @@
     "src/layer_3_representation/quantum_system/kohn_sham/planewave/norm_conserving/factory.hpp": {
         "family_flag": 1
     },
-    "src/layer_3_representation/wavefunction/planewave/norm_conserving/initializer.hpp": {
+    "src/layer_3_representation/wavefunction/planewave/starting_subspace_solver_serial.hpp": {
         "family_flag": 2,
         "pseudopotential_downcast": 1
     },
     "src/layer_4_computation/diagonalizer/planewave/davidson.hpp": {
-        "capability_branch": 4,
-        "dynamic_cast": 1
+        "capability_branch": 4
     },
     "src/layer_4_computation/diagonalizer/planewave/internal/overlap/pseudopotential/factory.hpp": {
         "family_flag": 1

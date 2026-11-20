@@ -209,6 +209,32 @@ void launch_multiply_potential_single(int number_of_vectors,
         .wait();
 }
 
+void launch_accumulate_density(int number_of_vectors,
+                               int local_grid_points,
+                               const double* weights,
+                               const std::complex<double>* fft_workspace,
+                               double* density) {
+    if (number_of_vectors == 0 || local_grid_points == 0)
+        return;
+    auto queue = get_sycl_queue();
+    queue
+        .parallel_for(
+            sycl::range<1>(local_grid_points),
+            [=](sycl::id<1> idx) {
+                std::size_t grid_index = idx[0];
+                double sum = density[grid_index];
+                for (int vector_index = 0; vector_index < number_of_vectors; ++vector_index) {
+                    std::complex<double> value =
+                        fft_workspace[static_cast<std::size_t>(vector_index) * local_grid_points +
+                                      grid_index];
+                    sum += weights[vector_index] *
+                           (value.real() * value.real() + value.imag() * value.imag());
+                }
+                density[grid_index] = sum;
+            })
+        .wait();
+}
+
 void launch_gather_fft_grid_to_g(int number_of_vectors,
                                  int number_of_plane_waves,
                                  int local_smooth_grid_points,
@@ -339,6 +365,34 @@ void launch_apply_preconditioner(int number_of_bands,
                     denominator = floor_value;
                 }
                 residual_wavefunctions[index] /= denominator;
+            })
+        .wait();
+}
+
+void launch_form_structure_phases(int number_of_g_vectors,
+                                  int number_of_atoms,
+                                  const double* g_cartesian,
+                                  const double* positions,
+                                  double sign,
+                                  std::complex<double>* phases) {
+    if (number_of_g_vectors == 0 || number_of_atoms == 0)
+        return;
+    auto queue = get_sycl_queue();
+    const std::size_t total_elements =
+        static_cast<std::size_t>(number_of_g_vectors) * static_cast<std::size_t>(number_of_atoms);
+    queue
+        .parallel_for(
+            sycl::range<1>(total_elements),
+            [=](sycl::id<1> idx) {
+                constexpr double two_pi = 6.283185307179586476925286766559;
+                std::size_t index = idx[0];
+                std::size_t g_index = index % static_cast<std::size_t>(number_of_g_vectors);
+                std::size_t atom_index = index / static_cast<std::size_t>(number_of_g_vectors);
+                const double* g_vector = g_cartesian + 3 * g_index;
+                const double* position = positions + 3 * atom_index;
+                double angle = two_pi * (g_vector[0] * position[0] + g_vector[1] * position[1] +
+                                         g_vector[2] * position[2]);
+                phases[index] = std::complex<double>(sycl::cos(angle), sign * sycl::sin(angle));
             })
         .wait();
 }

@@ -13,8 +13,10 @@
 #include "layer_3_representation/basis/planewave/local_orbital/pseudo_atomic_orbital_set.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/atomic_orbital_builder.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/lowdin_orthogonalization.hpp"
-#include "layer_3_representation/pseudopotential/planewave/internal/projector.hpp"
 #include "layer_3_representation/pseudopotential/planewave/internal/wavefunction_atomic.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set.hpp"
+#include "layer_3_representation/pseudopotential/planewave/kleinman_bylander_projector_set_store.hpp"
+#include "layer_3_representation/pseudopotential/planewave/projector_set_builder_serial.hpp"
 #include "layer_3_representation/quantum_system/kohn_sham/planewave/ultrasoft/init.hpp"
 #include "layer_4_computation/diagonalizer/planewave/internal/overlap/pseudopotential/factory.hpp"
 #include "layer_4_computation/interpolator/method/wannier/planewave/init.hpp"
@@ -63,6 +65,8 @@ struct UltrasoftFixture {
     std::vector<std::vector<int>> g_vector_indices_by_kpoint;
     int number_of_bands = 0;
     std::unique_ptr<UltrasoftPlanewaveKohnShamQuantumSystem> quantum_system;
+    /// One projector set per k-point over the fixture's own plane-wave lists.
+    std::unique_ptr<KleinmanBylanderProjectorSetStore> projector_sets;
 
     UltrasoftFixture()
         : pseudopotential_set(load_silicon_uspp())
@@ -93,16 +97,12 @@ struct UltrasoftFixture {
             plane_waves_per_kpoint[kpoint_index] =
                 static_cast<int>(g_vector_indices_by_kpoint[kpoint_index].size());
 
-            Matrix<Complex> projectors;
-            compute_kleinman_bylander_projectors(kpoint_grid[kpoint_index].coordinates,
-                                                 crystal_structure,
-                                                 basis,
-                                                 pseudopotential_set,
-                                                 ultrasoft_basis.beta_function_table(),
-                                                 g_vector_indices_by_kpoint[kpoint_index],
-                                                 plane_waves_per_kpoint[kpoint_index],
-                                                 ultrasoft_basis.total_number_of_projectors(),
-                                                 projectors);
+            KleinmanBylanderProjectorSet projectors;
+            SerialProjectorSetBuilder(crystal_structure, basis, ultrasoft_basis)
+                .build(kpoint_grid[kpoint_index].coordinates,
+                       g_vector_indices_by_kpoint[kpoint_index],
+                       plane_waves_per_kpoint[kpoint_index],
+                       projectors);
             std::unique_ptr<OverlapOperator> overlap_operator = create_overlap_operator(
                 crystal_structure, *quantum_system, projectors, serial_policy);
 
@@ -132,15 +132,22 @@ struct UltrasoftFixture {
 
         for (int kpoint_index = 0; kpoint_index < number_of_kpoints; kpoint_index++) {
             for (int band_index = 0; band_index < number_of_bands; band_index++) {
-                std::memcpy(quantum_system->wavefunction_band_data(kpoint_index, band_index),
-                            orbitals_by_kpoint[kpoint_index][band_index].data(),
-                            static_cast<std::size_t>(plane_waves_per_kpoint[kpoint_index]) *
-                                sizeof(Complex));
+                std::memcpy(
+                    quantum_system->mutable_wavefunction_band_data(kpoint_index, band_index),
+                    orbitals_by_kpoint[kpoint_index][band_index].data(),
+                    static_cast<std::size_t>(plane_waves_per_kpoint[kpoint_index]) *
+                        sizeof(Complex));
                 quantum_system->set_eigenvalue(
                     kpoint_index, band_index, static_cast<Real>(band_index) - 5.0);
             }
         }
         quantum_system->set_fermi_energy(-1.25);
+
+        projector_sets = std::make_unique<KleinmanBylanderProjectorSetStore>(
+            crystal_structure,
+            kpoint_grid,
+            g_vector_indices_by_kpoint,
+            std::make_unique<SerialProjectorSetBuilder>(crystal_structure, basis, ultrasoft_basis));
     }
 };
 
@@ -226,6 +233,7 @@ TEST(PlanewaveWannierCaptureUltrasoft, ProjectionsAreIdentityAtEveryKpoint) {
                                                    2,
                                                    fixture.number_of_bands,
                                                    fixture.g_vector_indices_by_kpoint,
+                                                   *fixture.projector_sets,
                                                    *fixture.quantum_system,
                                                    orbital_set,
                                                    serial_policy);
@@ -268,6 +276,7 @@ TEST(PlanewaveWannierCaptureUltrasoft, EigenvaluesAndFermiEnergyRoundTrip) {
                                                    2,
                                                    fixture.number_of_bands,
                                                    fixture.g_vector_indices_by_kpoint,
+                                                   *fixture.projector_sets,
                                                    *fixture.quantum_system,
                                                    orbital_set,
                                                    serial_policy);
@@ -319,6 +328,7 @@ TEST(PlanewaveWannierCaptureUltrasoft, OverlapSingularValuesAreBoundedByOneEvery
                                                    2,
                                                    fixture.number_of_bands,
                                                    fixture.g_vector_indices_by_kpoint,
+                                                   *fixture.projector_sets,
                                                    *fixture.quantum_system,
                                                    orbital_set,
                                                    serial_policy);
@@ -358,6 +368,7 @@ TEST(PlanewaveWannierCaptureUltrasoft, OverlapIsHermitianConjugateAcrossNeighbor
                                                    2,
                                                    fixture.number_of_bands,
                                                    fixture.g_vector_indices_by_kpoint,
+                                                   *fixture.projector_sets,
                                                    *fixture.quantum_system,
                                                    orbital_set,
                                                    serial_policy);

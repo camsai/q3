@@ -45,6 +45,7 @@ class NormConservingPlanewaveStressTensorCalculator {
         const KPointsGrid& kpoint_grid,
         const NormConservingPlanewaveKohnShamSCFState& scf_state,
         const Matrix<Real>& projector_overlap_coefficients,
+        const StructureFactorCalculator& structure_factor_calculator,
         StressTensorContributions& result,
         const std::string& nonlocal_stress_derivative_method = "analytical")
         : crystal_structure_(crystal_structure)
@@ -52,6 +53,7 @@ class NormConservingPlanewaveStressTensorCalculator {
         , kpoint_grid_(kpoint_grid)
         , scf_state_(scf_state)
         , projector_overlap_coefficients_(projector_overlap_coefficients)
+        , structure_factor_calculator_(structure_factor_calculator)
         , result_(result)
         , nonlocal_stress_derivative_method_(nonlocal_stress_derivative_method) {}
 
@@ -86,6 +88,7 @@ class NormConservingPlanewaveStressTensorCalculator {
             planewave_basis_,
             scf_state_.quantum_system().pseudopotential_basis(),
             scf_state_,
+            structure_factor_calculator_,
             result_);
         local_calculator.compute();
         auto timer_2 = std::chrono::high_resolution_clock::now();
@@ -96,6 +99,7 @@ class NormConservingPlanewaveStressTensorCalculator {
             planewave_basis_,
             scf_state_.quantum_system().pseudopotential_basis(),
             scf_state_,
+            structure_factor_calculator_,
             result_);
         core_correction_calculator.compute();
         auto timer_3 = std::chrono::high_resolution_clock::now();
@@ -170,6 +174,7 @@ class NormConservingPlanewaveStressTensorCalculator {
     const KPointsGrid& kpoint_grid_;
     const NormConservingPlanewaveKohnShamSCFState& scf_state_;
     const Matrix<Real>& projector_overlap_coefficients_;
+    const StructureFactorCalculator& structure_factor_calculator_;
     StressTensorContributions& result_;
     const std::string nonlocal_stress_derivative_method_;
 };

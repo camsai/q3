@@ -29,6 +29,7 @@
 #include "io/launcher.hpp"
 #include "io/logger.hpp"
 #include "io/output/companion_outputs.hpp"
+#include "io/output/device_transfers.hpp"
 #include "layer_0_core/execution/gpu/device/factory.hpp"
 #include "layer_0_core/execution/gpu/device/init.hpp"
 #include "layer_0_core/execution/gpu/device/internal/buffer.hpp"
@@ -36,7 +37,12 @@
 #include "layer_0_core/math/linear_algebra/gpu/lapack/init.hpp"
 #include "layer_0_core/profiling/counters.hpp"
 #include "layer_3_representation/basis/planewave/internal/fft/gpu/init.hpp"
-#include "layer_4_computation/diagonalizer/planewave/davidson.hpp"
+#include "layer_4_computation/charge_density/planewave/internal/accumulator_gpu.hpp"
+#include "layer_4_computation/diagonalizer/planewave/davidson_gpu.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/band_projection_calculator_gpu.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/projector_set_builder_gpu.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/projector_strain_overlap_calculator_gpu.hpp"
+#include "layer_4_computation/diagonalizer/planewave/internal/hamiltonian_applicator/structure_factor_calculator_gpu.hpp"
 #include "layer_4_computation/flavors/factory.hpp"
 #include "layer_4_computation/iterator/kohn_sham/factory.hpp"
 #include "layer_4_computation/iterator/kohn_sham/planewave/execution/serial.hpp"
@@ -69,6 +75,20 @@ struct GPUEntryPointDescriptor {
      * the FP64 path falls back to the PlanewaveBasis FFTW grid.
      */
     std::function<std::unique_ptr<gpu::GPUFFTGrid>(DeviceBackendPointer)> create_fft_grid;
+    /**
+     * Whether the Kleinman-Bylander projector sets are formed on the device, from the
+     * structure factors and form factors alone, rather than built on the host and uploaded
+     * whole. For a backend whose device memory is apart from the host's. Left false where the
+     * device's memory is the host's (Metal), and on the backends where this has never run on
+     * hardware (HIP, SYCL), although the kernels it needs exist there too.
+     */
+    bool builds_projector_sets_on_device = false;
+    /**
+     * Whether the Davidson subspace eigenproblem is solved by the backend's device
+     * eigensolver, on the subspace matrices where they are, rather than by host LAPACK on
+     * copies of them. For a backend where that has been measured on hardware.
+     */
+    bool solves_subspace_on_device = false;
 };
 
 // ─── Backend validation ───────────────────────────────────────────────────────
@@ -256,13 +276,32 @@ inline int run_gpu_entry_point(int argc, char* argv[], const GPUEntryPointDescri
          * input names -- the SCF, or the non-self-consistent pass of a band
          * structure or a DOS -- diagonalizes on this device in this precision.
          */
+        /**
+         * Projectors against bands, for the projector occupations during the SCF and for
+         * forces and stress after it: on this device, on the bands the eigensolver leaves
+         * there. One calculator for every iterator the flavor builds, since it owns device
+         * workspaces worth keeping.
+         */
+        auto device_band_projections =
+            std::make_shared<GPUBandProjectionCalculator>(device_backend, *gpu_blas);
+
         IteratorFactory iterator_factory = [&](const InputData& run_input) {
             auto execution_policy = std::make_unique<execution::PlanewaveSerialExecutionPolicy>();
+            /**
+             * Where the device transforms the bands, the host grids are made for what is
+             * left for them: see set_bands_are_transformed_on_a_device(). A backend without
+             * a device FFT transforms the bands through the host grids, and keeps them as a
+             * host run has them, which is also what keeps its results equal to the host's to
+             * the last bit where they are.
+             */
+            if (gpu_fft_grid != nullptr) {
+                execution_policy->set_bands_are_transformed_on_a_device();
+            }
             const execution::PlanewaveSerialExecutionPolicy& policy_ref = *execution_policy;
             auto iterator = create_kohn_sham_iterator(run_input, policy_ref);
             iterator->set_owned_execution_policy(std::move(execution_policy));
 
-            auto gpu_davidson = std::make_unique<PlanewaveDavidsonDiagonalizer>(
+            auto gpu_davidson = std::make_unique<GPUPlanewaveDavidsonDiagonalizer>(
                 PlanewaveDavidsonDiagonalizer::default_serial_execution_policy,
                 *gpu_blas,
                 gpu_fft_grid.get(),
@@ -271,7 +310,53 @@ inline int run_gpu_entry_point(int argc, char* argv[], const GPUEntryPointDescri
             if (use_mixed_precision) {
                 gpu_davidson->set_use_mixed_precision(true);
             }
+            gpu_davidson->set_solves_subspace_on_device(descriptor.solves_subspace_on_device);
             iterator->set_diagonalizer(std::move(gpu_davidson));
+            iterator->set_band_projection_calculator(device_band_projections);
+            const execution::gpu::blas::GPUBLAS& device_blas = *gpu_blas;
+            iterator->set_projector_strain_overlap_calculator_factory(
+                [device_backend,
+                 &device_blas](const Crystal& crystal_structure,
+                               const PlanewaveBasis& planewave_basis,
+                               const NormConservingPlanewaveBasis& pseudopotential_basis) {
+                    return std::make_unique<GPUProjectorStrainOverlapCalculator>(
+                        crystal_structure,
+                        planewave_basis,
+                        pseudopotential_basis,
+                        device_backend,
+                        device_blas);
+                });
+            iterator->set_structure_factor_calculator_factory(
+                [device_backend, &device_blas](const Crystal& crystal_structure,
+                                               const PlanewaveBasis& planewave_basis) {
+                    return std::make_unique<GPUStructureFactorCalculator>(
+                        crystal_structure, planewave_basis, device_backend, device_blas);
+                });
+            if (descriptor.builds_projector_sets_on_device) {
+                iterator->set_projector_set_builder_factory(
+                    [device_backend,
+                     &device_blas](const Crystal& crystal_structure,
+                                   const PlanewaveBasis& planewave_basis,
+                                   const NormConservingPlanewaveBasis& pseudopotential_basis) {
+                        return std::make_unique<GPUProjectorSetBuilder>(crystal_structure,
+                                                                        planewave_basis,
+                                                                        pseudopotential_basis,
+                                                                        device_backend,
+                                                                        device_blas);
+                    });
+            }
+
+            if (gpu_fft_grid != nullptr) {
+                const gpu::GPUFFTGrid& device_transform = *gpu_fft_grid;
+                iterator->set_charge_density_accumulator_factory(
+                    [&device_transform,
+                     device_backend](const PlanewaveBasis& basis,
+                                     const KPointsGrid& kpoint_grid,
+                                     const PlanewaveKohnShamQuantumSystem& quantum_system) {
+                        return std::make_unique<GPUPlanewaveChargeDensityAccumulator>(
+                            basis, kpoint_grid, quantum_system, device_transform, device_backend);
+                    });
+            }
             return iterator;
         };
 
@@ -279,8 +364,10 @@ inline int run_gpu_entry_point(int argc, char* argv[], const GPUEntryPointDescri
         log::info("     Calculation type: {}", input.calculation);
         auto flavor = create_flavor(input.calculation, std::move(iterator_factory));
         generated::Results results = flavor->run(input);
+        record_device_transfers(results, *device_backend);
         write_results_json(results, input.output_directory + "/" + input.prefix + "_results.json");
         write_companion_outputs(input, results);
+        log_device_transfers(*device_backend);
 
     } catch (const std::exception& exception) {
         log::error("Error: {}", exception.what());

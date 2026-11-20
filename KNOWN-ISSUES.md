@@ -660,7 +660,357 @@ on macOS with ASE 3.29 + NumPy 2.5 — no Python traceback and no crash report.
 Nothing in Q3's own phonon path is implicated; the rest of the validation suite
 runs with it excluded.
 
+### CPU-against-CUDA energy parity fails for antiferromagnetic chromium, and had not been tested
+
+**Affected:** `q3_gpu_cuda`; the case `cr_bcc_afm_lsda` of
+`tests/validation/test_gpu_energy_parity.py`.
+
+Run against a CPU build of the same tree on an A100, nine of the ten FP64 cases agree within
+the 1e-10 Ry bound and chromium's antiferromagnet differs by 5.3e-8 Ry
+(-364.470766014 Ry on the CPU, -364.470766067 Ry on the device). The binary of 16 November
+gives the same device energy to the last digit, so the difference predates the
+device-resident storage work. It is in line with what the entry "Run-to-run energy variation
+for soft-moment systems under MPI" describes: the device run transforms through cuFFT, takes
+another SCF trajectory, and stops at another point of the moment valley. Whether that is all
+of it has not been shown.
+
+The CUDA parity jobs before 2026-11-17 could not see it. They passed `build/gpu-cuda/q3` as
+the CPU reference, and in a CUDA build tree that file is the CUDA binary, so they compared
+the device with itself. The reference has to come from a build with `Q3_WITH_CUDA=OFF`.
+
+**Workaround:** none needed for the other cases. For chromium, treat a CPU and a CUDA total
+energy as agreeing to 1e-7 Ry, not 1e-10.
+
 ## Resolved
+
+### The device eigensolver solved its subspace eigenproblem on the host (resolved 2026-11-17, CUDA)
+
+**Affected:** `q3_gpu_cuda` and `q3_mpi_gpu_cuda`, one rank per device.
+
+**What was wrong.** Every Davidson iteration copied both subspace matrices from the device
+to the host and solved the generalized eigenproblem there with LAPACK, and the solve that
+follows a collapse of the subspace did the same: 2.2 to 2.4 s and 1.7 s of a 64-atom silicon
+run, where pw.x's device solve takes 0.8 s. The backend's device eigensolver was created at
+start-up and handed to the Davidson, which never called it. Had it been called it would have
+lost: the cuSOLVER wrapper allocated and freed its workspace on every call, and freeing
+device memory waits for the device.
+
+**Fix.** The wrapper keeps its workspace between calls. The device Davidson solves on the
+device where the rank holds the subspace whole and the problem is complex: the columns in
+use are copied device to device into workspaces the solver may overwrite and solved with
+the caller's leading dimension, and what comes down is the eigenvectors and the eigenvalues.
+Ranks that share a band group and the gamma-point representation keep their host solvers,
+and so do the backends where this has not been measured (Metal, HIP, SYCL).
+
+**Measured,** one A100 (40 GB, shared nodes), Q3 and pw.x 7.5 alternating, in two jobs
+(61516115 and 61516932), wall seconds: Q3 13.4, 13.2, 13.6, 13.5 against pw.x 13.5, 13.3,
+13.3, 13.3, a ratio of 0.99 to 1.02; by the codes' own timers Q3 11.45 to 11.70 s against
+11.92 to 12.04 s. A fifth pair was lost to the scheduler: one run of each code waited 12 s
+and 57 s for its step to start. By stage: the subspace solve 2.3 s to 0.61 s, the collapse
+1.73 s to 0.63 s, the iterations 10.7 s to 7.8 s; the energy is unchanged to the nine
+decimals printed, and against a CPU build of the same tree the four silicon energy cases
+and the four force and stress cases of the parity tests pass. These are the first jobs in
+which this run costs the same in Q3 as in pw.x on one device; it is one cell and four clean
+pairs. What a device run still does on the host is in [TODOs.md](TODOs.md) §2.2.
+
+### A device run made its host FFT grids as a host run does, and built its starting orbitals with copies to spare (resolved 2026-11-17, CUDA)
+
+**Affected:** the GPU binaries with a device FFT, one rank per device; measured on
+`q3_mpi_gpu_cuda`.
+
+**What was wrong.** Three things in setup, found by timing the stages of the 64-atom silicon
+run after the entry below.
+
+1.  _The host FFT grids._ A rank that holds its grids whole plans one single-threaded
+    transform slot per thread, so that a host loop over bands can transform sixteen bands at
+    once. On a device run the device transforms the bands, and what is left for the host is
+    the density grid, whose transforms are made one at a time: each ran on one core while
+    fifteen waited, 2.0 s of the run. And whichever grid was planned first paid 0.9 s for
+    an exhaustive `FFTW_MEASURE` search that such a run never wins back.
+2.  _The starting orbitals._ Every starting vector of a k-point was allocated and zeroed,
+    200 MB, to be replaced a line later by the orbitals moved in; and the copy that packs
+    them into one matrix for the rotation was serial.
+3.  _The device projector builder_ cleared each set before filling it. That clear was 0.56 s
+    of its 0.73 s.
+
+**Fix.** An entry point whose device transforms the bands says so to its execution policy.
+The density grid then gets one slot planned for every thread, and both host grids are
+planned under the time cap the multi-rank grid already uses; a host run and a backend
+without a device FFT keep their grids as they were, so their results do not move. The
+starting vectors are allocated once and packed by all threads. The builder no longer
+clears.
+
+**Measured,** one A100, Q3 and pw.x 7.5 alternating in one job (job 61489932; a shared node
+this time, 40 GB card), wall seconds: Q3 16.5, 15.9, 16.1 against pw.x 14.2, 13.5, 13.1, a
+ratio of 1.16 to 1.23 where the entry below measured 1.35 to 1.42. By stage: setup 4.9 s to
+3.6 to 3.8 s (FFT grids 1.04 s to 0.25 s, the starting orbitals 0.66 s to 0.25 s); the
+iterations 11.8 s to 10.6 to 10.9 s (host density transforms 1.98 s to 1.3 s, with the
+exchange-correlation step that contains some of them 1.22 s to 0.89 s). Threaded transforms
+planned exhaustively were no faster than capped ones (1.20 s against 1.28 s) and cost 1.1 s
+to plan.
+
+**What the builder's clear turned out to be.** Removing it moved its time into the
+products that follow: 0.03 s on memory the device already holds, 0.6 s on the four sets'
+fresh 3.7 GB. The cost is the device's first touch of unified memory, about 0.17 s per GB
+whoever touches it, and it is still there; see [TODOs.md](TODOs.md) §2.2.
+
+### Bands and projectors crossed between host and device, and forces and stress projected on the host (resolved 2026-11-17, CUDA)
+
+**Affected:** every GPU binary; measured on `q3_mpi_gpu_cuda`.
+
+**What was wrong.** After the work of 15 and 16 November the eigensolver ran on the device,
+but the data it shares with the rest of a run did not live there. The bands were copied up
+for every solve and for every density and down after every solve, one band at a time. Each
+k-point's projectors were built on the host and uploaded whole. The projector occupations,
+the nonlocal force and the nonlocal stress multiplied projectors into bands on the host,
+and the stress built seven columns per projector to do it, in a serial loop.
+
+**Fix.** The band block of each k-point state and the projector set of each k-point are
+arrays that know which of their host and device copies is current, and move only when the
+other side asks. The bands stay on the device from the starting rotation to the density.
+Products of projectors with bands go through one interface with a host and a device
+implementation; for the stress the device one forms no derivative columns at all (see
+[FUNCTIONALITY.md](FUNCTIONALITY.md) §2). On CUDA the projector sets are formed on the
+device from their factors and never exist on the host. Every copy between host and device
+is counted and reported in `runtime_log.device_transfers`.
+
+**Measured,** 64-atom silicon, 48 Ry, four k-points, one rank per A100, Q3 and pw.x 7.5
+alternating in one job on a node of its own (job 61484730, 40 GB cards), wall seconds:
+
+| Run                           | Q3 before (16 Nov) | Q3 now           | pw.x, same job   | Q3 / pw.x    |
+| ----------------------------- | ------------------ | ---------------- | ---------------- | ------------ |
+| SCF, one device               | 20.9 to 23.4       | 18.4, 19.0, 18.8 | 13.6, 13.6, 13.2 | 1.35 to 1.42 |
+| SCF, four devices             | 13.4 to 16.6       | 11.7, 12.0, 11.6 | 7.5, 7.8, 8.3    | 1.40 to 1.56 |
+| Forces and stress, one device | about 37           | 25.0, 24.5       | 15.6, 14.7       | 1.60 to 1.67 |
+
+By stage, one device: setup 6.1 s to 4.9 s (no projector upload: the rotation's device
+preparation 1.19 s to 0.25 s); the SCF iterations 12.9 s to 11.8 s (no band traffic: the
+Davidson extraction 0.43 s to 0.03 s, the density 0.87 s to 0.48 s); host-to-device
+traffic 5.1 GB to 1.7 GB for the run; the nonlocal stress products, most of 12.3 s of
+host work, 0.45 s; the nonlocal force products 0.16 s.
+
+**It did not close the gap to pw.x,** and it was not expected to on the SCF: the design
+note put the band and projector traffic at 2.3 s of 20.6. On four devices the ratio above
+is worse than the 0.70 to 1.16 of 16 November only because pw.x was faster today (7.5 to
+8.3 s against 11.9 to 21.1 s then, its device FFTs taking a third of the time); Q3's own
+four-device time fell. What a device run still spends on the host is listed in
+[TODOs.md](TODOs.md) §2.2: setup, the subspace eigenproblem, XC with the density-grid
+transforms, and the terms of the forces and the stress that are not projector products,
+which at 2.6 s and 3.4 s are now nearly all of the 6 s that forces and stress add.
+
+### The starting rotation left its projections and rotation on the host, and what a GPU run costs against pw.x (resolved 2026-11-16, CUDA)
+
+**Affected:** `q3_gpu_cuda` and `q3_mpi_gpu_cuda`; and every statement in the entries below
+that compares a device run with pw.x.
+
+**The rotation.** The starting rotation applied H on the device and then carried Hχ back to
+the host for the two subspace projections and the rotation itself. The solver now offers
+all three operations (`StartingSubspaceSolver`): the starting vectors go to the device once,
+and only the two small matrices and the rotated bands come back. On 64-atom silicon, 2x2x2
+k-points, one Perlmutter A100, the rotation falls from 3.3 s to 2.6 s and wall time from
+21.4 s to 20.6 s; the projections go from 0.35 s to 0.02 s. All ten double-precision cases of
+`tests/validation/test_gpu_energy_parity.py` pass on an A100. A QE deck's `diago_david_ndim`
+is now read as the Davidson basis factor, which it is; it had been accepted and ignored.
+
+**The comparison with pw.x, measured properly.** The pw.x 7.5 GPU times quoted until now
+(12.4 s, 9.2 s and 7.9 s on one, two and four devices) came from a single job on 15 November.
+They were compared with Q3 times from other jobs on other nodes. On 16 November both codes
+were run in the same job, alternating, on four different nodes:
+
+| Devices | Q3 wall (s)                                    | pw.x 7.5 wall (s)                                    | Q3 / pw.x    |
+| ------: | ---------------------------------------------- | ---------------------------------------------------- | ------------ |
+|       1 | 20.9; 22.1, 23.4, 22.2; 21.1, 22.3, 21.1       | 16.8; 18.1, 17.6, 16.5; 16.0, 15.3, 15.7; 18.5       | 1.24 to 1.37 |
+|       2 | 16.6                                           | 14.2                                                 | 1.17         |
+|       4 | 13.9; 14.7, 14.4, 14.0; 13.4, 16.5, 16.6; 14.0 | 19.8; 11.9, 12.4, 13.0; 15.3, 18.6, 21.1; 14.2, 13.1 | 0.70 to 1.16 |
+
+Semicolons separate jobs, and the ratio is taken job by job. So on the day both were
+measured together, a device run of this deck costs 24% to 37% more in Q3 than in pw.x on
+one device, and between 30% less and 16% more on four, where pw.x's own times spread over
+a factor of 1.8.
+
+The 15 November pw.x run was faster than every 16 November one, and its own report says
+where: 2,622 device FFT calls took 2.9 s that day and 8.6 s on the 16th, while every other
+line of the report -- the device eigensolver, the projector products, the density -- agrees
+to a few hundredths of a second. The binary, its libraries, the driver and the card model
+(A100 80 GB in both; Perlmutter's `gpu` constraint also hands out 40 GB nodes, where pw.x
+was about 10% slower) are the same. The cause was not found. Against that one run Q3 would
+be 1.7 times slower on one device; which of the two is the usual pw.x on this machine is
+not settled by five jobs over two days.
+
+**What was checked and is not the cause of the difference between the codes:** the build is
+Release with -O3 for C++ and CUDA; both codes use the same 96^3 grid; 8 or 16 bound host
+threads are equally good for Q3 and 32 are worse (26.9 s); mixed precision does not help
+(13.4 s against 14.0 s on four devices, inside the spread above, with the energy 3.9e-5 Ry
+off). A Davidson basis of
+four times the band count rather than two saves about 1 s on one device and nothing on four,
+and pw.x is unchanged by it. That factor was 4 when the September A100 benchmark of the
+copper 3x3x3 cell was recorded at 6.55 s of solver time, and became 2 three days later; on
+that benchmark main today takes 6.73 s at factor 2 and 5.76 s at factor 4, and this branch
+3.86 s and 3.46 s.
+
+### The device eigensolver cleared and read its workspace from the host (resolved 2026-11-16, CUDA)
+
+**Affected:** `q3_gpu_cuda` and `q3_mpi_gpu_cuda`. Same measurement as the two entries below:
+64-atom silicon, 2x2x2 k-points, one Perlmutter A100, a QE `scf` deck. Wall time fell from
+23.3 s to 21.4 s and the eigensolver from 10.6 s to 8.6 s. The total energy is unchanged.
+For where that stands against pw.x, see the entry above: the pw.x figures first quoted
+here came from one run that later runs did not reproduce.
+
+-   **The eigensolver's stage times were wrong on a device.** A device product returns when it
+    is queued, so a clock read after one charged its cost to whichever later stage first had
+    to wait: the host eigenproblem appeared to cost what the products ahead of it did, and
+    explicit orthogonalization, 0.8 s in fact, looked like the largest item. Each stage
+    boundary now waits for the device first.
+-   **The workspace was zeroed from the host on every resize.** The k-points of a run differ
+    slightly in their plane-wave counts, so the first SCF iteration resizes the workspace
+    several times, and each time three basis-sized device buffers (about 700 MB here) were
+    cleared by `memset`, pulling their pages to the host and leaving the device to fault
+    them back. The backend now clears on the device: 1.2 s to 0.2 s.
+-   **Converged bands took two host copies.** They were downloaded into a zeroed staging
+    array and copied again, band by band, into the quantum system. Each band now goes
+    straight from the device to its place: 1.1 s to 0.4 s.
+-   **The reduced matrices were read element by element from device memory** before each host
+    eigenproblem, and the device applicator took the potential through an FFT round trip
+    between two grids that coincide. Both are plain copies now.
+-   **Starting orbitals were built one atom at a time.** Threaded over atoms, bit for bit.
+
+The subspace eigenproblem itself is 12 ms per call at these sizes on this node whatever the
+thread count (measured apart: `zhegvd` 4 to 24 ms for 132 to 264, `zhegv` 8 to 56 ms), 2.3 s
+per run, and is now the eigensolver's largest host cost. All ten double-precision cases of
+`tests/validation/test_gpu_energy_parity.py` pass on an A100.
+
+### A one-device GPU run was still mostly host work and fresh allocations (resolved 2026-11-16, CUDA)
+
+**Affected:** `q3_gpu_cuda` and `q3_mpi_gpu_cuda`, after the 2026-11-15 change below. Same
+measurement: 64-atom silicon, 2x2x2 k-points, Perlmutter A100s, one rank and 16 threads per
+device, a QE `scf` deck (so no forces or stress, as of the entry above).
+
+| Devices | Wall before (s) | Wall after (s) | SCF before (s) | SCF after (s) |
+| ------: | --------------: | -------------: | -------------: | ------------: |
+|       1 |            29.6 |           23.3 |           18.8 |          14.4 |
+|       2 |               — |           15.8 |           11.2 |           9.0 |
+|       4 |               — |           12.9 |            6.7 |           6.3 |
+
+"Wall before" on one device is the 46.0 s of the entry below less its 16.4 s of forces and
+stress; it was not measured separately. The total energy is unchanged, -541.596421439 Ry.
+
+-   **A fresh device buffer is slow on first use.** Unified memory the device has not
+    touched is faulted in page by page. The density accumulator took its transform workspace
+    (453 MB) anew for every k-point: 3.0 s of device time for transforms that cost a tenth of
+    that inside the Hamiltonian. Its buffers, and the starting rotation's, are now kept
+    between calls: density construction fell from 3.4 s to 0.8 s.
+-   **The allocator's cache almost never hit.** A freed block was reused only by a request of
+    exactly its size, and the eigensolver's coefficient buffers are sized by the number of
+    unconverged bands, which changes every iteration. Requests are now rounded to a power of
+    two (to a multiple of 64 MiB above 64 MiB) so that neighbouring sizes share a block.
+-   **Four setup loops over every G-vector and atom ran on one thread** — the local potential
+    and core charge structure factors, the starting density, and the Ewald sum. Each entry is
+    independent, so they are threaded without changing a bit; the Ewald terms are computed
+    across threads and added in the serial order.
+-   **The dense D matrix was zeroed, filled and uploaded before every solve** (21 MB here). It
+    depends on the potential and the spin channel, not the k-point, and is now built once
+    per channel per potential.
+-   **With S = 1 the device eigensolver computed every update of the basis twice**, once for
+    |V> and once for the S|V> it keeps in a buffer of its own. The complex path now copies
+    the result instead; the gamma-point path and the Gram-Schmidt fallback are unchanged.
+-   **The subspace eigenproblem used the QR driver.** Device runs now use divide and conquer
+    (`DivideAndConquerSubspaceDiagonalizer`); CPU runs keep the solver their references were
+    made with. This one did not show in the timings: the stage's time is the device
+    finishing queued products, not the host solve.
+
+What the remaining 23 s on one device are made of, by size: setup (6.9 s — the starting
+rotation's host products and the one-time 3.7 GB projector upload, FFTW planning, host
+projector and orbital construction); the eigensolver (10.6 s); and the XC potential on the
+host (1.2 s). An earlier version of this entry put the eigensolver's share down to explicit
+orthogonalization of each new block; with the stage times measured properly, in the entry
+above, orthogonalization is 0.8 s. The comparison with pw.x is in the entry at the top of
+this section.
+
+All ten double-precision cases of `tests/validation/test_gpu_energy_parity.py` pass on an
+A100 with every change above.
+
+### A Quantum ESPRESSO deck paid for forces and stress it did not ask for (resolved 2026-11-16)
+
+**Affected:** every QE-format input. Q3 computed the forces and the stress tensor after
+every converged SCF, whatever the deck said; `tprnfor` and `tstress` were read and ignored.
+pw.x computes forces only under `tprnfor`, which it turns on by itself for `relax` and
+`vc-relax`, and the stress only under `tstress`, which it turns on for `vc-relax`. On
+64-atom silicon, 2x2x2 k-points, one Perlmutter A100, the two took 16.4 s of a 46 s run
+(stress 12.3 s, forces 4.1 s) for a plain `scf` deck that named neither.
+
+**Fix.** `control.compute_forces` and `control.compute_stress`, both `true` by default, so
+a Q3 YAML input behaves as before. The QE parser sets them from `tprnfor` and `tstress`
+with pw.x's defaults for the calculation type. Off, the results carry no `atomic_forces`
+or no `stress_tensor` and `pressure` at all, rather than zeros. `--forces` and `--stress`
+turn each on from the command line whatever the input says; `q3.calculators` passes both,
+so a relaxation, an equation of state or a phonon displacement driven from an `scf` deck
+still gets them.
+
+**This changes what an existing QE `scf` deck returns**: one without `tprnfor` or `tstress`
+no longer has forces or stress in its results. Add the keys to the deck, or pass the flags.
+
+### A GPU run did most of its work on the host (resolved 2026-11-15, CUDA)
+
+**Affected:** `q3_gpu_cuda` and `q3_mpi_gpu_cuda`, most of all on large cells. Measured on
+64-atom silicon, 2x2x2 k-points (4 irreducible), 132 bands, Perlmutter A100s, one rank and
+16 threads per device.
+
+Only the Hamiltonian application inside the eigensolver ran on the device, and the host
+work around it had costs of its own that grew with the cell:
+
+-   **The Kleinman-Bylander projectors were recomputed on the host and uploaded again for
+    every solve** — twice per solve, 0.9 GB per k-point here.
+-   **Device buffers were written and read from host code.** Unified memory moves pages on
+    every such touch: 47 GB migrated in one four-device run, by host triangular solves, by
+    `memcpy` into the Davidson workspace, and by copying the converged bands out.
+-   **The batched cuFFT plan was built for one batch size** and destroyed and rebuilt, with
+    a device buffer of the batch's size beside it, whenever the number of unconverged bands
+    changed — on nearly every eigensolver iteration.
+-   **Device buffers were allocated and freed on every call**, 2.9 s of `cudaFree` per rank.
+-   **The density was accumulated on the host**, one inverse transform per occupied band,
+    serially: an MPI build's distributed grid has one transform slot, and a device build
+    holds one rank per device.
+-   **The starting rotation applied H on the host**, one vector at a time.
+-   **Projector construction interpolated the radial function once per projector** rather
+    than once per species and beta function, and built the atoms serially.
+-   **The atomic-wavefunction setup drew two random numbers and took a sine and a cosine per
+    coefficient** to multiply each by exactly 1: a perturbation hook whose amplitude was 0.
+
+| Devices | Wall before (s) | Wall after (s) | SCF before (s) | SCF after (s) |
+| ------: | --------------: | -------------: | -------------: | ------------: |
+|       1 |             212 |           46.0 |            161 |          18.8 |
+|       2 |             114 |           29.9 |             61 |          11.2 |
+|       4 |            68.3 |           22.5 |           34.2 |           6.7 |
+
+The total energy, -541.596421439 Ry, is unchanged to every printed digit. On one device,
+keeping the projectors on the device took the SCF from 161 s to 56 s; after that the
+eigensolver fell from 26 s to 12 s, density construction from 22.6 s to 3.4 s, and the
+starting rotation from 18.4 s to 3.2 s. The SCF
+"before" column for one and two devices was measured after the allocator and
+triangular-solve changes, which did not move it.
+
+Of the 46 s that remain on one device, 16 s are the forces and the stress, still computed
+on the host, which pw.x does not compute for this deck. What is left is listed in
+[TODOs.md](TODOs.md) §2.2, and the comparison with pw.x is in the entry at the top of this
+section.
+
+**Fix.** The device applicator keeps each k-point's projectors on the device for as long as
+the iterator offers the same set; the iterator withdraws a set before recomputing it. The
+device backend caches freed blocks and copies explicitly between host and device, and the
+subspace manager's triangular solves run in cuBLAS. cuFFT batch plans are kept per
+power-of-two run length and transform in place. `GPUPlanewaveChargeDensityAccumulator`
+transforms the bands on the device in passes of 32 and sums their densities in a new kernel
+(CUDA, HIP, SYCL and the host fallback); it falls back to the host accumulator for a
+gamma-point basis, a grid shared by a pool's ranks, or a backend without a device transform.
+The solver offers its Hamiltonian application to the wavefunction initializer through
+`HamiltonianBatchApplication` (since widened into `StartingSubspaceSolver`), for an identity
+overlap without a Hubbard term. Projector
+construction interpolates once per species and beta function and threads over atoms, which
+changes no bit of the result, and the no-op perturbation loop is gone.
+
+A new unit test runs the device accumulator against the host one through a host-memory
+device backend and agrees to 1e-12 of the largest density. The HIP and SYCL kernels are
+compiled by nothing in this change and have not been run.
 
 ### A shared k-point pool stopped scaling past 32 ranks on a supercell (resolved 2026-11-14)
 
